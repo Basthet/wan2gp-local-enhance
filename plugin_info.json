@@ -1,0 +1,8 @@
+{
+    "name": "Local Enhance",
+    "author": "Stefan",
+    "version": "1.0.0",
+    "description": "Zweiter Enhance-Prompt-Knopf, der immer das lokale Qwen-Modell benutzt - unabhaengig davon, welche Engine Deepy gerade verwendet (z.B. OpenCode/DeepSeek remote).",
+    "date": "",
+    "wan2gp_version": ""
+}
