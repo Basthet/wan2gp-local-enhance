@@ -1,8 +1,8 @@
 {
-    "name": "Local Enhance",
+    "name": "Enhance: OpenCode / Bonsai 27B",
     "author": "Stefan",
     "version": "1.0.0",
-    "description": "Zweiter Enhance-Prompt-Knopf, der immer das lokale Qwen-Modell benutzt - unabhaengig davon, welche Engine Deepy gerade verwendet (z.B. OpenCode/DeepSeek remote).",
+    "description": "Adds two buttons next to Enhance Prompt: OpenCode enhances remotely through the configured engine, Local 27B enhances locally with Qwen3.8-27B. The built-in button is hidden because it duplicates the remote path.",
     "date": "",
     "wan2gp_version": ""
 }
