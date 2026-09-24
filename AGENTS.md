@@ -66,11 +66,14 @@ neu starten.
 - `d429ffb` — diese Anleitung ins Repo (vorher untracked)
 - `2f6f3e6` — Min/Max kompakt: Gradio-Label `min:`/`max:` über der Eingabe,
   Felder per CSS auf 84px, `_UI_CSS` als Modulkonstante, `dev/ui_preview.py`
-- **Bis `d429ffb` gepusht, beide Klone auf `d429ffb`, in WanGP geladen und live
-  geprüft:** beide Knöpfe 5 Inputs, `local_enhance_min_words`/`_max_words`
-  vorhanden. `2f6f3e6` ist **noch nicht** gepusht/geladen; das neue Layout ist
-  bisher nur über `dev/ui_preview.py` geprüft (84px, Label 11px, kein
-  abgeschnittener Wert).
+- `61f25ae` — Wortgrenze als Preset-Dropdown (`no limit` / `150` / `300` / `500`
+  / `custom`), Custom blendet die Zahlenfelder ein; `_read_controls` löst das
+  Preset auf, `dev/ui_preview.py` kann per `PREVIEW_MAX` beide Fälle zeigen
+- **`2f6f3e6`, `446da1e` und `61f25ae` sind gepusht.** Ob der geladene Klon sie
+  schon hat, ist offen (Stand vor dem letzten Neustart: `d429ffb`, 5 Inputs).
+  Nach dem Neustart prüfen: beide Knöpfe **6 Inputs**
+  (`state, prompt, Think, Preset, Min, Max`), Preset wechseln → Felder
+  verschwinden, `custom` → sie kommen mit ihren alten Werten zurück.
 
 ## Technisches, das man sonst neu herausfinden muss
 
