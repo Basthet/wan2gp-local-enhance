@@ -16,10 +16,11 @@ Objekt mit dem Schluessel "models_def"):
         --dump /pfad/models_def.json
 
 Geprueft wird die grobe Erkennung: betroffen ist jede Definition mit irgendeinem
-Schluessel der Form text_/image_/video_prompt_enhancer_instructions (Ziffer 1-4
-optional). Dazu die Gruppenzuordnung (Image, Image + Video, Video, Audio je
-family_label), die Zaehler, das Zusammenfassen gleicher Namen und die
-Robustheit gegen kaputte Eintraege.
+Schluessel der Form text_/image_/video_prompt_enhancer_instructions (Ziffernsuffix
+beliebig - der Host nimmt die erste Ziffer, die irgendwo im Modus steht). Dazu
+die Gruppenzuordnung (Image, Image + Video, Video, Audio je family_label), die
+Zaehler, das Zusammenfassen gleicher Namen und die Robustheit gegen kaputte
+Eintraege.
 """
 
 import json
@@ -75,6 +76,22 @@ MODELS_DEF = {
         "metadata": {"main_output": ["video"]},
         "text_prompt_enhancer_instructions1": "profile 1",
     },
+    # Ziffernsuffix AUSSERHALB 1-4: der Host bildet das Suffix aus der ersten
+    # Ziffer, die irgendwo im Modus-String steht (wgp.py:6462) - also aus jeder
+    # Ziffer, nicht nur aus 1-4. Muss ebenfalls erkannt werden.
+    "profile9_model": {
+        "name": "Profile 9 Model",
+        "metadata": {"main_output": ["video"]},
+        "text_prompt_enhancer_instructions9": "profile 9",
+    },
+    # Nur max_tokens-Schluessel, KEINE Anweisungen -> darf nicht in der Liste
+    # landen (die Erkennung darf nicht auf *_max_tokens* anspringen).
+    "max_tokens_only_model": {
+        "name": "Max Tokens Only Model",
+        "metadata": {"main_output": ["video"]},
+        "text_prompt_enhancer_max_tokens5": 4096,
+        "video_prompt_enhancer_max_tokens": 2048,
+    },
     # Kein metadata: Fallback des Hosts ueber v2i_switch_supported.
     "v2i_model": {
         "name": "V2I Model",
@@ -111,16 +128,16 @@ MODELS_DEF = {
 EXPECTED_GROUPS = (
     ("Image", ("Image Model B", "Image Outputs Model")),
     ("Image + Video", ("Inpaint Model", "V2I Model")),
-    ("Video", ("Numbered Model",)),
+    ("Video", ("Numbered Model", "Profile 9 Model")),
     ("Audio", ("Audio Only Model",)),
     ("Audio (Music)", ("Music Model",)),
     ("Audio (TTS)", ("TTS Model",)),
 )
 
-# 12 Eintraege in MODELS_DEF; betroffen sind alle ausser video_model,
-# hidden_model und dem kaputten Eintrag.
-EXPECTED_EXAMINED = 12
-EXPECTED_AFFECTED = 9
+# 14 Eintraege in MODELS_DEF; betroffen sind alle ausser video_model,
+# hidden_model, max_tokens_only_model und dem kaputten Eintrag.
+EXPECTED_EXAMINED = 14
+EXPECTED_AFFECTED = 10
 
 _FAILURES = []
 
@@ -211,6 +228,25 @@ def main():
         "Schluessel mit Ziffer 1 wird erkannt",
         "Numbered Model" in dict(result.groups).get("Video", ()),
         f"-> {dict(result.groups).get('Video')}",
+    )
+
+    # 5b. Ziffernsuffix ausserhalb 1-4 zaehlt genauso (der Host nimmt jede
+    #     Ziffer, die im Modus steht).
+    check(
+        "Schluessel mit Ziffer ausserhalb 1-4 wird erkannt",
+        "Profile 9 Model" in dict(result.groups).get("Video", ()),
+        f"-> {dict(result.groups).get('Video')}",
+    )
+
+    # 5c. max_tokens-Schluessel sind KEINE Anweisungen und duerfen nicht
+    #     treffen - auch nicht mit Ziffernsuffix.
+    check(
+        "max_tokens-Schluessel zaehlt nicht",
+        "Max Tokens Only Model" not in rendered_names(result)
+        and not P.LocalEnhancePlugin._has_enhancer_instructions(
+            MODELS_DEF["max_tokens_only_model"]
+        ),
+        f"-> {rendered_names(result)}",
     )
 
     # 6. Fallback ohne metadata: v2i_switch_supported -> Image + Video.

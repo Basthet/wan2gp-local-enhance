@@ -68,15 +68,22 @@ _WORD_LIMIT_MAX = 2000
 _MIN_WORDS_KEY = "local_enhance_min_words"
 _MAX_WORDS_KEY = "local_enhance_max_words"
 _WORD_LIMIT_KEY = "local_enhance_word_limit"   # Altbestand, Fallback fuer Max
+# Sichtbare Breite der beiden Zahlenfelder im Tab. Gradio macht daraus
+# min-width: min(N px, 100%) am Block; scale=0 verhindert, dass sie ueber die
+# ganze Zeile wachsen. "1500" braucht rund 58 px - 120 px geben Luft, ohne dass
+# eine eigene CSS-Regel noetig waere.
+_WORD_FIELD_WIDTH = 120
 
 # Modelle mit eigenen Enhancer-Anweisungen. Der Host holt die Anweisungen an
-# diesen Schluesseln; die optionale Ziffer 1-4 am Ende waehlt ein Profil, das
-# der Modus vorgibt (re.search(r"\d", prompt_enhancer_mode), wgp.py:6461-6464).
+# diesen Schluesseln; die optionale Ziffer am Ende waehlt ein Profil, das der
+# Modus vorgibt. Der Host nimmt dafuer die ERSTE Ziffer irgendwo im
+# Modus-String (re.search(r"\d", prompt_enhancer_mode), wgp.py:6462-6464),
+# also jede Ziffer 0-9 - nicht nur 1-4.
 # Bringt ein Modell so einen Schluessel mit, gewinnen seine Anweisungen gegen
 # die vom Plugin uebergebenen (_fallback_instructions) - die Wortgrenzen-Felder
 # Min/Max wirken dort also nicht.
 _ENHANCER_INSTRUCTION_RE = re.compile(
-    r"^(?:text|image|video)_prompt_enhancer_instructions[1-4]?$"
+    r"^(?:text|image|video)_prompt_enhancer_instructions\d*$"
 )
 # Medien-Token aus metadata.main_output. Der Host schreibt "audio", "image" und
 # "video"; Gross-/Kleinschreibung und ein angehaengtes Plural-s werden grob
@@ -551,6 +558,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         brauchen sie dort schon als Klick-Eingaben - und parken bis create_ui()
         in der Knopfreihe (self._word_fields_home). create_ui() laeuft laut Host
         erst danach (wgp.py:13628 vor 13976) und holt sie hierher.
+
+        WICHTIG: erst NACH dem Verlassen des `with gr.Row()`-Blocks aufrufen.
+        Beim Verlassen eines BlockContexts gruppiert Gradio aufeinanderfolgende
+        Formularfelder in einen gr.Form (BlockContext.__exit__ ->
+        fill_expected_parents, blocks.py:456-486), und ein gr.Form stapelt seine
+        Kinder vertikal - die beiden Felder stuenden dann untereinander statt
+        nebeneinander.
         """
         fields = [
             field
@@ -784,10 +798,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         Geprueft wird GROB: betroffen ist jede Definition mit irgendeinem
         Schluessel der Form text_/image_/video_prompt_enhancer_instructions
-        (Ziffer 1-4 optional). Ob der Host den Schluessel im gewaehlten Modus
-        wirklich benutzt, entscheidet er zusaetzlich am Modus - die erste Ziffer
-        im Modus waehlt ein Profil, nur der passende Schluessel gewinnt. Ohne
-        Modus sammelt diese Funktion deshalb lieber zu viel als zu wenig.
+        (Ziffernsuffix beliebig, auch mehrere Ziffern - der Host nimmt die erste
+        Ziffer, die irgendwo im Modus steht). Ob der Host den Schluessel im
+        gewaehlten Modus wirklich benutzt, entscheidet er zusaetzlich am Modus -
+        die erste Ziffer im Modus waehlt ein Profil, nur der passende Schluessel
+        gewinnt. Ohne Modus sammelt diese Funktion deshalb lieber zu viel als zu
+        wenig.
 
         Nicht-Dict-Eintraege, fehlende Namen und fehlende Metadaten sind erlaubt
         und werden still uebergangen. Ausgeblendete Modelle (visible == False)
@@ -898,14 +914,27 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def _definition_file_count():
         """Definitionsdateien auf der Platte: defaults/*.json + finetunes/*.json.
 
+        Gezaehlt wird im Verzeichnis des Host-Hauptmoduls (`_main("__file__")`,
+        beim Start also neben wgp.py). Frueher hing der Zaehler am
+        Arbeitsverzeichnis: lief der Prozess woanders, fand er still 0 Dateien
+        und der Hinweis "model files on disk are not loaded yet" verschwand.
+        Ist der Pfad des Hauptmoduls nicht zu bekommen (oder nicht benutzbar),
+        bleibt das Arbeitsverzeichnis die Basis.
+
         Rein informativ: ist die Zahl groesser als die der Katalogeintraege, hat
         der Host noch nicht alle Modelle aufgeloest. Fehler (fehlender Ordner,
         keine Rechte) werden verschluckt - der Check darf daran nicht scheitern.
         """
         count = 0
         try:
+            main_file = _main("__file__", "")
+            base = Path(".")
+            if isinstance(main_file, str) and main_file.strip():
+                host_dir = Path(main_file).resolve().parent
+                if host_dir.is_dir():
+                    base = host_dir
             for folder in ("defaults", "finetunes"):
-                count += len(list(Path(folder).glob("*.json")))
+                count += len(list(base.joinpath(folder).glob("*.json")))
         except Exception:  # noqa: BLE001 - Zaehler ist nur Beiwerk
             return 0
         return count
@@ -1651,6 +1680,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             # angezeigt werden sie aber nicht in Zeile 1, sondern ganz oben im
             # Plugin-Tab: _attach_word_fields() holt sie in create_ui() dorthin.
             # Bis dahin parken sie in dieser Knopfreihe.
+            # min_width gibt die sichtbare Breite vor (scale=0: naturale Breite
+            # statt ueber die Zeile wachsen), ohne eigene CSS-Regel.
             min_field = gr.Number(
                 value=min_words,
                 label="Min words",
@@ -1660,7 +1691,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 maximum=_WORD_LIMIT_MAX,
                 step=10,
                 scale=0,
-                min_width=0,
+                min_width=_WORD_FIELD_WIDTH,
                 elem_id="local_enhance_min_words",
             )
             max_field = gr.Number(
@@ -1672,7 +1703,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 maximum=_WORD_LIMIT_MAX,
                 step=10,
                 scale=0,
-                min_width=0,
+                min_width=_WORD_FIELD_WIDTH,
                 elem_id="local_enhance_max_words",
             )
             words_children = (min_field, max_field)
@@ -1752,14 +1783,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Nach dem Herausholen der Checkbox bleiben leere Formular-Wrapper uebrig.
         # Gradio legt beim Schliessen der Knopfreihe einen gr.Form um die
         # aufeinanderfolgenden Formularfelder (fill_expected_parents,
-        # blocks.py:456-477) und registriert ihn in der Komponentenliste des
-        # Blocks. Das Auspacken oben hat den Wrapper aus den Kindern der Reihe
-        # genommen, aber nicht aus dieser Liste: dort steht er weiter als leerer
-        # "form"-Knoten. demo.get_config_file() liefert ihn deshalb mit, obwohl
-        # der Layout-Baum ihn nicht mehr kennt - der Host rendert ihn dann als
-        # leeren Kasten. Angefasst werden ausschliesslich Container ohne Kinder;
-        # Checkbox und Zahlenfelder sind zu diesem Zeitpunkt schon woanders
-        # (die Checkbox hier umgehaengt, die Zahlenfelder fuer den Tab geparkt).
+        # blocks.py:456-479) und registriert ihn in der Komponentenliste des
+        # Blocks (root_context.blocks, blocks.py:477). Das Auspacken oben hat den
+        # Wrapper aus den Kindern der Reihe genommen, aber nicht aus dieser
+        # Liste: dort steht er weiter als leerer "form"-Knoten, obwohl der
+        # Layout-Baum ihn nicht mehr kennt - demo.get_config_file() liefert ihn
+        # deshalb mit. Entfernt wird er, damit die Komponentenliste der
+        # Konfiguration sauber bleibt.
+        # Die Massnahme ist rein defensiv: angefasst werden ausschliesslich
+        # Container ohne Kinder; Checkbox und Zahlenfelder sind zu diesem
+        # Zeitpunkt schon woanders (die Checkbox hier umgehaengt, die
+        # Zahlenfelder fuer den Tab geparkt).
         try:
             # Die Komponentenliste haengt am Wurzel-Blocks; er ist ueber die
             # Elternkette erreichbar und traegt default_config (blocks.py:1170).
@@ -1957,8 +1991,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             # Ganz oben im Tab stehen die beiden Wort-Regler. Sie gehoeren zu
             # beiden Knoepfen in Zeile 1 und wandern hierher, nachdem
             # create_inline_button() sie erzeugt und verdrahtet hat.
+            # Die Zeile wird leer geoeffnet, die Felder kommen erst NACH dem
+            # Block hinein: beim Verlassen gruppiert Gradio aufeinanderfolgende
+            # Formularfelder in einen gr.Form (BlockContext.__exit__ ->
+            # fill_expected_parents, blocks.py:456-486), der seine Kinder
+            # vertikal stapelt - die beiden Felder stuenden sonst untereinander.
             with gr.Row() as word_row:
-                self._attach_word_fields(word_row)
+                pass
+            self._attach_word_fields(word_row)
             # Direkt unter den Wort-Reglern: der Hinweis, der eingeklappte
             # Detailbereich mit dem Knopf und die Liste aus dem Zwischenspeicher.
             self._build_model_check_section()

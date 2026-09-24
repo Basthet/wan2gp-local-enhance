@@ -13,9 +13,11 @@ Danach dieselbe insert_after-Mechanik wie shared/utils/plugins.py:1659.
 
 Zum Schluss der Plugin-Tab: create_ui() laeuft laut Host NACH
 create_inline_button() (wgp.py:13628 vor 13976). Der Nachbau oeffnet dafuer
-denselben Container (gr.Column mit einer gr.Row) und ruft daraus
-_attach_word_fields() auf - die beiden Wort-Regler wandern damit aus der
-Knopfreihe in den Tab.
+denselben Container (gr.Column mit einer leeren gr.Row) und ruft
+_attach_word_fields() wie create_ui() erst NACH dem Verlassen des Row-Blocks auf -
+die beiden Wort-Regler wandern damit aus der Knopfreihe in den Tab, ohne dass
+Gradio sie unterwegs in einen vertikal stapelnden gr.Form gruppiert
+(BlockContext.__exit__ -> fill_expected_parents, blocks.py:456-486).
 
 Das Skript gibt den Komponentenbaum, die Zahl der Klick-Eingaben und die URL
 der Vorschau aus. Die Vorschau laeuft, bis der Prozess beendet wird.
@@ -52,6 +54,15 @@ sys.path.insert(0, str(REPO))
 
 import gradio as gr  # noqa: E402
 import plugin as P  # noqa: E402
+
+# Der gr.Form-Wrapper, den Gradio beim Schliessen eines Blocks um
+# aufeinanderfolgende Formularfelder legt (fill_expected_parents,
+# blocks.py:456-479), ist in dieser Gradio-Fassung (5.29) NICHT als gr.Form
+# exportiert: die Klasse liegt in gradio.layouts.form.
+try:
+    from gradio.layouts.form import Form as _Form  # noqa: N814
+except ImportError:  # pragma: no cover - andere Gradio-Fassungen
+    _Form = getattr(gr, "Form", None)
 
 # _word_range() liest die Grenzen aus __main__.server_config; hier stehen
 # Beispielwerte (0 = keine Untergrenze).
@@ -120,13 +131,17 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
 
     # Der Plugin-Tab. create_ui() laeuft beim Host erst nach
     # create_inline_button() (wgp.py:13628 vor 13976); genau dort holt
-    # _attach_word_fields() die beiden Wort-Regler aus der Knopfreihe hierher.
+    # _attach_word_fields() die beiden Wort-Regler aus der Knopfreihe hierher -
+    # wie in create_ui() erst NACH dem Row-Block, sonst gruppiert Gradio die
+    # beiden Felder beim Verlassen des Blocks in einen gr.Form und stapelt sie
+    # darin untereinander.
     # Darunter folgt der Modell-Check-Block (Hinweis, eingeklappter
     # Detailbereich, Knopf). Der Klick wird hier NICHT ausgeloest - er wuerde
     # den Zwischenspeicher schreiben; geprueft wird nur die Verdrahtung.
     with gr.Column() as tab:
         with gr.Row() as word_row:
-            p._attach_word_fields(word_row)
+            pass
+        p._attach_word_fields(word_row)
         check_btn, model_list, model_status = p._build_model_check_section()
 
     css = getattr(P, "_UI_CSS", "")
@@ -148,7 +163,7 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
 
     def _numbers(container):
         """Alle gr.Number-Felder unterhalb eines Containers, auch durch Gradios
-        eigenen gr.Form-Wrapper hindurch (der entsteht beim Schliessen des
+        eigenen gr.Form-Wrapper hindurch (der entsteht beim Schliessen eines
         Row-Kontexts aus aufeinanderfolgenden Formularfeldern)."""
         found = []
         for child in getattr(container, "children", None) or []:
@@ -157,6 +172,24 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
             else:
                 found.extend(_numbers(child))
         return found
+
+    def _has_form(container):
+        """Liegt direkt in diesem Container ein gr.Form-Wrapper?
+
+        Genau dort entstuende er: fill_expected_parents() legt ihn um die
+        aufeinanderfolgenden Formularfelder eines Blocks und haengt ihn als
+        eigenes Kind ein. Im Tab-Wortbereich darf keiner mehr liegen, sonst
+        stapelt er Min- und Max-Feld untereinander.
+        """
+        def _is_form(child):
+            if _Form is not None:
+                return isinstance(child, _Form)
+            return type(child).__name__ == "Form"
+
+        return any(
+            _is_form(child)
+            for child in (getattr(container, "children", None) or [])
+        )
 
     def _dump(component, depth=0):
         classes = getattr(component, "elem_classes", None) or []
@@ -216,6 +249,11 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         _types(form_row) if form_row is not None else "nicht gefunden",
     )
     print("Tab-Wortzeile:", _types(word_row))
+    print(
+        "Form-Wrapper im Tab-Wortbereich:",
+        _has_form(word_row),
+        "(erwartet False - ein gr.Form stapelt die Felder untereinander)",
+    )
     print(
         "Wort-Regler im Tab:",
         [
