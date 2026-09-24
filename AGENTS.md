@@ -20,12 +20,12 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `reasoning_effort` des Modells als `variant` (`opencode_backend.py:226`).
   Ungesetzt: kein Denken lokal, niedrigster Level remote (Anbieter haben kein
   echtes „aus").
-- **words** (Zeile 2, Preset-Dropdown neben dem Modus-Dropdown) — ersetzt die
+- **Words** (Zeile 2, Preset-Dropdown neben dem Modus-Dropdown) — ersetzt die
   feste 150-Wort-Grenze in WanGPs Anweisungen
   (`shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56`):
   die Presets `no limit` (0/0), `short - 150 words`, `medium - 300 words` und
   `long - 500 words` setzen Min auf 0; `custom (min/max)` blendet die beiden
-  kleinen Zahlenfelder `min:`/`max:` ein (0 = keine Grenze). Aufgelöst wird das
+  Zahlenfelder `Min`/`Max` ein (0 = keine Grenze). Aufgelöst wird das
   in `_read_controls` über `_preset_range`; Anweisungen: beide gesetzt →
   „Keep between MIN and MAX words.", nur Max → wie bisher, nur Min →
   „Write at least MIN words.", beide 0 → Sätze entfernt.
@@ -69,11 +69,10 @@ neu starten.
 - `61f25ae` — Wortgrenze als Preset-Dropdown (`no limit` / `150` / `300` / `500`
   / `custom`), Custom blendet die Zahlenfelder ein; `_read_controls` löst das
   Preset auf, `dev/ui_preview.py` kann per `PREVIEW_MAX` beide Fälle zeigen
-- **`2f6f3e6`, `446da1e` und `61f25ae` sind gepusht.** Ob der geladene Klon sie
-  schon hat, ist offen (Stand vor dem letzten Neustart: `d429ffb`, 5 Inputs).
-  Nach dem Neustart prüfen: beide Knöpfe **6 Inputs**
-  (`state, prompt, Think, Preset, Min, Max`), Preset wechseln → Felder
-  verschwinden, `custom` → sie kommen mit ihren alten Werten zurück.
+- **`2f6f3e6`, `446da1e` und `61f25ae` sind gepusht.** Nach dem Neustart prüfen:
+  beide Knöpfe **6 Inputs** (`state, prompt, Think, Preset, Min, Max`), alle vier
+  Kästen in Zeile 2 auf einer Linie, Preset wechseln → Felder verschwinden,
+  `custom` → sie kommen mit ihren alten Werten zurück.
 
 ## Technisches, das man sonst neu herausfinden muss
 
@@ -102,11 +101,29 @@ neu starten.
     vorgeben — das schlägt auch das Inline-Style. Betrifft die Reihe, die
     Think-Checkbox und die Wort-Regler (Preset-Dropdown 190px, Zahlenfelder
     84px, siehe `_UI_CSS`).
-  - Die Min/Max-Felder nutzen **Gradios eigenes Label** (`label="min:"` /
-    `"max:"`, `show_label=True`): es steht direkt über der Eingabe, kostet keine
-    eigene Komponente und hält die Formulargruppe zusammen. Die früheren
-    `gr.HTML`-Beschriftungen sind weg — genau deshalb ist der Unwrap-Code jetzt
-    kurz.
+  - **Höhe und vertikales Padding der Eingaben bleiben Gradios Vorgabe.** Eigene
+    `input{padding…; font-size…}`-Regeln machen die Zahlenfelder niedriger als
+    die Dropdowns daneben (live 21px statt 33px) und zerreissen die gemeinsame
+    Grundlinie. Erlaubt ist nur horizontal: `padding-left/right:4px`, sonst
+    schneidet „1500" in den 84px ab (5px Überlauf).
+  - **Captions sind `<span data-testid="block-info">`** im Kopf des Blocks, nicht
+    das `<label>` — Letzteres umschliesst bei `gr.Number` die Eingabe. Wer die
+    Caption stylen will, darf nicht `… label{…}` schreiben; die Schriftgrössen
+    sind ohne Zutun schon einheitlich.
+  - **WanGP versteckt die Caption des Modus-Dropdowns**, wenn der Enhancer
+    on-demand läuft (`wgp.py:12176`: `show_label = not on_demand_prompt_enhancer`).
+    Ohne Caption sitzt dessen Eingabe 32px höher als unsere beschrifteten Regler
+    (live gemessen: y665 gegen y697) — genau der schiefe Screenshot. Das Plugin
+    schaltet WanGPs eigene Caption deshalb in `create_inline_button` ein
+    (`mode_dropdown.show_label = True`), und zwar **vor** dem Anhängen der
+    eigenen Regler, sonst findet die Dropdown-Suche das eigene Preset. Ein
+    Modellwechsel setzt sie nicht zurück: `refresh_prompt_enhancer_labels`
+    schickt nur `choices` (`wgp.py:10898`).
+  - Die Wort-Regler nutzen **Gradios eigene Captions** (`label="Words"` /
+    `"Min"` / `"Max"`, `show_label=True`): sie stehen direkt über der Eingabe,
+    kosten keine eigene Komponente und halten die Formulargruppe zusammen. Die
+    früheren `gr.HTML`-Beschriftungen sind weg — genau deshalb ist der
+    Unwrap-Code jetzt kurz.
   - Das Wortzahl-Preset ist ein `gr.Dropdown`, also ebenfalls FormComponent, und
     läuft durch dieselbe Unwrap-/Move-Mechanik wie die Zahlenfelder.
   - `visible=False` ändert nur das Rendering: die beiden Zahlenfelder werden
@@ -133,11 +150,18 @@ neu starten.
   Erwartung:
   Zeile 1 = `[HTML, Button, Button, Checkbox]`,
   Zeile 2 (der `Form` mit dem Dropdown) =
-  `[Dropdown, Dropdown(preset "words"), Number(min:), Number(max:)]`,
+  `[Dropdown, Dropdown(preset "Words"), Number(Min), Number(Max)]`,
   Regler = `[Checkbox, Dropdown, Number, Number]` → **6** Klick-Eingaben, und im
   Layout darf keine Komponente doppelt eingetragen sein.
+  Das Modus-Dropdown wird im Nachbau mit `show_label=False` angelegt (wie WanGP
+  im On-Demand-Modus) — der Dump muss danach `show_label=True` zeigen, sonst
+  greift der Caption-Fix nicht.
   `PREVIEW_MIN`/`PREVIEW_MAX` setzen die Startwerte; `PREVIEW_MAX=150` ergibt den
   Preset-Fall (Felder `display:none`), der Default `1500` den Custom-Fall.
+- Ausrichtung (headless, CDP): die sichtbaren Kästen aller vier Blöcke müssen
+  oben auf derselben y liegen (Modus/Preset `box` 258…298, Min/Max 258…300) und
+  `input.scrollWidth - clientWidth` muss 0 sein, sonst ist ein Wert wie „1500"
+  abgeschnitten.
 - Auflösung ohne UI (schneller Matrix-Check gegen `_read_controls`):
   `(False,"off",0,1500)` → `(0,0)`, `(False,"300",100,1500)` → `(0,300)`,
   `(False,"custom",800,100)` → `(100,800)`, `(False,None,0,1500)` → `(0,1500)`.

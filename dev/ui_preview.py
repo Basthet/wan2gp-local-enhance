@@ -67,10 +67,13 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
             elem_classes="btn_centered",
         )
         hidden = gr.Text(visible=False)
+        # show_label=False wie WanGP im On-Demand-Modus (wgp.py:12176) - nur so
+        # zeigt die Vorschau denselben Versatz, den das Plugin ausgleicht.
         dropdown = gr.Dropdown(
             choices=["Based on Text Prompt", "Based on Image"],
             value="Based on Text Prompt",
             label="Enhance Prompt using a LLM",
+            show_label=False,
             scale=5,
         )
         think = gr.Checkbox(
@@ -104,7 +107,8 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
             "  " * depth
             + f"{type(component).__name__} "
             f"id={getattr(component, 'elem_id', None) or ''!r} "
-            f"classes={list(classes)} label={getattr(component, 'label', None)!r}"
+            f"classes={list(classes)} label={getattr(component, 'label', None)!r} "
+            f"show_label={getattr(component, 'show_label', None)!r}"
         )
         for child in getattr(component, "children", None) or []:
             _dump(child, depth + 1)

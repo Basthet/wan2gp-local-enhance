@@ -99,16 +99,20 @@ _UI_CSS = (
     # Min/Max bleiben winzig: Gradio setzt width:100% und min_width (Default
     # 160px) auf jedes Kind, beides muss weg. 84px passt auch fuer vierstellige
     # Werte (maximal erlaubt sind 2000).
+    #
+    # Hoehe, Schrift und vertikales Padding der Eingaben bleiben Gradios
+    # Vorgabe: eine eigene Regel dort macht die Zahlenfelder niedriger als die
+    # Dropdowns daneben und zerreisst die gemeinsame Grundlinie. Nur horizontal
+    # darf es enger zugehen, sonst schneidet "1500" in den 84px ab
+    # (gemessen: 5px Ueberlauf).
+    # Die Caption ("Min"/"Max") wird nicht angefasst - sie ist ein
+    # <span data-testid="block-info"> im Kopf des Blocks, nicht das <label> des
+    # Eingabe-Wrappers.
     "#local_enhance_row + .form > .local-enhance-words{"
     "width:84px !important;max-width:84px !important;"
     "flex:0 0 84px !important;min-width:0 !important;}"
-    # "min:" / "max:" steht als Gradio-Label ueber der Eingabe und darf die
-    # Breite nicht mitwachsen lassen.
-    "#local_enhance_row + .form > .local-enhance-words label{"
-    "font-size:11px !important;line-height:1.2 !important;margin:0 !important;"
-    "padding:0 !important;white-space:nowrap !important;}"
     "#local_enhance_row + .form > .local-enhance-words input{"
-    "font-size:12px !important;padding:2px 4px !important;text-align:center !important;}"
+    "padding-left:4px !important;padding-right:4px !important;}"
 )
 _WORD_KEEP_SENTENCE = "Keep within 150 words."
 _WORD_LIMIT_SENTENCE = "Do not exceed the 150 word limit!"
@@ -927,7 +931,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "Think: sends the highest reasoning level of the selected model;\n"
                 "unticked it sends the lowest one - providers have no real off.\n"
                 "Words: presets no limit / 150 / 300 / 500 words;\n"
-                "'custom' reveals the min:/max: fields (0 removes that bound,\n"
+                "'custom' reveals the Min/Max fields (0 removes that bound,\n"
                 "presets set min to 0)."
             ),
             "local_enhance_local_btn": (
@@ -939,7 +943,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "Think: Qwen reasons before rewriting, with its own thinking\n"
                 "budget; unticked it answers straight away.\n"
                 "Words: presets no limit / 150 / 300 / 500 words;\n"
-                "'custom' reveals the min:/max: fields and the token budget\n"
+                "'custom' reveals the Min/Max fields and the token budget\n"
                 "grows with max (0 removes that bound, presets set min to 0)."
             ),
         }
@@ -1013,18 +1017,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             preset_field = gr.Dropdown(
                 choices=self._preset_choices(),
                 value=preset_key,
-                label="words",
+                label="Words",
                 show_label=True,
                 scale=0,
                 min_width=0,
                 elem_id="local_enhance_word_preset",
                 elem_classes=["local-enhance-preset"],
             )
-            # Gradios eigenes Label ("min:" / "max:") sitzt ueber der Eingabe -
-            # ein zusaetzliches HTML-Element waere nur Ballast.
+            # Gradios eigene Caption sitzt ueber der Eingabe - ein zusaetzliches
+            # HTML-Element waere nur Ballast.
             min_field = gr.Number(
                 value=min_words,
-                label="min:",
+                label="Min",
                 show_label=True,
                 visible=custom_words,
                 precision=0,
@@ -1038,7 +1042,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             )
             max_field = gr.Number(
                 value=max_words,
-                label="max:",
+                label="Max",
                 show_label=True,
                 visible=custom_words,
                 precision=0,
@@ -1133,6 +1137,25 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 None,
             )
         if dropdown_container is not None:
+            # WanGP blendet die Caption des Modus-Dropdowns im On-Demand-Modus aus
+            # (wgp.py:12176: show_label = not on_demand_prompt_enhancer), weil dort
+            # der eingebaute Knopf daneben steht. Hier steht das Dropdown allein in
+            # Zeile 2; ohne Caption sitzt seine Eingabe 32px hoeher als unsere
+            # beschrifteten Regler (live gemessen). Die Caption ist WanGPs eigene,
+            # wir schalten sie nur ein. Ein Modellwechsel setzt sie nicht zurueck:
+            # refresh_prompt_enhancer_labels schickt nur choices (wgp.py:10898).
+            # Wichtig: vor dem Anhaengen der eigenen Regler suchen, sonst findet
+            # diese Suche das Preset-Dropdown.
+            mode_dropdown = next(
+                (
+                    child
+                    for child in (getattr(dropdown_container, "children", []) or [])
+                    if isinstance(child, gr.Dropdown)
+                ),
+                None,
+            )
+            if mode_dropdown is not None:
+                mode_dropdown.show_label = True
             try:
                 for child in words_children:
                     # Die Felder haengen noch direkt in der Knopfreihe; ohne
@@ -1222,8 +1245,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "<b>OpenCode</b> enhances remotely through the configured engine, "
                 "<b>Local 27B</b> enhances on this GPU with Qwen3.8-27B. "
                 "Both write the result straight into the prompt field. "
-                "<b>Think</b> and the <b>words</b> preset apply to every button "
-                "(<i>custom</i> reveals the min:/max: fields). "
+                "<b>Think</b> and the <b>Words</b> preset apply to every button "
+                "(<i>custom</i> reveals the Min/Max fields). "
                 "Hover the info button for details."
             )
             text_in = gr.Textbox(
