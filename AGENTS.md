@@ -43,14 +43,25 @@ werden beim Start einmal importiert; ein laufender Prozess behält den alten Cod
 Der Updater ist ein reines `origin.pull()` (`shared/utils/plugins.py:1327`) und
 scheitert an einem dirty working tree — den geladenen Klon also sauber halten.
 
+Es gibt **kein** Hot-Reload für Plugins: `load_plugins_from_directory` läuft nur
+beim Start (`shared/utils/plugins.py:1489/1511`, Aufruf `wgp.py:13820`). Der
+Knopf *Restart* im Plugin-Manager ist der einzige Weg aus der UI — er läuft über
+den Gradio-Endpunkt `_handle_save_action` → `restart_application()`
+(`wgp.py:2310`) → `os._exit(42)` und braucht deshalb einen Aufpasser, der den
+Prozess neu startet. Bei von Hand gestartetem `python wgp.py` also: beenden und
+neu starten.
+
 ## Stand
 
 - `212cb3e` — zwei Knöpfe, Tooltips, Remote-Fix (das Plugin liefert
   Ersatz-Anweisungen, weil die meisten Modelle keine definieren)
 - `6fb5862` — Think-Checkbox gilt für beide Knöpfe (läuft)
 - `6d48958` — Feld „Max words" (ein Feld, ersetzt durch Min/Max)
-- **Min/Max-Umbau: im Arbeitsverzeichnis fertig und getestet, aber noch NICHT
-  committet/gepusht.** Betrifft `plugin.py` (Min/Max auf Zeile 2) und diese Datei.
+- `4570807` — Min/Max-Umbau: zwei Felder auf Zeile 2, Sätze je Kombination,
+  Token-Budget wächst mit Max
+- `d429ffb` — diese Anleitung ins Repo (vorher untracked)
+- **Alles gepusht, beide Klone auf `d429ffb`, in WanGP geladen und live geprüft:**
+  beide Knöpfe 5 Inputs, `local_enhance_min_words`/`_max_words` vorhanden.
 
 ## Technisches, das man sonst neu herausfinden muss
 
@@ -110,6 +121,3 @@ scheitert an einem dirty working tree — den geladenen Klon also sauber halten.
 - Das Denk-Budget der 27B ist hart auf **2000 Tokens** begrenzt
   (`shared/prompt_enhancer/qwen35_text.py:64`) — es gibt keinen Config-Key dafür.
 - Der Tab-Knopf hat keine eigenen Widgets; er nutzt die Regler aus Zeile 1/2.
-- Min/Max-Umbau ist noch nicht committet und noch nicht in WanGP geladen
-  (Stand dort: `6fb5862` in der laufenden Instanz, `6d48958` im geladenen Klon
-  wäre nach einem Update aktiv).
