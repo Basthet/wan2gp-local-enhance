@@ -58,16 +58,18 @@ _REASONING_RANK = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "
 
 # WanGP schreibt die Wortgrenze fest in die Enhancer-Anweisungen
 # (shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56). Das Plugin
-# ersetzt genau diese Saetze, damit die Grenze ueber ein Feld einstellbar wird.
+# ersetzt genau diese Saetze, damit Min/Max ueber Felder einstellbar werden.
+_DEFAULT_MIN_WORDS = 0
 _DEFAULT_WORD_LIMIT = 150
 _WORD_LIMIT_MAX = 2000
-_WORD_LIMIT_KEY = "local_enhance_word_limit"
-_WORD_LIMIT_SENTENCES = (
-    ("Keep within 150 words.", "Keep within {limit} words."),
-    ("Do not exceed the 150 word limit!", "Do not exceed the {limit} word limit!"),
-)
+_MIN_WORDS_KEY = "local_enhance_min_words"
+_MAX_WORDS_KEY = "local_enhance_max_words"
+_WORD_LIMIT_KEY = "local_enhance_word_limit"   # Altbestand, Fallback fuer Max
+_WORD_KEEP_SENTENCE = "Keep within 150 words."
+_WORD_LIMIT_SENTENCE = "Do not exceed the 150 word limit!"
 _BASE_OUTPUT_TOKENS = 512
 _MAX_OUTPUT_TOKENS = 4096
+_NO_LIMIT_OUTPUT_TOKENS = 1024
 
 
 def _main(name, default=None):
@@ -272,80 +274,124 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return str(first or "").strip()
 
     @staticmethod
-    def _word_limit(value=None):
-        """Wortgrenze bestimmen: Feldwert, sonst Config, sonst 150.
-
-        0 heisst 'kein Limit' - dann werden die Grenz-Saetze aus den
-        Anweisungen entfernt.
-        """
-        if value is None:
-            config = _main("server_config") or {}
-            value = (
-                config.get(_WORD_LIMIT_KEY, _DEFAULT_WORD_LIMIT)
-                if isinstance(config, dict)
-                else _DEFAULT_WORD_LIMIT
-            )
+    def _clamp_words(value):
+        """Wortzahl auf 0.._WORD_LIMIT_MAX begrenzen; ungueltig -> None."""
         try:
-            limit = int(value)
+            words = int(value)
         except (TypeError, ValueError):
-            return _DEFAULT_WORD_LIMIT
-        return max(0, min(_WORD_LIMIT_MAX, limit))
+            return None
+        return max(0, min(_WORD_LIMIT_MAX, words))
+
+    @classmethod
+    def _word_range(cls, min_value=None, max_value=None):
+        """Min/Max der Wortgrenze: Feldwert, sonst Config, sonst Default.
+
+        0 heisst jeweils 'keine Grenze'. Ist Min groesser als Max, werden beide
+        getauscht - die Anweisung waere sonst widerspruechlich.
+        """
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if min_value is None:
+            min_value = config.get(_MIN_WORDS_KEY, _DEFAULT_MIN_WORDS)
+        if max_value is None:
+            max_value = config.get(_MAX_WORDS_KEY, config.get(_WORD_LIMIT_KEY, _DEFAULT_WORD_LIMIT))
+        min_words = cls._clamp_words(min_value)
+        max_words = cls._clamp_words(max_value)
+        if min_words is None:
+            min_words = _DEFAULT_MIN_WORDS
+        if max_words is None:
+            max_words = _DEFAULT_WORD_LIMIT
+        if min_words > 0 and max_words > 0 and min_words > max_words:
+            min_words, max_words = max_words, min_words
+        return min_words, max_words
 
     @staticmethod
-    def _remember_word_limit(limit):
-        """Wortgrenze in der Live-Config merken - WanGP schreibt sie mit."""
+    def _remember_word_range(min_words, max_words):
+        """Die Grenzen in der Live-Config merken - WanGP schreibt sie mit."""
         config = _main("server_config")
         if isinstance(config, dict):
-            config[_WORD_LIMIT_KEY] = int(limit)
+            config[_MIN_WORDS_KEY] = int(min_words)
+            config[_MAX_WORDS_KEY] = int(max_words)
 
     @staticmethod
-    def _apply_word_limit(text, limit):
-        """Die feste 150-Wort-Grenze in den Anweisungen ersetzen."""
+    def _apply_word_limit(text, min_words, max_words):
+        """Die festen 150-Wort-Saetze durch die gewaehlten Grenzen ersetzen."""
         text = str(text or "")
-        if limit <= 0:
-            for source, _template in _WORD_LIMIT_SENTENCES:
-                text = text.replace(source, "")
-            return re.sub(r"\n{3,}", "\n\n", text).strip()
-        for source, template in _WORD_LIMIT_SENTENCES:
-            text = text.replace(source, template.format(limit=limit))
-        return text
+        if min_words > 0 and max_words > 0:
+            keep = f"Keep between {min_words} and {max_words} words."
+            limit = f"Do not exceed the {max_words} word limit!"
+        elif max_words > 0:
+            keep = f"Keep within {max_words} words."
+            limit = f"Do not exceed the {max_words} word limit!"
+        elif min_words > 0:
+            keep = f"Write at least {min_words} words."
+            limit = ""
+        else:
+            keep = ""
+            limit = ""
+        text = text.replace(_WORD_KEEP_SENTENCE, keep).replace(_WORD_LIMIT_SENTENCE, limit)
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
 
     @staticmethod
-    def _output_token_budget(limit):
+    def _output_token_budget(min_words, max_words):
         """Token-Budget, in das die gewuenschte Wortzahl passt.
 
         150 Woerter passen in die 512 Tokens der Voreinstellung. Darueber waechst
         das Budget mit (grob 2.2 Tokens pro Wort; deutsch braucht mehr als
         englisch), sonst schneidet das Token-Limit den Prompt ab.
         """
-        if limit <= 0:
-            return 1024
-        return max(_BASE_OUTPUT_TOKENS, min(_MAX_OUTPUT_TOKENS, int(round(limit * 2.2)) + 64))
+        reference = max_words if max_words > 0 else min_words
+        if reference <= 0:
+            return _NO_LIMIT_OUTPUT_TOKENS
+        return max(_BASE_OUTPUT_TOKENS, min(_MAX_OUTPUT_TOKENS, int(round(reference * 2.2)) + 64))
+
+    @staticmethod
+    def _word_note(min_words, max_words):
+        """Kurzer Hinweis auf die gesetzten Grenzen."""
+        if min_words > 0 and max_words > 0:
+            return f", {min_words}-{max_words} words"
+        if max_words > 0:
+            return f", max {max_words} words"
+        if min_words > 0:
+            return f", min {min_words} words"
+        return ", no word limit"
 
     @classmethod
     def _read_controls(cls, controls):
-        """Think-Checkbox und Wortgrenze aus den optionalen Eingaben lesen.
+        """Think-Checkbox und Min/Max aus den optionalen Eingaben lesen.
 
-        Beide Widgets koennen fehlen (WanGP legt die Think-Checkbox nur fuer
-        lokale Enhancer an), deshalb wird nach Typ ausgewertet statt nach
-        Position.
+        Die Widgets koennen fehlen (WanGP legt die Think-Checkbox nur fuer lokale
+        Enhancer an), deshalb wird nach Typ ausgewertet. Die Zahlen kommen in
+        fester Reihenfolge (erst Min, dann Max); fehlt eine, gilt der Default.
         """
         think = False
-        limit = None
+        numbers = []
         for value in controls:
             if isinstance(value, bool):
                 think = value
             elif isinstance(value, (int, float)):
-                limit = value
-        return think, cls._word_limit(limit)
+                numbers.append(int(value))
+        if len(numbers) >= 2:
+            min_value, max_value = numbers[0], numbers[1]
+        elif len(numbers) == 1:
+            # Einzelnes Feld: in der alten Fassung war das die Obergrenze.
+            min_value, max_value = None, numbers[0]
+        else:
+            min_value = max_value = None
+        min_words, max_words = cls._word_range(min_value, max_value)
+        return think, min_words, max_words
 
     def _control_components(self):
-        """Die optionalen Regler der Knopfreihe: Think-Checkbox, Wortgrenze."""
-        fields = (getattr(self, "_think_checkbox", None), getattr(self, "_words_field", None))
+        """Die optionalen Regler: Think-Checkbox, Min-Wortzahl, Max-Wortzahl."""
+        fields = (
+            getattr(self, "_think_checkbox", None),
+            getattr(self, "_min_words_field", None),
+            getattr(self, "_max_words_field", None),
+        )
         return [field for field in fields if field is not None]
 
     @classmethod
-    def _fallback_instructions(cls, is_image, audio_only, word_limit=None):
+    def _fallback_instructions(cls, is_image, audio_only, min_words=None, max_words=None):
         """Dieselben eingebauten Anweisungen, die der lokale Pfad benutzt.
 
         `resolve_prompt_enhancer_settings()` (wgp.py:6457) holt die Anweisungen
@@ -369,7 +415,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             text = T2T_TEXT_PROMPT
         else:
             text = T2I_VISUAL_PROMPT if is_image else T2V_CINEMATIC_PROMPT
-        return cls._apply_word_limit(text, cls._word_limit(word_limit))
+        return cls._apply_word_limit(text, *cls._word_range(min_words, max_words))
 
     @staticmethod
     def _local_engine_name():
@@ -385,8 +431,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     def enhance(self, state, text, *controls):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext."""
-        think, max_words = self._read_controls(controls)
-        self._remember_word_limit(max_words)
+        think, min_words, max_words = self._read_controls(controls)
+        self._remember_word_range(min_words, max_words)
         text = str(text or "").strip()
         if not text:
             return "", "Enter a prompt first."
@@ -483,8 +529,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 -1,        # seed -> zufaellig
                 # Wortgrenze steckt in den Anweisungen; das Token-Budget muss
                 # mitwachsen, sonst schneidet das Limit den Prompt ab.
-                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, max_words),
-                text_encoder_max_tokens=self._output_token_budget(max_words),
+                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, min_words, max_words),
+                text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             return "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
@@ -643,8 +689,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         erkennt an der Engine, dass remote gearbeitet wird (wgp.py:6409), und
         ueberspringt den lokalen Loader (local_runtime, wgp.py:6505).
         """
-        think, max_words = self._read_controls(controls)
-        self._remember_word_limit(max_words)
+        think, min_words, max_words = self._read_controls(controls)
+        self._remember_word_range(min_words, max_words)
         text = str(text or "").strip()
         if not text:
             return "", "Enter a prompt first."
@@ -720,8 +766,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 -1,        # seed -> zufaellig
                 # Ohne Anweisung geht ein LEERER System-Prompt an die Remote-
                 # Engine und der Agent fragt zurueck statt umzuschreiben.
-                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, max_words),
-                text_encoder_max_tokens=self._output_token_budget(max_words),
+                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, min_words, max_words),
+                text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             import traceback
@@ -741,10 +787,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self._last_source = text
         seconds = time.time() - started
         effort_note = f" Reasoning effort `{effort}`." if effort else ""
-        limit_note = f" Max {max_words} words." if max_words > 0 else " No word limit."
         return result, (
             f"Enhanced remotely with **{engine}** (mode `{mode}`) in {seconds:.1f}s."
-            f"{effort_note}{limit_note} No local VRAM used."
+            f"{effort_note}{self._word_note(min_words, max_words)}. No local VRAM used."
         )
 
     def write_back(self, state, text):
@@ -786,8 +831,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "rewrites the prompt instead of asking a question.\n"
                 "Think: sends the highest reasoning level of the selected model;\n"
                 "unticked it sends the lowest one - providers have no real off.\n"
-                "Max words: replaces the 150-word limit in the instructions\n"
-                "(0 removes it)."
+                "Min/Max words: replace the 150-word limit in the instructions;\n"
+                "0 in a field removes that bound."
             ),
             "local_enhance_local_btn": (
                 f"{self._button_label()} - enhance on this GPU\n"
@@ -797,8 +842,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "30-60 s. No remote tokens are used.\n"
                 "Think: Qwen reasons before rewriting, with its own thinking\n"
                 "budget; unticked it answers straight away.\n"
-                "Max words: replaces the 150-word limit in the instructions; the\n"
-                "token budget grows with it (0 removes the limit)."
+                "Min/Max words: replace the 150-word limit in the instructions;\n"
+                "the token budget grows with Max (0 in a field removes that bound)."
             ),
         }
         return """
@@ -820,8 +865,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     '#local_enhance_builtin_btn{display:none !important;}' +
     '#local_enhance_row{flex-wrap:wrap !important;}' +
     '#local_enhance_row .local-enhance-label,' +
-    '#local_enhance_row .cbx_centered,' +
-    '#local_enhance_row .local-enhance-words{width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}' +
+    '#local_enhance_row .cbx_centered{width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}' +
+    // Min/Max sitzen im Dropdown-Container (Zeile 2). Auch dort setzt Gradio
+    // width:100% und wuerde die Felder strecken.
+    '#local_enhance_row + .form > .local-enhance-words,' +
+    '#local_enhance_row + .form > .local-enhance-words-label{width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}' +
     // The mode dropdown sits in a gr.Form right after this row; a full flex-basis
     // makes it wrap onto its own line below.
     '#local_enhance_row + .form{flex-basis:100% !important;}';
@@ -861,6 +909,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return gr.Button(self._button_label(), visible=False)
 
         remote_label = self._remote_button_label()
+        min_words, max_words = self._word_range()
 
         with gr.Row(elem_id="local_enhance_row") as button_row:
             gr.HTML(
@@ -877,36 +926,65 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 f"{self._button_label()} \u24d8", size="sm", scale=0, min_width=0,
                 elem_id="local_enhance_local_btn", elem_classes="btn_centered",
             )
-            # Wortgrenze der Enhancer-Anweisungen. Gradio packt einzelne
-            # Formularfelder in einen gr.Form-Wrapper; der wird gleich wieder
-            # entfernt, sonst greift das CSS fuer die direkten Kinder der Reihe
-            # nicht mehr (gemessen: Gradio setzt dort width:100%).
-            words_field = gr.Number(
-                value=self._word_limit(),
-                label="Max words",
+            # Min/Max der Wortgrenze. Bewusst OHNE Gradio-Label: Gradio stapelt
+            # Label ueber Eingabe, das Feld wird in einer Reihe gestaucht und
+            # bricht um. Die Beschriftung ist deshalb ein eigenes Inline-Element.
+            # Beide wandern gleich in den Container des Modus-Dropdowns (Zeile 2).
+            min_label = gr.HTML(
+                "<span style='font-weight:600; white-space:nowrap;'>Min words</span>",
+                elem_classes=["local-enhance-words-label"],
+            )
+            min_field = gr.Number(
+                value=min_words,
+                show_label=False,
                 precision=0,
                 minimum=0,
                 maximum=_WORD_LIMIT_MAX,
                 step=10,
                 scale=0,
-                min_width=0,
-                elem_id="local_enhance_words",
+                min_width=70,
+                elem_id="local_enhance_min_words",
                 elem_classes=["local-enhance-words"],
             )
+            max_label = gr.HTML(
+                "<span style='font-weight:600; white-space:nowrap;'>Max words</span>",
+                elem_classes=["local-enhance-words-label"],
+            )
+            max_field = gr.Number(
+                value=max_words,
+                show_label=False,
+                precision=0,
+                minimum=0,
+                maximum=_WORD_LIMIT_MAX,
+                step=10,
+                scale=0,
+                min_width=70,
+                elem_id="local_enhance_max_words",
+                elem_classes=["local-enhance-words"],
+            )
+            words_children = (min_label, min_field, max_label, max_field)
 
-        # Zahlfeld aus seinem Wrapper loesen und erst NACH der Checkbox wieder
-        # anhaengen - so bleibt die Reihenfolge Label, Knoepfe, Think, Max words.
-        wrapper = getattr(words_field, "parent", None)
-        if wrapper is not None and wrapper is not button_row:
-            try:
-                wrapper.children.remove(words_field)
-                button_row.children.remove(wrapper)
-                words_field.parent = None
-            except Exception as exc:  # noqa: BLE001
-                print(f"[{PlugIn_Name}] Could not unwrap the word-limit field: {exc}")
+        # Die vier Elemente aus ihren gr.Form-Wrappern loesen. Gradio gruppiert
+        # nur aufeinanderfolgende Formularfelder; die HTML-Beschriftungen
+        # dazwischen zerreissen den Lauf, es entstehen also MEHRERE Wrapper.
+        ours = {id(child) for child in words_children}
+        try:
+            for candidate in list(getattr(button_row, "children", []) or []):
+                inner = getattr(candidate, "children", None)
+                if not inner or not any(id(item) in ours for item in inner):
+                    continue
+                for item in list(inner):
+                    if id(item) in ours:
+                        inner.remove(item)
+                        item.parent = None
+                if not inner and any(existing is candidate for existing in button_row.children):
+                    button_row.children.remove(candidate)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Could not unwrap the word-limit fields: {exc}")
 
         parent = getattr(button_row, "parent", None)
         think_checkbox = None
+        dropdown_container = None
 
         # Die Think-Checkbox hierher holen. Gradio gruppiert aufeinanderfolgende
         # Formularfelder in EINEN gr.Form-Container, in dem Dropdown und Checkbox
@@ -940,23 +1018,43 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     checkbox.parent = button_row
                     checkbox.scale = 0          # naturale Breite statt strecken
                     think_checkbox = checkbox
+                    dropdown_container = container
                 except Exception as exc:  # noqa: BLE001
                     print(f"[{PlugIn_Name}] Could not move the Think checkbox: {exc}")
 
-        # Wortgrenze als letztes Element der Reihe.
-        try:
-            button_row.children.append(words_field)
-            words_field.parent = button_row
-        except Exception as exc:  # noqa: BLE001
-            print(f"[{PlugIn_Name}] Could not attach the word-limit field: {exc}")
+        # Min/Max neben das Modus-Dropdown: so bleibt Zeile 1 genau so, wie sie
+        # war. Der Zielcontainer ist der gr.Form, in dem die Think-Checkbox lag -
+        # darin steckt das Dropdown. Fehlt er, wird er ueber das Dropdown gesucht.
+        if dropdown_container is None and parent is not None:
+            dropdown_container = next(
+                (
+                    candidate
+                    for candidate in (getattr(parent, "children", []) or [])
+                    if getattr(candidate, "children", None)
+                    and any(isinstance(child, gr.Dropdown) for child in candidate.children)
+                ),
+                None,
+            )
+        if dropdown_container is not None:
+            try:
+                for child in words_children:
+                    # Die Beschriftungen haengen noch direkt in der Knopfreihe;
+                    # ohne dieses Entfernen staenden sie in zwei Eltern gleichzeitig.
+                    if any(existing is child for existing in button_row.children):
+                        button_row.children.remove(child)
+                    dropdown_container.children.append(child)
+                    child.parent = dropdown_container
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{PlugIn_Name}] Could not attach the word-limit fields: {exc}")
 
         # Fuer den Tab-Knopf bereithalten: create_ui() laeuft erst nach dieser
         # Funktion (wgp.py:13628 vor 13976) und kann die Regler mitverdrahten.
         self._think_checkbox = think_checkbox
-        self._words_field = words_field
+        self._min_words_field = min_field
+        self._max_words_field = max_field
 
-        # Beide Regler gelten fuer BEIDE Knoepfe: die Checkbox schaltet lokal das
-        # Denken und remote den Reasoning-Level, das Feld die Wortgrenze. Fehlt
+        # Alle Regler gelten fuer BEIDE Knoepfe: die Checkbox schaltet lokal das
+        # Denken und remote den Reasoning-Level, Min/Max die Wortgrenze. Fehlt
         # ein Widget, bleibt der jeweilige Default aktiv.
         controls = self._control_components()
         remote_btn.click(
@@ -1000,10 +1098,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
-        think, max_words = self._read_controls(controls)
+        think, min_words, max_words = self._read_controls(controls)
         marker = " + Think" if think else ""
-        limit_note = f", max {max_words} words" if max_words > 0 else ", no word limit"
-        gr.Info(f"{self._button_label()}: enhanced with {self._variant_label()}{marker}{limit_note}")
+        gr.Info(
+            f"{self._button_label()}: enhanced with {self._variant_label()}"
+            f"{marker}{self._word_note(min_words, max_words)}"
+        )
         return self._with_history(result)
 
     # ------------------------------------------------------------------- UI
@@ -1024,7 +1124,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "<b>OpenCode</b> enhances remotely through the configured engine, "
                 "<b>Local 27B</b> enhances on this GPU with Qwen3.8-27B. "
                 "Both write the result straight into the prompt field. "
-                "<b>Think</b> and <b>Max words</b> apply to every button. "
+                "<b>Think</b>, <b>Min words</b> and <b>Max words</b> apply to every button. "
                 "Hover the info button for details."
             )
             text_in = gr.Textbox(
