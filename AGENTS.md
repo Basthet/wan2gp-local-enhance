@@ -124,10 +124,12 @@ neu starten.
   statt des fertigen Listentexts; den Anzeigetext rendert der Tab-Aufbau, ein
   alter oder fremder Stand gilt als „noch nicht geprüft" und zeigt den
   Ersatztext
-- **Gepusht sind alle Commits bis `39dbd33`.** `144c206` und `b0bd5ba` waren
-  lokal voraus und gehen mit demselben Arbeitsschritt nach `origin/main`
-  (kein Force-Push, kein Rebase).
-  Nach dem Neustart prüfen: `local_enhance_remote_btn` **6 Inputs**,
+- `73fd23d` — Stand der Anleitung nachgezogen: Modell-Check mit Modellzeile und
+  gebündelter Liste
+- **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
+  gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
+  unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
+- **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **6 Inputs**,
   `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, die
   beiden Felder **Min words** / **Max words** ganz oben im Plugin-Tab
   nebeneinander und ohne abgeschnittene „1500", darunter die Zeile zum aktuellen
