@@ -13,6 +13,10 @@ Aufruf (aus dem WanGP-Ordner, mit dessen venv):
     ./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py [port]
     # http://127.0.0.1:7899/?__theme=dark
 
+PREVIEW_MIN/PREVIEW_MAX setzen die Startwerte der Wortgrenze: der Default
+(0/1500) ergibt den Custom-Fall mit sichtbaren Zahlenfeldern, PREVIEW_MAX=150
+den Preset-Fall ("short - 150 words", Felder versteckt).
+
 Screenshot ohne Browserfenster (aus dem Plugin-Ordner):
 
     env -u DISPLAY chromium --headless=new --no-sandbox --disable-gpu \
@@ -25,6 +29,7 @@ Das Bild zeigt nur die Zeile in einem Nahbau der Umgebung: die Knopfreihe wird
 hier von .btn_centered-Regeln aus WanGPs eigenem CSS gestuetzt, die WanGP-Theme
 selbst (Farben, Abstaende) fehlt.
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -39,8 +44,12 @@ import gradio as gr  # noqa: E402
 import plugin as P  # noqa: E402
 
 # _word_range() liest die Grenzen aus __main__.server_config; hier stehen
-# Beispielwerte (0 = keine Untergrenze).
-server_config = {"local_enhance_min_words": 0, "local_enhance_max_words": 1500}
+# Beispielwerte (0 = keine Untergrenze). Ueber PREVIEW_MIN/PREVIEW_MAX laesst
+# sich ein Preset statt "custom" einstellen, z. B. PREVIEW_MAX=150.
+server_config = {
+    "local_enhance_min_words": int(os.environ.get("PREVIEW_MIN", 0)),
+    "local_enhance_max_words": int(os.environ.get("PREVIEW_MAX", 1500)),
+}
 
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 7899
 

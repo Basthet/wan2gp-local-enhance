@@ -20,11 +20,15 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `reasoning_effort` des Modells als `variant` (`opencode_backend.py:226`).
   Ungesetzt: kein Denken lokal, niedrigster Level remote (Anbieter haben kein
   echtes „aus").
-- **min: / max:** (Zeile 2, zwei kleine Felder neben dem Modus-Dropdown) —
-  ersetzen die feste 150-Wort-Grenze in WanGPs Anweisungen
+- **words** (Zeile 2, Preset-Dropdown neben dem Modus-Dropdown) — ersetzt die
+  feste 150-Wort-Grenze in WanGPs Anweisungen
   (`shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56`):
-  beide gesetzt → „Keep between MIN and MAX words.", nur Max → wie bisher,
-  nur Min → „Write at least MIN words.", beide 0 → Sätze entfernt.
+  die Presets `no limit` (0/0), `short - 150 words`, `medium - 300 words` und
+  `long - 500 words` setzen Min auf 0; `custom (min/max)` blendet die beiden
+  kleinen Zahlenfelder `min:`/`max:` ein (0 = keine Grenze). Aufgelöst wird das
+  in `_read_controls` über `_preset_range`; Anweisungen: beide gesetzt →
+  „Keep between MIN and MAX words.", nur Max → wie bisher, nur Min →
+  „Write at least MIN words.", beide 0 → Sätze entfernt.
   Das Token-Budget wächst mit (`_output_token_budget`), sonst schneidet das
   512-Token-Limit den Prompt ab.
 
@@ -93,15 +97,22 @@ neu starten.
   - Gradio setzt `width:100%` **und** ein Inline-`min-width` (Default 160px, aus
     `min_width`) auf die Kinder. Breiten deshalb per CSS mit `!important`
     vorgeben — das schlägt auch das Inline-Style. Betrifft die Reihe, die
-    Think-Checkbox und die beiden Min/Max-Felder (84px, siehe `_UI_CSS`).
+    Think-Checkbox und die Wort-Regler (Preset-Dropdown 190px, Zahlenfelder
+    84px, siehe `_UI_CSS`).
   - Die Min/Max-Felder nutzen **Gradios eigenes Label** (`label="min:"` /
     `"max:"`, `show_label=True`): es steht direkt über der Eingabe, kostet keine
     eigene Komponente und hält die Formulargruppe zusammen. Die früheren
     `gr.HTML`-Beschriftungen sind weg — genau deshalb ist der Unwrap-Code jetzt
-    kurz (nur noch die beiden Zahlenfelder).
+    kurz.
+  - Das Wortzahl-Preset ist ein `gr.Dropdown`, also ebenfalls FormComponent, und
+    läuft durch dieselbe Unwrap-/Move-Mechanik wie die Zahlenfelder.
+  - `visible=False` ändert nur das Rendering: die beiden Zahlenfelder werden
+    weiter mitgesendet, ihr Wert überlebt also das Umschalten auf ein Preset und
+    zurück (live geprüft).
   - Die Regler werden **nach Typ** ausgelesen (`*controls`), weil die
-    Think-Checkbox fehlen kann. Zahlen kommen in fester Reihenfolge: erst Min,
-    dann Max.
+    Think-Checkbox fehlen kann: `bool` = Think, `str` = Preset-Schlüssel, Zahlen
+    = Custom-Felder. Feste Reihenfolge der Klick-Eingaben:
+    `state, prompt, Think, Preset, Min, Max`.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 0 (= keine Untergrenze), Max 150.
@@ -118,9 +129,15 @@ neu starten.
   `./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py 7899`.
   Erwartung:
   Zeile 1 = `[HTML, Button, Button, Checkbox]`,
-  Zeile 2 (der `Form` mit dem Dropdown) = `[Dropdown, Number(min:), Number(max:)]`,
-  Regler = `[Checkbox, Number, Number]` → **5** Klick-Eingaben, und im Layout darf
-  keine Komponente doppelt eingetragen sein.
+  Zeile 2 (der `Form` mit dem Dropdown) =
+  `[Dropdown, Dropdown(preset "words"), Number(min:), Number(max:)]`,
+  Regler = `[Checkbox, Dropdown, Number, Number]` → **6** Klick-Eingaben, und im
+  Layout darf keine Komponente doppelt eingetragen sein.
+  `PREVIEW_MIN`/`PREVIEW_MAX` setzen die Startwerte; `PREVIEW_MAX=150` ergibt den
+  Preset-Fall (Felder `display:none`), der Default `1500` den Custom-Fall.
+- Auflösung ohne UI (schneller Matrix-Check gegen `_read_controls`):
+  `(False,"off",0,1500)` → `(0,0)`, `(False,"300",100,1500)` → `(0,300)`,
+  `(False,"custom",800,100)` → `(100,800)`, `(False,None,0,1500)` → `(0,1500)`.
 - Bild der Zeile ohne Browserfenster (Chromium ist installiert, Playwright nicht):
   `--headless=new --user-data-dir=.ui-shots/prof --force-device-scale-factor=2
   --virtual-time-budget=9000 --window-size=780,300 --screenshot=….png
@@ -129,7 +146,7 @@ neu starten.
   Crashpad/Benutzerprofil wandern dorthin.
 - End-to-End (WanGP läuft): `http://127.0.0.1:7860/config` abrufen — die
   Dependencies von `local_enhance_local_btn` und `local_enhance_remote_btn`
-  müssen **5 Inputs** haben (`state, prompt, Think, Min, Max`).
+  müssen **6 Inputs** haben (`state, prompt, Think, Preset, Min, Max`).
 - Schreibzugriffe außerhalb des Workspace (WanGP-Klon, WanGP-Repo) brauchen in der
   Sandbox `danger-full-access`.
 
