@@ -60,8 +60,13 @@ neu starten.
 - `4570807` — Min/Max-Umbau: zwei Felder auf Zeile 2, Sätze je Kombination,
   Token-Budget wächst mit Max
 - `d429ffb` — diese Anleitung ins Repo (vorher untracked)
-- **Alles gepusht, beide Klone auf `d429ffb`, in WanGP geladen und live geprüft:**
-  beide Knöpfe 5 Inputs, `local_enhance_min_words`/`_max_words` vorhanden.
+- `2f6f3e6` — Min/Max kompakt: Gradio-Label `min:`/`max:` über der Eingabe,
+  Felder per CSS auf 84px, `_UI_CSS` als Modulkonstante, `dev/ui_preview.py`
+- **Bis `d429ffb` gepusht, beide Klone auf `d429ffb`, in WanGP geladen und live
+  geprüft:** beide Knöpfe 5 Inputs, `local_enhance_min_words`/`_max_words`
+  vorhanden. `2f6f3e6` ist **noch nicht** gepusht/geladen; das neue Layout ist
+  bisher nur über `dev/ui_preview.py` geprüft (84px, Label 11px, kein
+  abgeschnittener Wert).
 
 ## Technisches, das man sonst neu herausfinden muss
 
