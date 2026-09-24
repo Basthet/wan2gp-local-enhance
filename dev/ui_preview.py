@@ -121,9 +121,13 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
     # Der Plugin-Tab. create_ui() laeuft beim Host erst nach
     # create_inline_button() (wgp.py:13628 vor 13976); genau dort holt
     # _attach_word_fields() die beiden Wort-Regler aus der Knopfreihe hierher.
+    # Darunter folgt der Modell-Check-Block (Hinweis, eingeklappter
+    # Detailbereich, Knopf). Der Klick wird hier NICHT ausgeloest - er wuerde
+    # den Zwischenspeicher schreiben; geprueft wird nur die Verdrahtung.
     with gr.Column() as tab:
         with gr.Row() as word_row:
             p._attach_word_fields(word_row)
+        check_btn, model_list, model_status = p._build_model_check_section()
 
     css = getattr(P, "_UI_CSS", "")
     # WanGP haelt .btn_centered in shared/gradio/ui_studio.css schmal; ohne diese
@@ -224,6 +228,91 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         getattr(mode_dropdown, "show_label", None),
         "(erwartet True)",
     )
+
+    # --- Modell-Check-Block -------------------------------------------------
+    # Der Hinweis-Text steht wortgetreu als eigener Markdown-Block im Tab. Der
+    # Vergleichswert ist hier absichtlich noch einmal als Literal hinterlegt (und
+    # nicht aus dem Plugin geholt), damit die Vorschau den Wortlaut wirklich
+    # prueft.
+    expected_hint = (
+        "*These limits are applied by rewriting the enhancer instructions this plugin supplies. "
+        "Models that ship their own enhancer instructions ignore them.*"
+    )
+
+    def _descendants(container):
+        for child in getattr(container, "children", None) or []:
+            yield child
+            yield from _descendants(child)
+
+    nodes = list(_descendants(tab))
+    accordions = [item for item in nodes if isinstance(item, gr.Accordion)]
+    accordion = next(
+        (item for item in accordions if item.label == "Which models ignore Min/Max?"),
+        None,
+    )
+    markdown_values = [
+        str(getattr(item, "value", "") or "")
+        for item in nodes
+        if isinstance(item, gr.Markdown)
+    ]
+
+    # Die Ziele des Knopf-Klicks kommen aus der Konfiguration, nicht aus dem
+    # Objektbaum - der Klick selbst wird nicht ausgeloest (er wuerde den
+    # Zwischenspeicher schreiben).
+    config = demo.get_config_file()
+    button_id = getattr(check_btn, "_id", None)
+    click_deps = [
+        dependency
+        for dependency in config.get("dependencies", [])
+        if any(
+            isinstance(target, (list, tuple))
+            and len(target) > 1
+            and target[0] == button_id
+            and target[1] == "click"
+            for target in (dependency.get("targets") or [])
+        )
+    ]
+    registry = getattr(demo, "blocks", None) or {}
+
+    def _output_name(component_id):
+        component = registry.get(component_id)
+        if component is model_list:
+            return "Liste"
+        if component is model_status:
+            return "Statuszeile"
+        return type(component).__name__ if component is not None else "unbekannt"
+
+    accordion_config = next(
+        (
+            entry
+            for entry in config.get("components", [])
+            if entry.get("id") == getattr(accordion, "_id", None)
+        ),
+        None,
+    )
+    accordion_props = (accordion_config or {}).get("props", {})
+
+    print("=== Modell-Check ===")
+    print("Hinweis-Text vorhanden:", expected_hint in markdown_values)
+    print(
+        "Detailbereich:",
+        getattr(accordion, "label", None) if accordion is not None else "nicht gefunden",
+        "| open:", getattr(accordion, "open", None),
+        "| Konfiguration open:", accordion_props.get("open"),
+        "(erwartet False)",
+    )
+    for dependency in click_deps:
+        print(
+            "Knopf-Klick:",
+            [f"{component_id}:{_output_name(component_id)}"
+             for component_id in dependency.get("outputs", [])],
+            "| inputs:", dependency.get("inputs"),
+            "(erwartet Liste, Statuszeile)",
+        )
+    if not click_deps:
+        print("Knopf-Klick: nicht verdrahtet")
+    print("Liste beim Aufbau:", repr(getattr(model_list, "value", None)))
+    print("Status beim Aufbau:", repr(getattr(model_status, "value", None)))
 
     seen, duplicates = set(), []
     _walk(demo, seen, duplicates)

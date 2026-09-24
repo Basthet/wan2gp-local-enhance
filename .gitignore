@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 .ui-shots/
+# Zwischenspeicher des Modell-Checks im Tab (wird beim Klick geschrieben)
+enhancer_models.json

@@ -30,9 +30,11 @@ Deepy -> LLM Engine auf ein lokales Qwen-Modell zeigen lassen). Der Wert bestimm
 welches lokale Modell geladen wird.
 """
 
+import json
 import re
 import sys
 import time
+from pathlib import Path
 from typing import NamedTuple
 
 import gradio as gr
@@ -139,6 +141,27 @@ class _EnhancerOverrides(NamedTuple):
     examined: int
     affected: int
     groups: tuple
+
+
+# ------------------------------------------------------------- Modell-Check
+# Der Knopf "Check models" im Tab listet die Modelle, die eigene Enhancer-
+# Anweisungen mitbringen - fuer sie wirken Min/Max nicht. Die Liste wird beim
+# Aufbau des Tabs NICHT berechnet, sondern nur aus dieser JSON-Datei gelesen.
+# Die Datei liegt neben plugin.py: die Basisklasse WAN2GPPlugin stellt kein
+# Attribut fuer das Plugin-Verzeichnis bereit (andere Host-Plugins setzen sich
+# selbst eines), deshalb der Pfad ueber __file__. Der Name steht in .gitignore,
+# damit Testlaeufe den Arbeitsbaum nicht beschmutzen.
+_MODEL_CHECK_CACHE_NAME = "enhancer_models.json"
+# Feste englische Oberflaechentexte, wortgetreu.
+_MODEL_CHECK_HINT = (
+    "*These limits are applied by rewriting the enhancer instructions this plugin supplies. "
+    "Models that ship their own enhancer instructions ignore them.*"
+)
+_MODEL_CHECK_INTRO = (
+    "WanGP prefers a model's own enhancer instructions over the ones this plugin supplies, "
+    "so Min/Max have no effect for these models."
+)
+_MODEL_CHECK_EMPTY = "Not checked yet in this installation - press **Check models**."
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -831,6 +854,117 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 continue
             lines.append(f"<b>{label}</b> — " + ", ".join(clean))
         return "\n".join(lines)
+
+    # -------------------------------------------------------- Zwischenspeicher
+
+    @staticmethod
+    def _model_check_cache_path():
+        """Pfad des Zwischenspeichers: enhancer_models.json neben plugin.py."""
+        return Path(__file__).resolve().parent / _MODEL_CHECK_CACHE_NAME
+
+    @classmethod
+    def _read_model_check_cache(cls):
+        """Zwischenspeicher lesen. Fehlende oder kaputte Datei ergibt None."""
+        try:
+            with open(cls._model_check_cache_path(), "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @classmethod
+    def _write_model_check_cache(cls, payload):
+        """Ergebnis des Checks ablegen (JSON, UTF-8)."""
+        with open(cls._model_check_cache_path(), "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+
+    @classmethod
+    def _model_check_texts(cls):
+        """(Liste, Status) fuer den Tab-Aufbau - ausschliesslich aus dem Speicher.
+
+        Beim Aufbau des Tabs wird nichts berechnet: ohne (oder mit kaputtem)
+        Zwischenspeicher steht dort der Hinweis auf den Knopf und eine leere
+        Statuszeile.
+        """
+        payload = cls._read_model_check_cache()
+        if payload is None:
+            return _MODEL_CHECK_EMPTY, ""
+        listing = str(payload.get("list") or "").strip()
+        status = str(payload.get("status") or "").strip()
+        return (listing or _MODEL_CHECK_EMPTY), status
+
+    @staticmethod
+    def _definition_file_count():
+        """Definitionsdateien auf der Platte: defaults/*.json + finetunes/*.json.
+
+        Rein informativ: ist die Zahl groesser als die der Katalogeintraege, hat
+        der Host noch nicht alle Modelle aufgeloest. Fehler (fehlender Ordner,
+        keine Rechte) werden verschluckt - der Check darf daran nicht scheitern.
+        """
+        count = 0
+        try:
+            for folder in ("defaults", "finetunes"):
+                count += len(list(Path(folder).glob("*.json")))
+        except Exception:  # noqa: BLE001 - Zaehler ist nur Beiwerk
+            return 0
+        return count
+
+    def _run_model_check(self):
+        """Knopf "Check models": Katalog lesen, zaehlen, rendern, ablegen.
+
+        Der Katalog kommt ausschliesslich aus `_main("models_def")` und wird nur
+        GELESEN - der Host wird nicht zum Neuaufloesen bewegt (kein
+        refresh_model_defs, kein map_family_handlers, kein Import von
+        Host-Modulen). Der Klick laeuft in der Host-Oberflaeche, deshalb darf
+        hier nichts nach aussen fliegen: der Rumpf steht in try/except und
+        liefert im Fehlerfall Markdown statt einer Exception.
+        """
+        try:
+            models_def = _main("models_def") or {}
+            overrides = self._collect_enhancer_overrides(models_def)
+            examined = int(getattr(overrides, "examined", 0) or 0)
+            affected = int(getattr(overrides, "affected", 0) or 0)
+            listing = self._render_enhancer_overrides(overrides)
+            stamp = time.strftime("%Y-%m-%d %H:%M")
+            files = self._definition_file_count()
+            if not examined:
+                # Leerer Katalog: verstaendliche Zeile statt einer leeren Liste.
+                listing = (
+                    "**No model definitions loaded.** The model catalog of WanGP is "
+                    "empty. Load a model or refresh the catalog in WanGP first."
+                )
+                status = f"Checked {stamp} - the model catalog is empty, nothing to check."
+            else:
+                status = f"Checked {stamp} - {affected} of {examined} model definitions"
+                if files > examined:
+                    status += (
+                        f" - {files - examined} model files on disk are not loaded yet, "
+                        "refresh the model catalog in WanGP first."
+                    )
+                if not listing:
+                    listing = (
+                        "No model in the current catalog ships its own enhancer "
+                        "instructions."
+                    )
+            payload = {
+                # Zeitstempel als ISO, dazu die beiden Zaehler des Laufs, die
+                # Zahl der Katalogeintraege und der fertig gerenderte Listentext.
+                "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "affected": affected,
+                "examined": examined,
+                "catalog_entries": examined,
+                "definitions_on_disk": files,
+                "list": listing,
+                "status": status,
+            }
+            try:
+                self._write_model_check_cache(payload)
+            except Exception as exc:  # noqa: BLE001 - Liste trotzdem anzeigen
+                status += f" (Could not save the result: {type(exc).__name__}: {exc})"
+            return listing, status
+        except Exception as exc:  # noqa: BLE001 - der Klick laeuft in der Host-UI
+            return "", f"**Model check failed:** `{type(exc).__name__}: {exc}`"
 
     # -------------------------------------------------------------- Kernlogik
 
@@ -1777,6 +1911,39 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     # ------------------------------------------------------------------- UI
 
+    def _build_model_check_section(self):
+        """Hinweiszeile, eingeklappter Detailbereich und der Knopf "Check models".
+
+        Eigener Block, weil create_ui() ein Session-Argument entgegennimmt, das
+        im Nachbauskript (dev/ui_preview.py) fehlt - so laesst sich genau dieser
+        Teil ohne Session aufbauen und pruefen. Der Block wird im Tab-Container
+        erzeugt und laesst die Reihenfolge der uebrigen Kinder unberuehrt.
+
+        Die Liste kommt beim Aufbau ausschliesslich aus dem Zwischenspeicher
+        (_model_check_texts): hier wird nichts berechnet. Erst der Klick auf
+        "Check models" liest den Katalog und schreibt den Zwischenspeicher.
+
+        Rueckgabe: (Knopf, Listen-Markdown, Status-Markdown) - nur zur Pruefung.
+        """
+        gr.Markdown(_MODEL_CHECK_HINT)
+        listing, status = self._model_check_texts()
+        with gr.Accordion("Which models ignore Min/Max?", open=False):
+            with gr.Row():
+                check_btn = gr.Button("Check models", size="sm", scale=0, min_width=0)
+                status_out = gr.Markdown(value=status)
+            # Einleitender Text ueber der Liste, darunter die Liste selbst.
+            gr.Markdown(_MODEL_CHECK_INTRO)
+            list_out = gr.Markdown(value=listing)
+        # Keine Eingaben: der Klick liest den Katalog selbst. Reihenfolge der
+        # Ausgaben wie in _run_model_check(): erst die Liste, dann die Statuszeile.
+        check_btn.click(
+            fn=self._run_model_check,
+            inputs=None,
+            outputs=[list_out, status_out],
+            show_progress="hidden",
+        )
+        return check_btn, list_out, status_out
+
     def create_ui(self, api_session):
         state = self.state
         refresh_trigger = getattr(self, "refresh_form_trigger", None)
@@ -1792,6 +1959,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             # create_inline_button() sie erzeugt und verdrahtet hat.
             with gr.Row() as word_row:
                 self._attach_word_fields(word_row)
+            # Direkt unter den Wort-Reglern: der Hinweis, der eingeklappte
+            # Detailbereich mit dem Knopf und die Liste aus dem Zwischenspeicher.
+            self._build_model_check_section()
             gr.HTML(
                 "<b>Enhance: OpenCode / Bonsai 27B</b><br>"
                 "Adds two buttons next to <i>Enhance Prompt</i>: "
