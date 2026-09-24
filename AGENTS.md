@@ -11,7 +11,10 @@ Zwei Knöpfe neben WanGPs „Enhance Prompt":
   (`process_prompt_enhancer()` erkennt am Engine-Namen, dass remote gearbeitet
   wird, `wgp.py:6409`).
 - **Local 27B** — lädt Qwen3.8-27B lokal (`enhancer_enabled=5`, `gguf_ptq1`) und
-  gibt den VRAM danach wieder frei.
+  gibt den VRAM danach wieder frei. Im Modus *Based on Text Prompt and Images*
+  (`"I"` im Modus) liest dieser Knopf zusätzlich die ausgewählten Bilder mit dem
+  Vision-Teil des Modells (Start-/Endbild, Referenzen, Control Image) und nennt
+  sie in der Statuszeile; alle anderen Modi bleiben text-only.
 
 Drei Regler, alle gelten für **beide** Knöpfe:
 
@@ -84,8 +87,44 @@ neu starten.
   Plugin stellt `llm_engines.deepy` und `enhancer_enabled` nur für den Klick um
   und restauriert danach exakt.
 - **Aufruf:** `process_prompt_enhancer(model_type, model_def, mode, [prompt],
-  None, None, is_image, audio_only, -1,
-  prompt_enhancer_instructions=…, text_encoder_max_tokens=…)`.
+  image_start, image_refs, is_image, audio_only, -1,
+  prompt_enhancer_instructions=…, text_encoder_max_tokens=…,
+  enhancer_kwargs=…)`.
+- **Bilder (nur lokal, nur `"I"` im Modus):**
+  - Der Vision-Tower gehört für `enhancer_enabled` 3/4/5 immer zum Ladepfad
+    (`shared/prompt_enhancer/loader.py:213-230`, 27B-Datei
+    `Qwen3.8-27B-Uncensored-vision-f16.gguf`, `assets.py:42`) — das Plugin
+    aktiviert ihn also nicht, es benutzt ihn nur.
+  - WanGPs Bedingung für den Bildpfad ist `"I" in mode` **und**
+    `enhancer_enabled in (3,4,5)` **und** lokale Engine
+    (`images.py:20`). Das Plugin erfüllt sie, weil es beides für den Klick
+    umstellt (`enhancer_enabled=5` + `llm_engines.deepy`), und wertet die Bilder
+    erst **nach** dem Umstellen aus.
+  - Die Bilder kommen **live aus den Komponenten** (`_IMAGE_INPUT_NAMES`, als
+    zusätzliche Klick-Eingaben). Der Settings-Snapshot
+    (`state["all_settings"]`) taugt dafür nicht: er wird nur von
+    `save_inputs()`-Flüssen geschrieben, nicht beim Hinzufügen eines Bildes zur
+    Galerie (`shared/gradio/gallery.py:236-273`) — WanGPs eigener Knopf ruft
+    deshalb extra `save_inputs()` davor auf (`wgp.py:13215`).
+  - Aufbereitung wie `enhance_prompt()` (`wgp.py:6629-6682`): erst
+    `prompt_enhancer_images.prepare_manual(...)` → `image_contexts` mit Labels
+    (Start-/Endbild, Referenzen, Control Image); schlägt das fehl, Fallback auf
+    die einfache Auswahl (Start-/Endbild + erste Referenz, ohne Kontexte).
+    Die Kontexte gehen als `enhancer_kwargs["image_contexts"]` hinein und werden
+    intern nur benutzt, wenn `images.enabled()` gilt (`wgp.py:6389`).
+  - Geometrie-Felder (`force_fps`, `video_length`, `sliding_window_*`,
+    `video_guide`, `video_source`, `frames_positions`, `multi_prompts_gen_type`,
+    `multi_images_gen_type`) kommen weiter aus dem Snapshot — sie beeinflussen
+    nur Labels/Fenster, nicht *welche* Bilder gesendet werden.
+  - `fake_start_image` wird im On-Demand-Pfad **nicht** gefiltert: `prepare_manual`
+    verwirft es nur im Sliding-Zweig (`images.py:201`), der Nicht-Sliding-Zweig
+    und `enhance_prompt()` nutzen das Bild (`images.py:233`, `wgp.py:6633`);
+    nur der Auto-Pfad filtert (`wgp.py:7540`). Das Plugin verhält sich wie der
+    On-Demand-Pfad.
+  - Mit Bildern gelten die Bild-Anweisungen `IT2I_VISUAL_PROMPT` /
+    `IT2V_CINEMATIC_PROMPT` statt `T2I`/`T2V`; beide enthalten dieselben
+    Wortgrenzen-Sätze, `_apply_word_limit` greift weiter.
+  - Nur der lokale Pfad bekommt Bilder; der OpenCode-Knopf bleibt text-only.
 - **Startreihenfolge:** `create_inline_button` (`wgp.py:13628`) läuft **vor** den
   Plugin-Tabs (`wgp.py:13976`). Deshalb sitzen die Regler in Zeile 1/2 und der
   Tab-Knopf wird in `create_ui()` nachträglich mitverdrahtet.
@@ -175,9 +214,30 @@ neu starten.
   "http://127.0.0.1:7899/?__theme=dark"` (mit `env -u DISPLAY`, sonst bricht
   Chromium an der X11-Autorisierung ab). `.ui-shots/` ist ignoriert und
   Crashpad/Benutzerprofil wandern dorthin.
+- Bild-Aufbereitung ohne GPU/WanGP: `dev/check_vision_inputs.py` (WanGP-venv, aus
+  dem WanGP-Ordner) täuscht `convert_image`, `get_computed_fps`,
+  `get_base_model_type`, `estimate_first_window_overlap_frames` und
+  `prompt_enhancer_outputs_multiple_prompts` als Modul `__main__` vor und prüft
+  13 Fälle: Modus ohne `"I"`, Startbild, Endbild, zwei Referenzen, Control Image
+  allein, `fake_start_image` (On-Demand-Parität), Fenstermodell (erster Anker),
+  Fallback bei mehreren Startbildern, fehlendes `convert_image`, IT2I- vs.
+  T2I-Anweisungen, `_image_note`, Trennung der Klick-Eingaben.
+  Erwartung: `Alle Faelle bestanden.` (Exit 0).
+- Verdrahtung der Knöpfe (ohne WanGP-Start): im `gr.Blocks`-Aufbau Bild-Komponenten
+  auf den Plugin-Instanzen setzen (`p.image_start = gr.File(...)`,
+  `p.image_prompt_type = gr.CheckboxGroup(...)`, `p.video_prompt_type = …`) und
+  `demo.get_config_file()` nach `targets == [<knopf-id>, "click"]` durchsuchen:
+  `local_enhance_remote_btn` muss **6** Inputs haben, `local_enhance_local_btn`
+  **6 + Anzahl der Bild-Komponenten** (live geprüft: 9 bei drei Bild-Eingaben).
 - End-to-End (WanGP läuft): `http://127.0.0.1:7860/config` abrufen — die
-  Dependencies von `local_enhance_local_btn` und `local_enhance_remote_btn`
-  müssen **6 Inputs** haben (`state, prompt, Think, Preset, Min, Max`).
+  Dependencies von `local_enhance_remote_btn` müssen **6 Inputs** haben
+  (`state, prompt, Think, Preset, Min, Max`), `local_enhance_local_btn`
+  **6 + Anzahl der Bild-Eingaben** des Modells.
+- Vision live: Modus *Based on Text Prompt and Images* wählen, Startbild mit
+  markantem Inhalt setzen, Prompt „a cat" → der verbesserte Prompt muss den
+  Bildinhalt beschreiben und die Statuszeile `images: start image` nennen. Dann
+  Modus *Based on Text Prompt Content* bei gleichem Bild → Statuszeile ohne
+  Bildhinweis (Textpfad unverändert).
 - Schreibzugriffe außerhalb des Workspace (WanGP-Klon, WanGP-Repo) brauchen in der
   Sandbox `danger-full-access`.
 
@@ -188,3 +248,9 @@ neu starten.
 - Das Denk-Budget der 27B ist hart auf **2000 Tokens** begrenzt
   (`shared/prompt_enhancer/qwen35_text.py:64`) — es gibt keinen Config-Key dafür.
 - Der Tab-Knopf hat keine eigenen Widgets; er nutzt die Regler aus Zeile 1/2.
+- **Bilder — Stufe 1:** Fortsetzungsvideo (`L`/`V` ohne Startbild) liefert kein
+  dekodiertes Frame; die Prompt-/Fensteraufteilung bleibt beim Ein-Prompt-Verhalten
+  des Plugins (nur der erste Fensteranker kommt an); der OpenCode-Knopf sendet
+  weiterhin keine Bilder; Geometrie-Felder kommen aus dem Settings-Snapshot statt
+  live. Für den Standardfall (Bildmodell, Startbild/Referenzen/Control Image)
+  ist die Kette vollständig.

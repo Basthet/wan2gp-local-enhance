@@ -33,6 +33,7 @@ welches lokale Modell geladen wird.
 import re
 import sys
 import time
+from typing import NamedTuple
 
 import gradio as gr
 
@@ -77,6 +78,37 @@ _WORD_PRESETS = (
 _WORD_PRESET_CUSTOM = "custom"
 _WORD_PRESET_CUSTOM_LABEL = "custom (min/max)"
 _WORD_PRESET_BY_KEY = {key: words for key, _label, words in _WORD_PRESETS}
+
+# Bild-Eingaben, die LIVE aus den Komponenten kommen muessen: der Settings-
+# Snapshot (state["all_settings"]) wird nur von save_inputs()-Fluessen
+# geschrieben, nicht beim Hinzufuegen eines Bildes zur Galerie. WanGPs eigener
+# Knopf ruft dafuer extra save_inputs() auf (wgp.py:13215) - das Plugin hat
+# dafuer keine Komponenten und haengt die Bilder stattdessen als Klick-Eingaben
+# an. Reihenfolge = Reihenfolge der Klick-Eingaben.
+_IMAGE_INPUT_NAMES = (
+    "image_start",
+    "image_end",
+    "image_refs",
+    "image_guide",
+    "image_prompt_type",
+    "video_prompt_type",
+)
+
+
+class _EnhancerImages(NamedTuple):
+    """Bilder, die der lokale Pfad an process_prompt_enhancer() weitergibt.
+
+    labels sind die Bezeichnungen der Bilder (Kontrollbild, "start image",
+    "Image reference no 1", ...) - sie steuern den Hinweis in der Statuszeile
+    und die Wahl der Bild-Anweisungen (IT2I/IT2V statt T2I/T2V).
+    """
+
+    image_start: list | None
+    image_refs: list | None
+    kwargs: dict
+    labels: tuple
+
+
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
 # auch ohne WanGP-Start geprueft werden kann (siehe AGENTS.md, Abschnitt Pruefen).
 _UI_CSS = (
@@ -150,6 +182,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # ueber dieselbe Remote-Engine wie der OpenCode-Knopf und waere damit
         # ein Doppel. An seiner Stelle steht nur noch die Beschriftung.
         self.request_component("prompt_enhancer_btn")
+        # Bilder fuer den lokalen Pfad. Namen, die ein Modell nicht hat, werden
+        # vom PluginManager still uebersprungen (shared/utils/plugins.py:1626),
+        # _image_components() filtert sie dann heraus.
+        for component_name in _IMAGE_INPUT_NAMES:
+            self.request_component(component_name)
         self.request_global("get_current_model_settings")
         self.request_global("get_state_model_type")
         self.request_global("get_model_def")
@@ -479,6 +516,32 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
         return [field for field in fields if field is not None]
 
+    def _image_components(self):
+        """Die aufgeloesten Bild-Komponenten in fester Reihenfolge.
+
+        Modelle ohne Bild-Eingaben haben weniger (oder keine) davon - die Liste
+        ist ueber die Sitzung stabil, weil die Attribute nur einmal beim
+        Verdrahten gesetzt werden.
+        """
+        return [
+            component
+            for name in _IMAGE_INPUT_NAMES
+            if (component := getattr(self, name, None)) is not None
+        ]
+
+    def _split_image_inputs(self, values):
+        """Klick-Eingaben in (Regler, Bilder) trennen.
+
+        Gradio liefert alles positional: erst die Regler, dann die Bilder. Die
+        Reglerlaenge ist stabil (dieselbe Liste wie beim Verdrahten).
+        """
+        controls_count = len(self._control_components())
+        controls, images = values[:controls_count], values[controls_count:]
+        names = [
+            name for name in _IMAGE_INPUT_NAMES if getattr(self, name, None) is not None
+        ]
+        return controls, dict(zip(names, images))
+
     @staticmethod
     def _on_word_preset_change(preset_key):
         """Custom zeigt die beiden Zahlenfelder, jedes Preset versteckt sie.
@@ -490,7 +553,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return gr.update(visible=custom), gr.update(visible=custom)
 
     @classmethod
-    def _fallback_instructions(cls, is_image, audio_only, min_words=None, max_words=None):
+    def _fallback_instructions(cls, is_image, audio_only, min_words=None, max_words=None, with_images=False):
         """Dieselben eingebauten Anweisungen, die der lokale Pfad benutzt.
 
         `resolve_prompt_enhancer_settings()` (wgp.py:6457) holt die Anweisungen
@@ -504,17 +567,36 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         zurueck (generate_cinematic_prompt, prompt_enhance_utils.py:241). Die
         Auswahl hier ist mit dem lokalen Aufruf identisch: text_prompt=audio_only,
         video_prompt=not is_image. Die Wortgrenze wird dabei ersetzt.
+
+        `with_images`: Es gehen Bilder an das Modell, dann gelten die
+        Bild-Anweisungen (IT2I/IT2V, prompt_enhance_utils.py:65/113) - genau die,
+        die generate_cinematic_prompt() selbst waehlen wuerde. Beide enthalten
+        dieselben Wortgrenzen-Saetze, _apply_word_limit greift also weiter.
         """
         from shared.prompt_enhancer.prompt_enhance_utils import (
+            IT2I_VISUAL_PROMPT,
+            IT2V_CINEMATIC_PROMPT,
             T2I_VISUAL_PROMPT,
             T2T_TEXT_PROMPT,
             T2V_CINEMATIC_PROMPT,
         )
         if audio_only:
             text = T2T_TEXT_PROMPT
+        elif with_images:
+            text = IT2I_VISUAL_PROMPT if is_image else IT2V_CINEMATIC_PROMPT
         else:
             text = T2I_VISUAL_PROMPT if is_image else T2V_CINEMATIC_PROMPT
         return cls._apply_word_limit(text, *cls._word_range(min_words, max_words))
+
+    @staticmethod
+    def _image_note(labels):
+        """Kurzer Hinweis auf die benutzten Bilder (fuer die Statuszeile)."""
+        labels = list(labels or [])
+        if not labels:
+            return ""
+        if len(labels) > 3:
+            return f", {len(labels)} images"
+        return ", images: " + ", ".join(labels)
 
     @staticmethod
     def _local_engine_name():
@@ -528,8 +610,170 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     # -------------------------------------------------------------- Kernlogik
 
-    def enhance(self, state, text, *controls):
-        """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext."""
+    @classmethod
+    def _enhancer_images(cls, settings, model_def, model_type, mode, audio_only, prompt_text, live):
+        """Bilder fuer den lokalen Enhancer bestimmen.
+
+        Vorbild ist enhance_prompt() (wgp.py:6629-6682), das den eingebauten
+        Knopf bedient: aus den Bild-Eingaben werden Kontexte mit Labels gebaut
+        (Start-/Endbild, Control Image, Referenzen). Primaerpfad ist derselbe
+        prepare_manual()-Aufruf; scheitert er (Fenstermodell, ungewoehnliche
+        Eingaben), wird auf die einfache Auswahl zurueckgefallen, die
+        process_prompt_enhancer() selbst kennt (select_images,
+        shared/prompt_enhancer/images.py:247-257).
+
+        Nur ein Modus mit "I" benutzt Bilder (WanGPs eigene Bedingung,
+        images.py:20). Ohne "I" bleibt alles leer - der Klick laeuft dann wie
+        bisher als reiner Textauftrag.
+        """
+        from shared.prompt_enhancer import images as prompt_enhancer_images
+
+        if "I" not in str(mode or ""):
+            return _EnhancerImages(None, None, {}, ())
+
+        convert_image = _main("convert_image")
+        if not callable(convert_image):
+            print(f"[{PlugIn_Name}] convert_image() not found - images are ignored.")
+            return _EnhancerImages(None, None, {}, ())
+
+        # Live-Komponenten schlagen den Snapshot: der wird beim Hinzufuegen eines
+        # Bildes nicht fortgeschrieben (siehe _IMAGE_INPUT_NAMES).
+        inputs = dict(settings or {})
+        inputs.update(
+            {key: value for key, value in (live or {}).items() if value is not None}
+        )
+        image_prompt_type = inputs.get("image_prompt_type") or ""
+        video_prompt_type = inputs.get("video_prompt_type") or ""
+        inputs["image_prompt_type"] = image_prompt_type
+        inputs["video_prompt_type"] = video_prompt_type
+        try:
+            inputs["image_mode"] = int(inputs.get("image_mode") or 0)
+        except (TypeError, ValueError):
+            inputs["image_mode"] = 0
+
+        get_fps = _main("get_computed_fps")
+        get_base = _main("get_base_model_type")
+        estimate_overlap = _main("estimate_first_window_overlap_frames")
+        multi_output = _main("prompt_enhancer_outputs_multiple_prompts")
+
+        if callable(get_fps) and callable(get_base):
+            fps = get_fps(
+                inputs.get("force_fps", "auto"),
+                get_base(model_type),
+                inputs.get("video_guide"),
+                inputs.get("video_source"),
+            )
+        else:
+            fps = 16
+        if callable(estimate_overlap):
+            source_frames = estimate_overlap(
+                inputs.get("image_start"),
+                inputs.get("video_source")
+                if ("V" in image_prompt_type or "L" in image_prompt_type)
+                else None,
+                inputs.get("keep_frames_video_source"),
+                fps,
+            )
+        else:
+            source_frames = 1 if inputs.get("image_start") else 0
+        multi_prompt_output = (
+            bool(multi_output(mode)) if callable(multi_output) else ("M" in str(mode))
+        )
+
+        contexts = None
+        try:
+            _prompts, contexts = prompt_enhancer_images.prepare_manual(
+                [prompt_text],
+                inputs,
+                model_def or {},
+                fps=fps,
+                source_frames=source_frames,
+                open_image=convert_image,
+                multi_prompt_output=multi_prompt_output,
+            )
+        except Exception as exc:  # noqa: BLE001 - Fallback statt Fehlermeldung
+            print(
+                f"[{PlugIn_Name}] Could not prepare the image contexts "
+                f"({type(exc).__name__}: {exc}) - using the simple selection."
+            )
+
+        if contexts:
+            labels = tuple(label for context in contexts for label in context.labels)
+            return _EnhancerImages(
+                None,
+                None,
+                {
+                    "image_prompt_type": image_prompt_type,
+                    "video_prompt_type": video_prompt_type,
+                    "image_contexts": contexts,
+                },
+                labels,
+            )
+
+        # Fallback: genau das, was process_prompt_enhancer() ohne Kontexte selbst
+        # auswaehlt - Startbild (sonst Endbild) plus erste Referenz.
+        sliding = (
+            bool((model_def or {}).get("sliding_window", False))
+            and inputs["image_mode"] == 0
+            and not audio_only
+        )
+        start_value = inputs.get("image_start") if "S" in image_prompt_type else None
+        if sliding and (model_def or {}).get("fake_start_image", False):
+            # prepare_manual verwirft den Fake-Anker nur im Sliding-Zweig
+            # (images.py:201) - der Fallback hier haelt sich daran.
+            start_value = None
+        from_end = start_value is None
+        if from_end:
+            start_value = inputs.get("image_end") if "E" in image_prompt_type else None
+        reference_value = inputs.get("image_refs") if "I" in video_prompt_type else None
+        try:
+            control_image = prompt_enhancer_images.control_image_input(inputs)
+        except Exception:  # noqa: BLE001
+            control_image = None
+
+        def _open(gallery):
+            items = gallery if isinstance(gallery, list) else ([gallery] if gallery else [])
+            opened = []
+            for item in items:
+                if item is None:
+                    continue
+                try:
+                    opened.append(
+                        convert_image(item[0] if isinstance(item, (list, tuple)) else item)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[{PlugIn_Name}] Could not open an image: {type(exc).__name__}: {exc}")
+            return opened
+
+        labels = []
+        image_start = _open(start_value)[:1] or None
+        if image_start:
+            labels.append("end image" if from_end else "start image")
+        image_refs = _open(reference_value) or None
+        for index in range(1, len(image_refs or []) + 1):
+            labels.append(prompt_enhancer_images.reference_name(index))
+        # control_image nutzt der Aufruf nur als Ersatz-Startbild (wgp.py:6394).
+        if control_image is not None and not image_start:
+            labels.append("Control Image")
+
+        return _EnhancerImages(
+            image_start,
+            image_refs,
+            {
+                "image_prompt_type": image_prompt_type,
+                "video_prompt_type": video_prompt_type,
+                "control_image": control_image,
+            },
+            tuple(labels),
+        )
+
+    def enhance(self, state, text, *values):
+        """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
+
+        `values` sind erst die Regler (Think/Preset/Min/Max), danach die
+        Bild-Eingaben - siehe _split_image_inputs().
+        """
+        controls, live_images = self._split_image_inputs(values)
         think, min_words, max_words = self._read_controls(controls)
         self._remember_word_range(min_words, max_words)
         text = str(text or "").strip()
@@ -615,21 +859,32 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             flipped = True
 
         try:
+            # Bilder erst hier bestimmen: die Engine steht jetzt lokal und das
+            # Modell auf 27B, genau wie beim Aufruf selbst (images.enabled()
+            # prueft beides, shared/prompt_enhancer/images.py:20).
+            images = self._enhancer_images(
+                settings, model_def, model_type, mode, audio_only, enhancer_input, live_images
+            )
             ensure_loaded(override_profile=-1)
             prompts = process(
                 model_type,
                 model_def,
                 mode,
                 [enhancer_input],
-                None,      # image_start
-                None,      # original_image_refs
+                images.image_start,
+                images.image_refs,
                 is_image,
                 audio_only,
                 -1,        # seed -> zufaellig
                 # Wortgrenze steckt in den Anweisungen; das Token-Budget muss
-                # mitwachsen, sonst schneidet das Limit den Prompt ab.
-                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, min_words, max_words),
+                # mitwachsen, sonst schneidet das Limit den Prompt ab. Mit Bildern
+                # gelten die Bild-Anweisungen (IT2x), sonst die reinen Text-T2x.
+                prompt_enhancer_instructions=self._fallback_instructions(
+                    is_image, audio_only, min_words, max_words,
+                    with_images=bool(images.labels),
+                ),
                 text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
+                enhancer_kwargs=images.kwargs or None,
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             return "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
@@ -666,10 +921,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return "", "The enhancer returned an empty prompt."
         self._last_enhanced = result
         self._last_source = text
+        self._last_image_labels = images.labels
         seconds = time.time() - started
         return result, (
             f"Enhanced locally with **{self._variant_label()}** "
-            f"(mode `{mode}`) in {seconds:.1f}s. Not happy? Click again."
+            f"(mode `{mode}`{self._image_note(images.labels)}) in {seconds:.1f}s. "
+            "Not happy? Click again."
         )
 
     @staticmethod
@@ -944,7 +1201,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "budget; unticked it answers straight away.\n"
                 "Words: presets no limit / 150 / 300 / 500 words;\n"
                 "'custom' reveals the Min/Max fields and the token budget\n"
-                "grows with max (0 removes that bound, presets set min to 0)."
+                "grows with max (0 removes that bound, presets set min to 0).\n"
+                "Images: in mode 'Based on Text Prompt and Images' the selected\n"
+                "start/end/reference images are read by the vision part of the\n"
+                "model; every other mode stays text-only."
             ),
         }
         return """
@@ -1177,7 +1437,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Alle Regler gelten fuer BEIDE Knoepfe: die Checkbox schaltet lokal das
         # Denken und remote den Reasoning-Level, Min/Max die Wortgrenze. Fehlt
         # ein Widget, bleibt der jeweilige Default aktiv.
+        # Die Bilder haengen nur am lokalen Knopf: nur der lokale 27B-Pfad hat
+        # einen Vision-Teil, und sie muessen live aus den Komponenten kommen
+        # (der Settings-Snapshot ist nach einem frisch hinzugefuegten Bild alt).
         controls = self._control_components()
+        image_components = self._image_components()
         remote_btn.click(
             fn=self.enhance_inline_remote,
             inputs=[self.state, prompt_component] + controls,
@@ -1186,7 +1450,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
         local_btn.click(
             fn=self.enhance_inline,
-            inputs=[self.state, prompt_component] + controls,
+            inputs=[self.state, prompt_component] + controls + image_components,
             outputs=[prompt_component],
             show_progress="hidden",
         )
@@ -1213,17 +1477,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         gr.Info(str(status).replace("**", "").replace("`", ""))
         return self._with_history(result)
 
-    def enhance_inline(self, state, text, *controls):
+    def enhance_inline(self, state, text, *values):
         """Wie enhance(), schreibt das Ergebnis aber direkt ins Prompfeld."""
-        result, status = self.enhance(state, text, *controls)
+        result, status = self.enhance(state, text, *values)
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
+        controls, _live_images = self._split_image_inputs(values)
         think, min_words, max_words = self._read_controls(controls)
         marker = " + Think" if think else ""
         gr.Info(
             f"{self._button_label()}: enhanced with {self._variant_label()}"
             f"{marker}{self._word_note(min_words, max_words)}"
+            f"{self._image_note(getattr(self, '_last_image_labels', ()))}"
         )
         return self._with_history(result)
 
@@ -1247,6 +1513,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "Both write the result straight into the prompt field. "
                 "<b>Think</b> and the <b>Words</b> preset apply to every button "
                 "(<i>custom</i> reveals the Min/Max fields). "
+                "In the <i>Based on Text Prompt and Images</i> mode the Local 27B "
+                "button also reads the selected images with the model's vision part. "
                 "Hover the info button for details."
             )
             text_in = gr.Textbox(
@@ -1273,7 +1541,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         enhance_btn.click(
             fn=self.enhance,
-            inputs=[state, text_in] + self._control_components(),
+            inputs=[state, text_in] + self._control_components() + self._image_components(),
             outputs=[text_out, status],
         )
 
