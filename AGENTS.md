@@ -69,10 +69,14 @@ neu starten.
 - `61f25ae` — Wortgrenze als Preset-Dropdown (`no limit` / `150` / `300` / `500`
   / `custom`), Custom blendet die Zahlenfelder ein; `_read_controls` löst das
   Preset auf, `dev/ui_preview.py` kann per `PREVIEW_MAX` beide Fälle zeigen
-- **`2f6f3e6`, `446da1e` und `61f25ae` sind gepusht.** Nach dem Neustart prüfen:
-  beide Knöpfe **6 Inputs** (`state, prompt, Think, Preset, Min, Max`), alle vier
-  Kästen in Zeile 2 auf einer Linie, Preset wechseln → Felder verschwinden,
-  `custom` → sie kommen mit ihren alten Werten zurück.
+- `40215b9` — Zeile 2 ausgerichtet: Modus-Dropdown bekommt WanGPs Caption zurück
+  (`show_label=True`), Zahlenfelder auf Gradio-Maß (gleiche Höhe/Grundlinie wie
+  die Dropdowns), Captions `Words`/`Min`/`Max`; Vorschau baut den
+  On-Demand-Fall (`show_label=False`) nach
+- **`2f6f3e6`, `446da1e`, `61f25ae` und `40215b9` sind gepusht.** Nach dem
+  Neustart prüfen: beide Knöpfe **6 Inputs** (`state, prompt, Think, Preset,
+  Min, Max`), alle vier Kästen in Zeile 2 auf einer Linie, Preset wechseln →
+  Felder verschwinden, `custom` → sie kommen mit ihren alten Werten zurück.
 
 ## Technisches, das man sonst neu herausfinden muss
 
