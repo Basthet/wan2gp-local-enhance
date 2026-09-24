@@ -170,12 +170,20 @@ class _EnhancerFamily(NamedTuple):
 # ------------------------------------------------------------- Modell-Check
 # Der Knopf "Check models" im Tab listet die Modelle, die eigene Enhancer-
 # Anweisungen mitbringen - fuer sie wirken Min/Max nicht. Die Liste wird beim
-# Aufbau des Tabs NICHT berechnet, sondern nur aus dieser JSON-Datei gelesen.
+# Aufbau des Tabs NICHT berechnet, sondern nur aus dieser JSON-Datei gelesen;
+# gespeichert sind dort die gebuendelten Familien, nicht der fertige Text.
 # Die Datei liegt neben plugin.py: die Basisklasse WAN2GPPlugin stellt kein
 # Attribut fuer das Plugin-Verzeichnis bereit (andere Host-Plugins setzen sich
 # selbst eines), deshalb der Pfad ueber __file__. Der Name steht in .gitignore,
 # damit Testlaeufe den Arbeitsbaum nicht beschmutzen.
 _MODEL_CHECK_CACHE_NAME = "enhancer_models.json"
+# Format-Kennzeichen des Zwischenspeichers. Gespeichert werden die gebuendelten
+# Familien STRUKTURIERT (Gruppen mit Name und Variantenzahl); den Anzeigetext
+# rendert erst der Tab-Aufbau (_model_check_texts). Ein Stand mit einem anderen
+# oder fehlenden Kennzeichen gilt als "noch nicht geprueft" - ein alter Stand
+# (frueher der fertig gerenderte Listentext mit Zeilenumbruechen statt <br>)
+# kann so keine unlesbare Textwand mehr erzeugen.
+_MODEL_CHECK_CACHE_FORMAT = "enhancer-models/2"
 # Feste englische Oberflaechentexte, wortgetreu.
 _MODEL_CHECK_HINT = (
     "*These limits are applied by rewriting the enhancer instructions this plugin supplies. "
@@ -1051,19 +1059,110 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             json.dump(payload, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
 
+    @staticmethod
+    def _cache_groups(payload):
+        """Struktur aus dem Zwischenspeicher -> ((Label, Familien), ...) | None.
+
+        None heisst "kein brauchbarer Stand": alte Fassung ohne Kennzeichen,
+        unbekanntes Kennzeichen, fehlende oder kaputte Struktur. Der Tab zeigt
+        dann den Ersatztext und fordert zum Klick auf. Erwartet wird
+
+            {"format": _MODEL_CHECK_CACHE_FORMAT,
+             "groups": [{"label": ...,
+                         "families": [{"name": ..., "count": ...,
+                                       "model_types": [...]}]}]}
+
+        Jeder Eintrag wird einzeln geprueft und still uebergangen, wenn er nicht
+        passt; kaputte Familien kosten hoechstens ihre eigene Zeile. Die
+        Familien werden zu _EnhancerFamily normalisiert, damit
+        _render_enhancer_overrides() denselben Weg geht wie beim Klick.
+        model_types ist nur fuer Werkzeuge da (dev/check_enhancer_overrides.py);
+        fuer die Anzeige zaehlen Name und Zahl.
+        """
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("format") != _MODEL_CHECK_CACHE_FORMAT:
+            return None
+        raw_groups = payload.get("groups")
+        if not isinstance(raw_groups, (list, tuple)):
+            return None
+        groups = []
+        for entry in raw_groups:
+            if not isinstance(entry, dict):
+                continue
+            label = str(entry.get("label") or "").strip()
+            raw_families = entry.get("families")
+            if not label or not isinstance(raw_families, (list, tuple)):
+                continue
+            families = []
+            for item in raw_families:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                if not name:
+                    continue
+                try:
+                    count = int(item.get("count") or 1)
+                except (TypeError, ValueError):
+                    count = 1
+                raw_types = item.get("model_types")
+                model_types = (
+                    tuple(
+                        str(model_type)
+                        for model_type in raw_types
+                        if str(model_type).strip()
+                    )
+                    if isinstance(raw_types, (list, tuple))
+                    else ()
+                )
+                families.append(
+                    _EnhancerFamily("", name, max(count, 1), model_types)
+                )
+            if families:
+                groups.append((label, tuple(families)))
+        if raw_groups and not groups:
+            # Kennzeichen passt, aber keine einzige Gruppe ist brauchbar: das ist
+            # kein gueltiger "keins betroffen"-Stand, sondern Murks -> wie
+            # "noch nicht geprueft" behandeln.
+            return None
+        return tuple(groups)
+
+    @classmethod
+    def _cache_examined(cls, payload):
+        """Zahl der untersuchten Definitionen aus dem Zwischenspeicher (0 bei Murks)."""
+        try:
+            return max(int(payload.get("examined") or 0), 0)
+        except (AttributeError, TypeError, ValueError):
+            return 0
+
     @classmethod
     def _model_check_texts(cls):
         """(Liste, Status) fuer den Tab-Aufbau - ausschliesslich aus dem Speicher.
 
-        Beim Aufbau des Tabs wird nichts berechnet: ohne (oder mit kaputtem)
-        Zwischenspeicher steht dort der Hinweis auf den Knopf und eine leere
-        Statuszeile.
+        Beim Aufbau des Tabs wird nichts berechnet und NICHTS gerendert
+        gespeichert: die Anzeige entsteht hier aus den strukturierten Gruppen des
+        Zwischenspeichers. Ohne (oder mit kaputtem) Zwischenspeicher steht dort
+        der Hinweis auf den Knopf und eine leere Statuszeile. Ein alter oder
+        fremder Stand wird genauso behandelt - er kann keine Textwand mehr
+        zeigen.
         """
         payload = cls._read_model_check_cache()
         if payload is None:
             return _MODEL_CHECK_EMPTY, ""
-        listing = str(payload.get("list") or "").strip()
+        groups = cls._cache_groups(payload)
+        if groups is None:
+            # Alter Stand (nur "list") oder unbekanntes Kennzeichen: wie
+            # "noch nicht geprueft", samt leerer Statuszeile - sonst widerspraeche
+            # die alte Statuszeile dem Ersatztext.
+            return _MODEL_CHECK_EMPTY, ""
         status = str(payload.get("status") or "").strip()
+        if not groups:
+            # Gueltiger Stand ohne betroffene Modelle: leerer Katalog und
+            # "keins betroffen" sind zwei verschiedene Aussagen.
+            if cls._cache_examined(payload):
+                return _MODEL_CHECK_NO_MODEL, status
+            return _MODEL_CHECK_NO_CATALOG, status
+        listing = cls._render_enhancer_overrides(groups)
         return (listing or _MODEL_CHECK_EMPTY), status
 
     @staticmethod
@@ -1200,21 +1299,41 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     listing = _MODEL_CHECK_NO_MODEL
             payload = {
                 # Zeitstempel als ISO, dazu die beiden Zaehler des Laufs, die
-                # Zahl der Katalogeintraege und der fertig gerenderte Listentext.
+                # Zahl der Katalogeintraege und die gebuendelten Familien. Der
+                # Anzeigetext wird NICHT mitgespeichert: ihn rendert der
+                # Tab-Aufbau aus dieser Struktur (_model_check_texts), damit ein
+                # kuenftiger Formatwechsel keine Textwand hinterlaesst.
+                "format": _MODEL_CHECK_CACHE_FORMAT,
                 "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "affected": affected,
                 "examined": examined,
                 "catalog_entries": examined,
                 "definitions_on_disk": files,
-                "list": listing,
                 "status": status,
+                "groups": [
+                    {
+                        "label": str(label),
+                        "families": [
+                            {
+                                "name": family.name,
+                                "count": int(family.count),
+                                "model_types": list(
+                                    getattr(family, "model_types", ()) or ()
+                                ),
+                            }
+                            for family in families
+                        ],
+                    }
+                    for label, families in getattr(overrides, "groups", ()) or ()
+                ],
             }
             try:
                 self._write_model_check_cache(payload)
             except Exception as exc:  # noqa: BLE001 - Liste trotzdem anzeigen
                 status += f" (Could not save the result: {type(exc).__name__}: {exc})"
-            # Der Zwischenspeicher haelt den Listentext OHNE die Box; die
-            # scrollbare Huelle kommt erst beim Ausgeben an die Komponente.
+            # Der Zwischenspeicher haelt die Familien STRUKTURIERT (ohne Box);
+            # die scrollbare Huelle und den Anzeigetext bekommt erst die
+            # Komponente.
             return self._model_check_box(listing), status
         except Exception as exc:  # noqa: BLE001 - der Klick laeuft in der Host-UI
             return self._model_check_box(""), f"**Model check failed:** `{type(exc).__name__}: {exc}`"

@@ -25,10 +25,11 @@ echte Zeilentrennung im Render-Text und die Robustheit gegen kaputte Eintraege.
 Zum Schluss laeuft eine realistische Namensprobe: die Fixture wird aus den
 echten Definitionen in ~/git/Wan2GP/defaults/*.json (und finetunes/*.json)
 gebaut - nur lesen, kein GPU, kein Handler. Welche Modelle betroffen sind, kommt
-aus dem Zwischenspeicher eines echten Laufs (enhancer_models.json), weil die
-meisten Anweisungen erst die Familien-Handler beisteuern und ohne Hoststart
-nicht sichtbar waeren. Fehlt der Zwischenspeicher, entscheidet die Erkennung des
-Plugins ueber die Rohdatei (dann sind es nur wenige Modelle).
+aus dem Zwischenspeicher eines echten Laufs (enhancer_models.json): entweder den
+strukturierten Gruppen des neuen Formats oder dem gerenderten Text des alten.
+Beide werden gelesen, damit die Probe nach dem naechsten Klick nicht blind wird.
+Fehlt der Zwischenspeicher, entscheidet die Erkennung des Plugins ueber die
+Rohdatei (dann sind es nur wenige Modelle).
 """
 
 import html
@@ -309,15 +310,82 @@ def dump(path):
 _AFFECTED_KEYS = re.compile(r"^(?:text|image|video)_prompt_enhancer_instructions\d*$")
 
 
-def _live_names():
-    """(Anzeigenamen, Gruppen, Quelle) aus dem Zwischenspeicher eines echten Laufs.
+def _structured_names(payload):
+    """Neuer Stand: strukturierte Gruppen (Kennzeichen + "groups").
 
-    Nur lesen. Der Zwischenspeicher liegt neben plugin.py; fuer die reale
-    Installation wird zusaetzlich der geladene Klon unter
-    ~/git/Wan2GP/plugins/wan2gp-local-enhance geprueft. Beide Formate werden
-    gelesen: der alte Stand (eine Zeile je Gruppe, Namen mit Komma getrennt) und
-    der neue (eine Zeile je Familie, Namen mit <br> getrennt, Zaehler in
-    Klammern).
+    Rueckgabe: ((Label, Anzeigenamen, interne Typen), ...) - oder None, wenn das
+    Kennzeichen fehlt (dann ist es ein alter Stand).
+    """
+    if payload.get("format") != P._MODEL_CHECK_CACHE_FORMAT:
+        return None
+    raw_groups = payload.get("groups")
+    if not isinstance(raw_groups, (list, tuple)):
+        return None
+    groups = []
+    for entry in raw_groups:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label") or "").strip()
+        raw_families = entry.get("families")
+        if not label or not isinstance(raw_families, (list, tuple)):
+            continue
+        names = []
+        types = []
+        for item in raw_families:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if name:
+                names.append(name)
+            raw_types = item.get("model_types")
+            if isinstance(raw_types, (list, tuple)):
+                types.extend(str(t) for t in raw_types if str(t).strip())
+        if names:
+            groups.append((label, names, types))
+    return groups
+
+
+def _rendered_names(payload):
+    """Alter Stand: fertig gerenderter Text im Schluessel "list".
+
+    Eine Gruppe je <br><br>-Block (neuere Zwischenfassung) bzw. je Zeile (ganz
+    alter Stand), Namen mit <br> oder Komma getrennt, Zaehler in Klammern.
+    """
+    text = str(payload.get("list") or "")
+    if not text:
+        return []
+    groups = []
+    chunks = text.split("<br><br>") if "<br" in text else text.split("\n")
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        match = re.match(r"<b>(.*?)</b>", chunk, re.DOTALL)
+        if match is None:
+            continue
+        label = re.sub(r"<[^>]+>", "", match.group(1)).strip()
+        rest = chunk[match.end():]
+        names = []
+        for item in re.split(r"<br\s*/?>", rest):
+            item = re.sub(r"<[^>]+>", "", item)
+            item = re.sub(r"^\s*—\s*", "", item).strip()
+            for name in item.split(", "):
+                name = re.sub(r"\s*\(\d+\)\s*$", "", name.strip())
+                if name:
+                    names.append(name)
+        groups.append((label, names, []))
+    return groups
+
+
+def _live_names():
+    """(Gruppen, Quelle) aus dem Zwischenspeicher eines echten Laufs.
+
+    Gruppen sind (Label, Anzeigenamen, interne Typen). Nur lesen. Der
+    Zwischenspeicher liegt neben plugin.py; fuer die reale Installation wird
+    zusaetzlich der geladene Klon unter ~/git/Wan2GP/plugins/wan2gp-local-enhance
+    geprueft. Beide Formate werden gelesen: der neue strukturierte Stand
+    ("format" + "groups", ohne fertigen Text) und der alte mit dem gerenderten
+    Listentext in "list".
     """
     candidates = (
         REPO / P._MODEL_CHECK_CACHE_NAME,
@@ -329,33 +397,13 @@ def _live_names():
                 payload = json.load(handle)
         except (OSError, ValueError):
             continue
-        text = str((payload or {}).get("list") or "")
-        if not text:
+        if not isinstance(payload, dict):
             continue
-        groups = []
-        # Neuer Stand: eine Gruppe je <br><br>-Block. Alter Stand: eine Gruppe
-        # je Zeile. Beides wird gelesen, damit die Probe nach dem naechsten
-        # Klick nicht blind wird.
-        chunks = text.split("<br><br>") if "<br" in text else text.split("\n")
-        for chunk in chunks:
-            chunk = chunk.strip()
-            if not chunk:
-                continue
-            match = re.match(r"<b>(.*?)</b>", chunk, re.DOTALL)
-            if match is None:
-                continue
-            label = re.sub(r"<[^>]+>", "", match.group(1)).strip()
-            rest = chunk[match.end():]
-            names = []
-            for item in re.split(r"<br\s*/?>", rest):
-                item = re.sub(r"<[^>]+>", "", item)
-                item = re.sub(r"^\s*—\s*", "", item).strip()
-                for name in item.split(", "):
-                    name = re.sub(r"\s*\(\d+\)\s*$", "", name.strip())
-                    if name:
-                        names.append(name)
-            groups.append((label, names))
-        return groups, str(path)
+        groups = _structured_names(payload)
+        if groups is None:
+            groups = _rendered_names(payload)
+        if groups:
+            return groups, str(path)
     return [], ""
 
 
@@ -407,17 +455,23 @@ def realistic_models_def():
     """
     definitions = _real_definitions()
     groups, source = _live_names()
-    affected = set()
-    for label, names in groups:
-        for name in names:
-            affected.add(name)
+    # Der neue Stand nennt die internen Typen der Varianten - damit laesst sich
+    # eine Definition exakt zuordnen. Der alte Stand nennt nur Anzeigenamen;
+    # dann bleibt die Zuordnung ueber den Namen (wie bisher).
+    affected_types = set()
+    affected_names = set()
+    for _label, names, types in groups:
+        if types:
+            affected_types.update(types)
+        else:
+            affected_names.update(names)
 
     fixture = {}
     for stem, model in definitions.items():
         name = str(model.get("name") or "").strip()
         base = str(model.get("architecture") or stem).strip()
         entry = {"name": name, "metadata": {"base_model_type": base}}
-        if name in affected:
+        if stem in affected_types or name in affected_names:
             entry["image_prompt_enhancer_instructions"] = "real fixture"
         elif any(_AFFECTED_KEYS.match(str(key)) for key in model):
             entry["image_prompt_enhancer_instructions"] = "json fixture"
@@ -425,13 +479,17 @@ def realistic_models_def():
 
     # Gruppen aus dem Zwischenspeicher uebernehmen (die Medienart steckt sonst
     # nur in den Handler-Definitionen und ist ohne Host nicht zu bekommen).
+    # Zugeordnet wird ueber die internen Typen, wenn der neue Stand sie nennt,
+    # sonst ueber den Anzeigenamen (alter Stand).
     by_name = {entry["name"]: entry for entry in fixture.values()}
-    for label, names in groups:
+    for label, names, types in groups:
         main_output, family_label = _media_for_label(label)
-        for name in names:
-            entry = by_name.get(name)
-            if entry is None:
-                # Modell ohne Definitionsdatei: eigene Familie, eigener Name.
+        targets = [fixture[model_type] for model_type in types if model_type in fixture]
+        if not targets:
+            targets = [by_name[name] for name in names if name in by_name]
+        if not targets:
+            # Modell ohne Definitionsdatei: eigene Familie, eigener Name.
+            for name in names:
                 fixture[name] = {
                     "name": name,
                     "metadata": {
@@ -441,7 +499,8 @@ def realistic_models_def():
                     },
                     "image_prompt_enhancer_instructions": "real fixture",
                 }
-                continue
+            continue
+        for entry in targets:
             entry["metadata"]["main_output"] = main_output
             if family_label:
                 entry["metadata"]["family_label"] = family_label
