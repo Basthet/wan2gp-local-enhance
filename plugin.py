@@ -30,6 +30,7 @@ Deepy -> LLM Engine auf ein lokales Qwen-Modell zeigen lassen). Der Wert bestimm
 welches lokale Modell geladen wird.
 """
 
+import re
 import sys
 import time
 
@@ -54,6 +55,19 @@ _GPU_HOLD_SECONDS = 0
 # Rangfolge der OpenCode-Reasoning-Level. Der Katalog liefert sie als Liste, die
 # Reihenfolge ist nicht garantiert - deshalb wird nach Rang sortiert.
 _REASONING_RANK = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5, "ultra": 6}
+
+# WanGP schreibt die Wortgrenze fest in die Enhancer-Anweisungen
+# (shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56). Das Plugin
+# ersetzt genau diese Saetze, damit die Grenze ueber ein Feld einstellbar wird.
+_DEFAULT_WORD_LIMIT = 150
+_WORD_LIMIT_MAX = 2000
+_WORD_LIMIT_KEY = "local_enhance_word_limit"
+_WORD_LIMIT_SENTENCES = (
+    ("Keep within 150 words.", "Keep within {limit} words."),
+    ("Do not exceed the 150 word limit!", "Do not exceed the {limit} word limit!"),
+)
+_BASE_OUTPUT_TOKENS = 512
+_MAX_OUTPUT_TOKENS = 4096
 
 
 def _main(name, default=None):
@@ -258,7 +272,80 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return str(first or "").strip()
 
     @staticmethod
-    def _fallback_instructions(is_image, audio_only):
+    def _word_limit(value=None):
+        """Wortgrenze bestimmen: Feldwert, sonst Config, sonst 150.
+
+        0 heisst 'kein Limit' - dann werden die Grenz-Saetze aus den
+        Anweisungen entfernt.
+        """
+        if value is None:
+            config = _main("server_config") or {}
+            value = (
+                config.get(_WORD_LIMIT_KEY, _DEFAULT_WORD_LIMIT)
+                if isinstance(config, dict)
+                else _DEFAULT_WORD_LIMIT
+            )
+        try:
+            limit = int(value)
+        except (TypeError, ValueError):
+            return _DEFAULT_WORD_LIMIT
+        return max(0, min(_WORD_LIMIT_MAX, limit))
+
+    @staticmethod
+    def _remember_word_limit(limit):
+        """Wortgrenze in der Live-Config merken - WanGP schreibt sie mit."""
+        config = _main("server_config")
+        if isinstance(config, dict):
+            config[_WORD_LIMIT_KEY] = int(limit)
+
+    @staticmethod
+    def _apply_word_limit(text, limit):
+        """Die feste 150-Wort-Grenze in den Anweisungen ersetzen."""
+        text = str(text or "")
+        if limit <= 0:
+            for source, _template in _WORD_LIMIT_SENTENCES:
+                text = text.replace(source, "")
+            return re.sub(r"\n{3,}", "\n\n", text).strip()
+        for source, template in _WORD_LIMIT_SENTENCES:
+            text = text.replace(source, template.format(limit=limit))
+        return text
+
+    @staticmethod
+    def _output_token_budget(limit):
+        """Token-Budget, in das die gewuenschte Wortzahl passt.
+
+        150 Woerter passen in die 512 Tokens der Voreinstellung. Darueber waechst
+        das Budget mit (grob 2.2 Tokens pro Wort; deutsch braucht mehr als
+        englisch), sonst schneidet das Token-Limit den Prompt ab.
+        """
+        if limit <= 0:
+            return 1024
+        return max(_BASE_OUTPUT_TOKENS, min(_MAX_OUTPUT_TOKENS, int(round(limit * 2.2)) + 64))
+
+    @classmethod
+    def _read_controls(cls, controls):
+        """Think-Checkbox und Wortgrenze aus den optionalen Eingaben lesen.
+
+        Beide Widgets koennen fehlen (WanGP legt die Think-Checkbox nur fuer
+        lokale Enhancer an), deshalb wird nach Typ ausgewertet statt nach
+        Position.
+        """
+        think = False
+        limit = None
+        for value in controls:
+            if isinstance(value, bool):
+                think = value
+            elif isinstance(value, (int, float)):
+                limit = value
+        return think, cls._word_limit(limit)
+
+    def _control_components(self):
+        """Die optionalen Regler der Knopfreihe: Think-Checkbox, Wortgrenze."""
+        fields = (getattr(self, "_think_checkbox", None), getattr(self, "_words_field", None))
+        return [field for field in fields if field is not None]
+
+    @classmethod
+    def _fallback_instructions(cls, is_image, audio_only, word_limit=None):
         """Dieselben eingebauten Anweisungen, die der lokale Pfad benutzt.
 
         `resolve_prompt_enhancer_settings()` (wgp.py:6457) holt die Anweisungen
@@ -271,7 +358,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         Der lokale Pfad faellt in diesem Fall auf die eingebauten Anweisungen
         zurueck (generate_cinematic_prompt, prompt_enhance_utils.py:241). Die
         Auswahl hier ist mit dem lokalen Aufruf identisch: text_prompt=audio_only,
-        video_prompt=not is_image.
+        video_prompt=not is_image. Die Wortgrenze wird dabei ersetzt.
         """
         from shared.prompt_enhancer.prompt_enhance_utils import (
             T2I_VISUAL_PROMPT,
@@ -279,8 +366,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             T2V_CINEMATIC_PROMPT,
         )
         if audio_only:
-            return T2T_TEXT_PROMPT
-        return T2I_VISUAL_PROMPT if is_image else T2V_CINEMATIC_PROMPT
+            text = T2T_TEXT_PROMPT
+        else:
+            text = T2I_VISUAL_PROMPT if is_image else T2V_CINEMATIC_PROMPT
+        return cls._apply_word_limit(text, cls._word_limit(word_limit))
 
     @staticmethod
     def _local_engine_name():
@@ -294,8 +383,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     # -------------------------------------------------------------- Kernlogik
 
-    def enhance(self, state, text, think=False):
+    def enhance(self, state, text, *controls):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext."""
+        think, max_words = self._read_controls(controls)
+        self._remember_word_limit(max_words)
         text = str(text or "").strip()
         if not text:
             return "", "Enter a prompt first."
@@ -390,6 +481,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 is_image,
                 audio_only,
                 -1,        # seed -> zufaellig
+                # Wortgrenze steckt in den Anweisungen; das Token-Budget muss
+                # mitwachsen, sonst schneidet das Limit den Prompt ab.
+                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, max_words),
+                text_encoder_max_tokens=self._output_token_budget(max_words),
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             return "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
@@ -541,13 +636,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         executable = str(profile.get("executable", "opencode") or "opencode")
         return base_url or "<not configured>", executable, (urlparse(base_url).port or 4096)
 
-    def enhance_remote(self, state, text, think=False):
+    def enhance_remote(self, state, text, *controls):
         """Verbessern ueber die Remote-Engine - ohne lokalen Modell-Load.
 
         Anders als enhance() wird hier kein VRAM belegt: process_prompt_enhancer()
         erkennt an der Engine, dass remote gearbeitet wird (wgp.py:6409), und
         ueberspringt den lokalen Loader (local_runtime, wgp.py:6505).
         """
+        think, max_words = self._read_controls(controls)
+        self._remember_word_limit(max_words)
         text = str(text or "").strip()
         if not text:
             return "", "Enter a prompt first."
@@ -623,7 +720,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 -1,        # seed -> zufaellig
                 # Ohne Anweisung geht ein LEERER System-Prompt an die Remote-
                 # Engine und der Agent fragt zurueck statt umzuschreiben.
-                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only),
+                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, max_words),
+                text_encoder_max_tokens=self._output_token_budget(max_words),
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             import traceback
@@ -643,9 +741,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self._last_source = text
         seconds = time.time() - started
         effort_note = f" Reasoning effort `{effort}`." if effort else ""
+        limit_note = f" Max {max_words} words." if max_words > 0 else " No word limit."
         return result, (
             f"Enhanced remotely with **{engine}** (mode `{mode}`) in {seconds:.1f}s."
-            f"{effort_note} No local VRAM used."
+            f"{effort_note}{limit_note} No local VRAM used."
         )
 
     def write_back(self, state, text):
@@ -686,7 +785,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "The plugin supplies the enhancer instructions, so the agent\n"
                 "rewrites the prompt instead of asking a question.\n"
                 "Think: sends the highest reasoning level of the selected model;\n"
-                "unticked it sends the lowest one - providers have no real off."
+                "unticked it sends the lowest one - providers have no real off.\n"
+                "Max words: replaces the 150-word limit in the instructions\n"
+                "(0 removes it)."
             ),
             "local_enhance_local_btn": (
                 f"{self._button_label()} - enhance on this GPU\n"
@@ -695,7 +796,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "An already loaded model is unloaded first, so this can take\n"
                 "30-60 s. No remote tokens are used.\n"
                 "Think: Qwen reasons before rewriting, with its own thinking\n"
-                "budget; unticked it answers straight away."
+                "budget; unticked it answers straight away.\n"
+                "Max words: replaces the 150-word limit in the instructions; the\n"
+                "token budget grows with it (0 removes the limit)."
             ),
         }
         return """
@@ -716,8 +819,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     // the model switch that resets its visible attribute.
     '#local_enhance_builtin_btn{display:none !important;}' +
     '#local_enhance_row{flex-wrap:wrap !important;}' +
-    '#local_enhance_row > .local-enhance-label,' +
-    '#local_enhance_row > .cbx_centered{width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}' +
+    '#local_enhance_row .local-enhance-label,' +
+    '#local_enhance_row .cbx_centered,' +
+    '#local_enhance_row .local-enhance-words{width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}' +
     // The mode dropdown sits in a gr.Form right after this row; a full flex-basis
     // makes it wrap onto its own line below.
     '#local_enhance_row + .form{flex-basis:100% !important;}';
@@ -773,6 +877,33 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 f"{self._button_label()} \u24d8", size="sm", scale=0, min_width=0,
                 elem_id="local_enhance_local_btn", elem_classes="btn_centered",
             )
+            # Wortgrenze der Enhancer-Anweisungen. Gradio packt einzelne
+            # Formularfelder in einen gr.Form-Wrapper; der wird gleich wieder
+            # entfernt, sonst greift das CSS fuer die direkten Kinder der Reihe
+            # nicht mehr (gemessen: Gradio setzt dort width:100%).
+            words_field = gr.Number(
+                value=self._word_limit(),
+                label="Max words",
+                precision=0,
+                minimum=0,
+                maximum=_WORD_LIMIT_MAX,
+                step=10,
+                scale=0,
+                min_width=0,
+                elem_id="local_enhance_words",
+                elem_classes=["local-enhance-words"],
+            )
+
+        # Zahlfeld aus seinem Wrapper loesen und erst NACH der Checkbox wieder
+        # anhaengen - so bleibt die Reihenfolge Label, Knoepfe, Think, Max words.
+        wrapper = getattr(words_field, "parent", None)
+        if wrapper is not None and wrapper is not button_row:
+            try:
+                wrapper.children.remove(words_field)
+                button_row.children.remove(wrapper)
+                words_field.parent = None
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{PlugIn_Name}] Could not unwrap the word-limit field: {exc}")
 
         parent = getattr(button_row, "parent", None)
         think_checkbox = None
@@ -812,21 +943,31 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 except Exception as exc:  # noqa: BLE001
                     print(f"[{PlugIn_Name}] Could not move the Think checkbox: {exc}")
 
-        # Die Checkbox gilt fuer BEIDE Knoepfe: lokal schaltet sie das Denken,
-        # remote den Reasoning-Level. Fehlt sie (Modell ohne Enhancer oder
-        # anderer WanGP-Aufbau), bleibt think auf dem Default False.
-        shared_inputs = [self.state, prompt_component]
-        if think_checkbox is not None:
-            shared_inputs.append(think_checkbox)
+        # Wortgrenze als letztes Element der Reihe.
+        try:
+            button_row.children.append(words_field)
+            words_field.parent = button_row
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Could not attach the word-limit field: {exc}")
+
+        # Fuer den Tab-Knopf bereithalten: create_ui() laeuft erst nach dieser
+        # Funktion (wgp.py:13628 vor 13976) und kann die Regler mitverdrahten.
+        self._think_checkbox = think_checkbox
+        self._words_field = words_field
+
+        # Beide Regler gelten fuer BEIDE Knoepfe: die Checkbox schaltet lokal das
+        # Denken und remote den Reasoning-Level, das Feld die Wortgrenze. Fehlt
+        # ein Widget, bleibt der jeweilige Default aktiv.
+        controls = self._control_components()
         remote_btn.click(
             fn=self.enhance_inline_remote,
-            inputs=list(shared_inputs),
+            inputs=[self.state, prompt_component] + controls,
             outputs=[prompt_component],
             show_progress="hidden",
         )
         local_btn.click(
             fn=self.enhance_inline,
-            inputs=list(shared_inputs),
+            inputs=[self.state, prompt_component] + controls,
             outputs=[prompt_component],
             show_progress="hidden",
         )
@@ -844,23 +985,25 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         return button_row
 
-    def enhance_inline_remote(self, state, text, think=False):
+    def enhance_inline_remote(self, state, text, *controls):
         """Wie enhance_remote(), schreibt das Ergebnis direkt ins Prompfeld."""
-        result, status = self.enhance_remote(state, text, think)
+        result, status = self.enhance_remote(state, text, *controls)
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
         gr.Info(str(status).replace("**", "").replace("`", ""))
         return self._with_history(result)
 
-    def enhance_inline(self, state, text, think=False):
+    def enhance_inline(self, state, text, *controls):
         """Wie enhance(), schreibt das Ergebnis aber direkt ins Prompfeld."""
-        result, status = self.enhance(state, text, think)
+        result, status = self.enhance(state, text, *controls)
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
+        think, max_words = self._read_controls(controls)
         marker = " + Think" if think else ""
-        gr.Info(f"{self._button_label()}: enhanced with {self._variant_label()}{marker}")
+        limit_note = f", max {max_words} words" if max_words > 0 else ", no word limit"
+        gr.Info(f"{self._button_label()}: enhanced with {self._variant_label()}{marker}{limit_note}")
         return self._with_history(result)
 
     # ------------------------------------------------------------------- UI
@@ -881,7 +1024,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "<b>OpenCode</b> enhances remotely through the configured engine, "
                 "<b>Local 27B</b> enhances on this GPU with Qwen3.8-27B. "
                 "Both write the result straight into the prompt field. "
-                "<b>Think</b> applies to both buttons. "
+                "<b>Think</b> and <b>Max words</b> apply to every button. "
                 "Hover the info button for details."
             )
             text_in = gr.Textbox(
@@ -906,7 +1049,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         self.on_tab_outputs = [text_in]
 
-        enhance_btn.click(fn=self.enhance, inputs=[state, text_in], outputs=[text_out, status])
+        enhance_btn.click(
+            fn=self.enhance,
+            inputs=[state, text_in] + self._control_components(),
+            outputs=[text_out, status],
+        )
 
         def pull_from_form(state_value):
             try:
