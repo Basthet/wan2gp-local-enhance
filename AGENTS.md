@@ -29,17 +29,24 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `reasoning_effort` des Modells als `variant` (`opencode_backend.py:226`).
   Ungesetzt: kein Denken lokal, niedrigster Level remote (Anbieter haben kein
   echtes „aus").
-- **Words** (Zeile 2, Preset-Dropdown neben dem Modus-Dropdown) — ersetzt die
-  feste 150-Wort-Grenze in WanGPs Anweisungen
-  (`shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56`):
-  die Presets `no limit` (0/0), `short - 150 words`, `medium - 300 words` und
-  `long - 500 words` setzen Min auf 0; `custom (min/max)` blendet die beiden
-  Zahlenfelder `Min`/`Max` ein (0 = keine Grenze). Aufgelöst wird das
-  in `_read_controls` über `_preset_range`; Anweisungen: beide gesetzt →
-  „Keep between MIN and MAX words.", nur Max → wie bisher, nur Min →
-  „Write at least MIN words.", beide 0 → Sätze entfernt.
-  Das Token-Budget wächst mit (`_output_token_budget`), sonst schneidet das
-  512-Token-Limit den Prompt ab.
+- **Min words** / **Max words** — zwei `gr.Number`-Felder ganz oben im
+  Plugin-Tab, nebeneinander. Sie ersetzen die feste 150-Wort-Grenze in WanGPs
+  Anweisungen (`shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56`):
+  beide gesetzt → „Keep between MIN and MAX words.", nur Max → wie bisher, nur
+  Min → „Write at least MIN words.", beide 0 → die Sätze werden entfernt
+  (0 = keine Grenze). Aufgelöst wird das in `_read_controls()`; ein
+  Preset-Dropdown gibt es nicht mehr. Das Token-Budget wächst mit
+  (`_output_token_budget`), sonst schneidet das 512-Token-Limit den Prompt ab.
+
+Unter den beiden Feldern steht der **Modell-Check**: die englische Hinweiszeile
+(`_MODEL_CHECK_HINT`), darunter ein eingeklapptes `Which models ignore Min/Max?`
+mit dem Knopf *Check models*, einer Statuszeile und der Liste. Beim Aufbau des
+Tabs wird **nichts** berechnet — Liste und Status kommen aus
+`enhancer_models.json` neben `plugin.py`; erst der Klick auf *Check models* liest
+den Katalog (`_main("models_def")`, nur lesen), zählt, rendert und schreibt die
+Datei. Die Liste nennt die Modelle, deren Definitionen eigene
+Enhancer-Anweisungen mitbringen — dort gewinnen sie gegen die vom Plugin
+übergebenen (`_fallback_instructions`), Min/Max wirken also nicht.
 
 ## Zwei Klone — die wichtigste Regel
 
@@ -91,14 +98,26 @@ neu starten.
   `_split_mode_input`, `_effective_mode`), `_resolve_mode` ist nur noch Fallback
   bei leerem Wert. Beide Knöpfe haben dadurch **7** Klick-Eingaben
   (`state, prompt, Modus, Think, Preset, Min, Max`), der lokale **7 +
-  Bild-Eingaben**. Vorher stand im Klick immer der Modell-Default, wodurch
+  Bild-Eingaben**. Seit `e5ed6d8` sind es **6** (`… Think, Min, Max`), das
+  Preset ist weg. Vorher stand im Klick immer der Modell-Default, wodurch
   Modelle mit erstem Modus `"T"` (`qwen_image_21_7B`) die Bilder verwarfen.
-- **`2f6f3e6`, `446da1e`, `61f25ae`, `40215b9`, `084acf1` und `0dde6f4` sind
-  gepusht.**
-  Nach dem Neustart prüfen: `local_enhance_remote_btn` **7 Inputs**,
-  `local_enhance_local_btn` **7 + Anzahl der Bild-Eingaben** des Modells, alle
-  vier Kästen in Zeile 2 auf einer Linie, Preset wechseln → Felder verschwinden,
-  `custom` → sie kommen mit ihren alten Werten zurück, und der Vision-Lauf aus
+- `e5ed6d8` — Wortgrenze in den Plugin-Tab: Preset-Dropdown entfernt, Min/Max
+  als zwei Felder im Tab, `_UI_CSS` und `dev/ui_preview.py` angepasst
+- `b758ac5` — Modell-Check-Kern: `_collect_enhancer_overrides()` sammelt die
+  Modelle mit eigenen Enhancer-Anweisungen, dazu
+  `dev/check_enhancer_overrides.py` und Testnacharbeit
+- `a137980` — Tab-Hinweis und Modell-Check im Tab: Accordion mit dem Knopf
+  *Check models*, Zwischenspeicher `enhancer_models.json` (in `.gitignore`) und
+  die Liste daraus
+- `39dbd33` — Felder nebeneinander (`min_width` statt CSS), Ziffernsuffixe im
+  Schlüsselmuster, Dateizähler über den Pfad des Hauptmoduls, Kommentare
+- **Alle Commits bis `39dbd33` sind gepusht**, samt dieser Fassung der
+  Anleitung.
+  Nach dem Neustart prüfen: `local_enhance_remote_btn` **6 Inputs**,
+  `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, die
+  beiden Felder **Min words** / **Max words** ganz oben im Plugin-Tab
+  nebeneinander und ohne abgeschnittene „1500", darunter der Modell-Check
+  (Klick auf *Check models* füllt Status und Liste), und der Vision-Lauf aus
   „Prüfen".
 
 ## Technisches, das man sonst neu herausfinden muss
@@ -162,8 +181,10 @@ neu starten.
     Wortgrenzen-Sätze, `_apply_word_limit` greift weiter.
   - Nur der lokale Pfad bekommt Bilder; der OpenCode-Knopf bleibt text-only.
 - **Startreihenfolge:** `create_inline_button` (`wgp.py:13628`) läuft **vor** den
-  Plugin-Tabs (`wgp.py:13976`). Deshalb sitzen die Regler in Zeile 1/2 und der
-  Tab-Knopf wird in `create_ui()` nachträglich mitverdrahtet.
+  Plugin-Tabs (`wgp.py:13976`). Deshalb sitzen Knöpfe und Think-Checkbox in
+  Zeile 1, während die Wort-Regler und der Tab-Knopf erst in `create_ui()`
+  dazukommen: `_attach_word_fields()` holt die beiden Felder in den Tab, der
+  Tab-Knopf wird dort mitverdrahtet.
 - **`insert_after`** verschiebt nur das **zuletzt erzeugte** Kind
   (`shared/utils/plugins.py:1659`). Nichts direkt in `parent` erzeugen, sonst
   wandert das Falsche.
@@ -177,14 +198,22 @@ neu starten.
     gleichzeitig (im Layout doppelt sichtbar).
   - Gradio setzt `width:100%` **und** ein Inline-`min-width` (Default 160px, aus
     `min_width`) auf die Kinder. Breiten deshalb per CSS mit `!important`
-    vorgeben — das schlägt auch das Inline-Style. Betrifft die Reihe, die
-    Think-Checkbox und die Wort-Regler (Preset-Dropdown 190px, Zahlenfelder
-    84px, siehe `_UI_CSS`).
+    vorgeben, wo eine feste Breite nötig ist — das schlägt auch das
+    Inline-Style. Betroffen sind nur noch Reihe und Think-Checkbox
+    (`.local-enhance-label`, `.cbx_centered`). Die beiden Wort-Regler brauchen
+    keine Regel: sie bekommen ihre Breite über `min_width=_WORD_FIELD_WIDTH`
+    (120px) plus `scale=0`. `_UI_CSS` enthält damit nur noch vier Regeln: den
+    Originalknopf ausblenden, Zeile 1 umbrechen lassen, die Breiten von Label
+    und Think-Checkbox und die volle Breite der fremden Formularzeile
+    (`#local_enhance_row + .form`, inzwischen nur noch das Modus-Dropdown).
   - **Höhe und vertikales Padding der Eingaben bleiben Gradios Vorgabe.** Eigene
-    `input{padding…; font-size…}`-Regeln machen die Zahlenfelder niedriger als
-    die Dropdowns daneben (live 21px statt 33px) und zerreissen die gemeinsame
-    Grundlinie. Erlaubt ist nur horizontal: `padding-left/right:4px`, sonst
-    schneidet „1500" in den 84px ab (5px Überlauf).
+    `input{padding…; font-size…}`-Regeln machten die Felder früher niedriger als
+    ihre Nachbarn (live 21px statt 33px) und rissen die gemeinsame Grundlinie
+    ein — es gibt deshalb keine solchen Regeln mehr. Die Breite kommt aus
+    `min_width`: die beiden Wort-Regler sind je rund 120px breit (Block,
+    `min(120px, 100%)`; die Eingabe darin 94px), stehen auf derselben
+    Grundlinie, und `input.scrollWidth - clientWidth` ist 0 — sonst wäre „1500"
+    abgeschnitten (live gemessen).
   - **Captions sind `<span data-testid="block-info">`** im Kopf des Blocks, nicht
     das `<label>` — Letzteres umschliesst bei `gr.Number` die Eingabe. Wer die
     Caption stylen will, darf nicht `… label{…}` schreiben; die Schriftgrössen
@@ -194,26 +223,54 @@ neu starten.
     Ohne Caption sitzt dessen Eingabe 32px höher als unsere beschrifteten Regler
     (live gemessen: y665 gegen y697) — genau der schiefe Screenshot. Das Plugin
     schaltet WanGPs eigene Caption deshalb in `create_inline_button` ein
-    (`mode_dropdown.show_label = True`), und zwar **vor** dem Anhängen der
-    eigenen Regler, sonst findet die Dropdown-Suche das eigene Preset. Ein
+    (`mode_dropdown.show_label = True`). Ein
     Modellwechsel setzt sie nicht zurück: `refresh_prompt_enhancer_labels`
     schickt nur `choices` (`wgp.py:10898`).
-  - Die Wort-Regler nutzen **Gradios eigene Captions** (`label="Words"` /
-    `"Min"` / `"Max"`, `show_label=True`): sie stehen direkt über der Eingabe,
+  - Die Wort-Regler nutzen **Gradios eigene Captions** (`label="Min words"` /
+    `"Max words"`, `show_label=True`): sie stehen direkt über der Eingabe,
     kosten keine eigene Komponente und halten die Formulargruppe zusammen. Die
     früheren `gr.HTML`-Beschriftungen sind weg — genau deshalb ist der
     Unwrap-Code jetzt kurz.
-  - Das Wortzahl-Preset ist ein `gr.Dropdown`, also ebenfalls FormComponent, und
-    läuft durch dieselbe Unwrap-/Move-Mechanik wie die Zahlenfelder.
-  - `visible=False` ändert nur das Rendering: die beiden Zahlenfelder werden
-    weiter mitgesendet, ihr Wert überlebt also das Umschalten auf ein Preset und
-    zurück (live geprüft).
+  - Die beiden Felder entstehen in `create_inline_button()` (die Knöpfe in
+    Zeile 1 brauchen sie dort schon als Klick-Eingaben), werden dort aus ihrem
+    `gr.Form`-Wrapper gepackt und in der Knopfreihe geparkt
+    (`self._word_fields_home`); `create_ui()` holt sie mit
+    `_attach_word_fields()` in den Tab. Das muss **nach** dem Verlassen des
+    `with gr.Row()`-Blocks passieren: beim Verlassen gruppiert Gradio
+    aufeinanderfolgende Formularfelder in einen `gr.Form`, und der stapelt seine
+    Kinder vertikal — Min und Max stünden sonst untereinander statt
+    nebeneinander. Prüfwerkzeug: `dev/ui_preview.py`.
   - Die Regler werden **nach Typ** ausgelesen (`*controls`), weil die
-    Think-Checkbox fehlen kann: `bool` = Think, `str` = Preset-Schlüssel, Zahlen
-    = Custom-Felder. Feste Reihenfolge der Klick-Eingaben:
-    `state, prompt, Modus, Think, Preset, Min, Max`. Der Modus-String wird
-    vorher mit `_split_mode_input()` abgezogen — sonst läse `_read_controls()`
-    ihn als Preset und alles verschöbe sich um eins.
+    Think-Checkbox fehlen kann: `bool` = Think, Zahlen = die beiden Wort-Regler
+    (erst Min, dann Max); ein einzelnes Zahlenfeld gilt weiter als Obergrenze
+    (Altbestand). Feste Reihenfolge der Klick-Eingaben:
+    `state, prompt, Modus, Think, Min, Max` → **6**. Der Modus-String wird
+    vorher mit `_split_mode_input()` abgezogen, die Bilder trennt
+    `_split_image_inputs()` von rechts ab.
+- **Modell-Check im Tab:** Der Knopf liest `_main("models_def")` **nur** — kein
+  `refresh_model_defs()`, kein `map_family_handlers()`, kein Import von
+  Host-Modulen. Beides wäre hier falsch: `refresh_model_defs()` löst den ganzen
+  Katalog neu auf (jede Definitionsdatei plus Familien-Handler, `wgp.py:3295`)
+  und bindet die globale `models_def` neu (`wgp.py:3351`), ohne Lock, mitten im
+  laufenden Host; `map_family_handlers()` ruft `query_supported_types()` jedes
+  Handlers, und der LTX2-Handler verschiebt dort beim ersten Mal LoRA-Dateien
+  auf der Platte (`models/ltx2/ltx2_handler.py:409-429`, `shutil.move`).
+  Erkennung: regulärer Ausdruck über
+  `text_/image_/video_prompt_enhancer_instructions` mit beliebigem
+  Ziffernsuffix — die zugehörigen `*_max_tokens*`-Schlüssel dürfen **nicht**
+  treffen. Gruppiert wird nach der Medienart aus `metadata.main_output`
+  (`Image`, `Image + Video`, `Video`, `Audio`, innerhalb Audio nach
+  `family_label` wie `TTS`/`Music`), Anzeigename ist `name`,
+  `visible == False` wird übersprungen. Ergebnis und Status landen in
+  `enhancer_models.json` neben `plugin.py` (Name in `.gitignore`, damit
+  Testläufe und der geladene Klon sauber bleiben).
+- **Warum es den Check gibt:** ein Teil der Modelldefinitionen bringt eigene
+  Enhancer-Anweisungen mit (Grössenordnung: gut ein Drittel des Katalogs — im
+  Nachbau dieses Checkouts mit 238 Definitionsdateien 90 betroffene). Der Host
+  bevorzugt sie gegen die vom Plugin übergebenen, Min/Max wirken dort also
+  nicht. Die genaue Zahl nennt die Statuszeile beim Klick selbst
+  („<betroffen> von <untersucht> model definitions"). Die Liste wird
+  **erzeugt**, nicht gepflegt — mit neuen Modellen wächst sie von selbst mit.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 0 (= keine Untergrenze), Max 150.
@@ -234,24 +291,38 @@ neu starten.
   `./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py 7899`.
   Erwartung:
   Zeile 1 = `[HTML, Button, Button, Checkbox]`,
-  Zeile 2 (der `Form` mit dem Dropdown) = `[Textbox(prompt_enhancer),
-  Dropdown, Dropdown(preset "Words"), Number(Min), Number(Max)]`,
-  Regler = `[Textbox(Modus), Checkbox, Dropdown, Number, Number]` → **7**
-  Klick-Eingaben (bzw. 7 + Bild-Eingaben am lokalen Knopf),
+  die fremde Formularzeile (der `Form`, in dem der versteckte Modus-Text liegt)
+  = `[Textbox(prompt_enhancer), Dropdown]` — das Modus-Dropdown steht dort
+  allein; die Think-Checkbox ist in Zeile 1 gewandert, die Wort-Regler in den
+  Tab,
+  Tab-Wortzeile = `[Number, Number]` (`Min words` / `Max words`) **ohne**
+  `Form`-Wrapper,
+  Regler = `[Textbox(Modus), Checkbox, Number, Number]` → **6** Klick-Eingaben
+  (bzw. 6 + Bild-Eingaben am lokalen Knopf),
   `mode-components-at-wiring=1`, und im Layout darf keine Komponente doppelt
   eingetragen sein.
+  Der Dump zeigt ausserdem den Modell-Check: Hinweis-Text vorhanden, Accordion
+  `open=False`, der Knopf-Klick mit den Ausgaben Liste/Statuszeile und beim
+  Aufbau den Ersatztext `Not checked yet in this installation - press **Check
+  models**.` bei leerer Statuszeile. Der Klick wird **nicht** ausgelöst — er
+  würde `enhancer_models.json` schreiben.
   Das Modus-Dropdown wird im Nachbau mit `show_label=False` angelegt (wie WanGP
   im On-Demand-Modus) — der Dump muss danach `show_label=True` zeigen, sonst
   greift der Caption-Fix nicht.
-  `PREVIEW_MIN`/`PREVIEW_MAX` setzen die Startwerte; `PREVIEW_MAX=150` ergibt den
-  Preset-Fall (Felder `display:none`), der Default `1500` den Custom-Fall.
-- Ausrichtung (headless, CDP): die sichtbaren Kästen aller vier Blöcke müssen
-  oben auf derselben y liegen (Modus/Preset `box` 258…298, Min/Max 258…300) und
+  `PREVIEW_MIN`/`PREVIEW_MAX` setzen die Startwerte der beiden Felder
+  (Default 0/1500).
+- Geometrie (headless, CDP): die beiden Wort-Felder müssen auf derselben
+  Grundlinie nebeneinander liegen — live gemessen: Block je 120px
+  (`min(120px, 100%)`), die Eingabe darin 94px, beide auf y=364 —, und
   `input.scrollWidth - clientWidth` muss 0 sein, sonst ist ein Wert wie „1500"
   abgeschnitten.
-- Auflösung ohne UI (schneller Matrix-Check gegen `_read_controls`):
-  `(False,"off",0,1500)` → `(0,0)`, `(False,"300",100,1500)` → `(0,300)`,
-  `(False,"custom",800,100)` → `(100,800)`, `(False,None,0,1500)` → `(0,1500)`.
+- Auflösung ohne UI (schneller Matrix-Check gegen `_read_controls`, Eingabe ist
+  immer `(Think, Min, Max)`): `(False, 0, 1500)` → `(False, 0, 1500)`,
+  `(True, 800, 100)` → `(True, 100, 800)` (Tausch bei Min > Max),
+  `(False, 0, 0)` → `(False, 0, 0)`, `(False, 300)` → `(False, 0, 300)`
+  (Altbestand: ein einzelnes Feld ist die Obergrenze),
+  `(False, "300", 0, 1500)` → `(False, 0, 1500)` (ein unbekannter Typ wird
+  übersprungen).
 - Bild der Zeile ohne Browserfenster (Chromium ist installiert, Playwright nicht):
   `--headless=new --user-data-dir=.ui-shots/prof --force-device-scale-factor=2
   --virtual-time-budget=9000 --window-size=780,300 --screenshot=….png
@@ -262,25 +333,39 @@ neu starten.
   dem WanGP-Ordner) täuscht `convert_image`, `get_computed_fps`,
   `get_base_model_type`, `estimate_first_window_overlap_frames`,
   `prompt_enhancer_outputs_multiple_prompts` und `get_prompt_enhancer_choices`
-  als Modul `__main__` vor und prüft 17 Fälle: Modus ohne `"I"`, Startbild,
+  als Modul `__main__` vor und prüft **20** Fälle: Modus ohne `"I"`, Startbild,
   Endbild, zwei Referenzen, Control Image allein, `fake_start_image`
   (On-Demand-Parität), Fenstermodell (erster Anker), Fallback bei mehreren
   Startbildern, fehlendes `convert_image`, IT2I- vs. T2I-Anweisungen,
-  `_image_note`, Trennung der Klick-Eingaben, `_effective_mode` (leerer
+  `_image_note`, Trennung der Klick-Eingaben, Trennung **ohne**
+  Think-Checkbox (samt gelesener Min/Max-Werte), `_effective_mode` (leerer
   Live-Wert → Modell-Default, gesetzter Live-Wert gewinnt) und
   `_split_mode_input` (mit und ohne Modus-Komponente).
-  Erwartung: `Alle Faelle bestanden.` (Exit 0).
+  Erwartung: 20 `PASS`-Zeilen und `Alle Faelle bestanden.` (Exit 0).
+- Modell-Check ohne WanGP-Start: `dev/check_enhancer_overrides.py` (WanGP-venv,
+  aus dem WanGP-Ordner) wirft eine erfundene Fixture gegen
+  `_collect_enhancer_overrides()` — kein Hoststart, kein Katalog auf der Platte.
+  Aufruf:
+  `./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/check_enhancer_overrides.py`.
+  Erwartung: 18 `PASS`-Zeilen und `Alle Faelle bestanden.` (Exit 0). Geprüft
+  werden die beiden Zähler, Gruppenzuordnung und -reihenfolge, alphabetische
+  duplikatfreie Namen, das Überspringen von `visible == False` (das aber als
+  untersucht zählt), Ziffernsuffixe innerhalb und ausserhalb 1-4, dass
+  `*_max_tokens*`-Schlüssel **nicht** treffen, die Audio-Unterteilung nach
+  `family_label`, kaputte Einträge und das Rendern (eine Zeile je Gruppe, keine
+  Tabelle). `--dump <models_def.json>` gibt ohne Testlauf den gerenderten Text
+  für einen eigenen Katalog aus.
 - Verdrahtung der Knöpfe (ohne WanGP-Start): im `gr.Blocks`-Aufbau Bild-Komponenten
   auf den Plugin-Instanzen setzen (`p.image_start = gr.File(...)`,
   `p.image_prompt_type = gr.CheckboxGroup(...)`, `p.video_prompt_type = …`) und
   `demo.get_config_file()` nach `targets == [<knopf-id>, "click"]` durchsuchen:
-  `local_enhance_remote_btn` muss **7** Inputs haben, `local_enhance_local_btn`
-  **7 + Anzahl der Bild-Komponenten** (früher 9 bei drei Bild-Eingaben; jetzt
-  7 + Anzahl).
+  `local_enhance_remote_btn` muss **6** Inputs haben, `local_enhance_local_btn`
+  **6 + Anzahl der Bild-Komponenten**; der Tab-Knopf wird mit denselben Reglern
+  verdrahtet, also ebenfalls **6 + Anzahl der Bild-Eingaben**.
 - End-to-End (WanGP läuft): `http://127.0.0.1:7860/config` abrufen — die
-  Dependencies von `local_enhance_remote_btn` müssen **7 Inputs** haben
-  (`state, prompt, Modus, Think, Preset, Min, Max`), `local_enhance_local_btn`
-  **7 + Anzahl der Bild-Eingaben** des Modells.
+  Dependencies von `local_enhance_remote_btn` müssen **6 Inputs** haben
+  (`state, prompt, Modus, Think, Min, Max`), `local_enhance_local_btn`
+  **6 + Anzahl der Bild-Eingaben** des Modells.
 - Vision live: Modus *Based on Text Prompt and Images* wählen, Startbild mit
   markantem Inhalt setzen, Prompt „a cat" → der verbesserte Prompt muss den
   Bildinhalt beschreiben und die Statuszeile `images: start image` nennen. Dann
@@ -292,10 +377,25 @@ neu starten.
 ## Offen
 
 - Modelle mit **eigenen** Enhancer-Anweisungen: dort wirken Min/Max nicht, weil
-  `model_def` gegen die übergebenen Anweisungen gewinnt (`wgp.py:6476`).
+  `model_def` gegen die übergebenen Anweisungen gewinnt (`wgp.py:6476`). Fachlich
+  bleibt das offen — der Host entscheidet —, ist jetzt aber im Tab sichtbar und
+  prüfbar: *Check models* listet genau diese Modelle. Die Erkennung ist **grob**:
+  sie sagt nur, dass die Definition einen passenden Schlüssel mitbringt, nicht ob
+  der Host ihn im gewählten Modus wirklich benutzt (die erste Ziffer im Modus
+  wählt ein Profil, `wgp.py:6462-6464`).
+- `_read_controls()` übergeht unbekannte Eingabetypen still — ausgewertet werden
+  nur `bool` und Zahlen. Ein künftiger Verdrahtungsfehler würde die Wortgrenzen
+  also still verschieben, ohne Fehlermeldung. Heute ist das nicht erreichbar,
+  weil der Modus-String vorher mit `_split_mode_input()` abgezogen wird.
+- Bewusst **nicht** gebaut: ein Hinweis beim Klick, ob das **aktuelle** Modell
+  eigene Anweisungen hat. Wäre machbar, aber die beiden Zeilen-Knöpfe schreiben
+  nur ins Promptfeld (`outputs=[prompt_component]`; Status geht allenfalls als
+  `gr.Info`/`gr.Warning`-Toast raus) und haben keine Statuszeile — ein Hinweis
+  bräuchte dort eine eigene Ausgabe-Komponente.
 - Das Denk-Budget der 27B ist hart auf **2000 Tokens** begrenzt
   (`shared/prompt_enhancer/qwen35_text.py:64`) — es gibt keinen Config-Key dafür.
-- Der Tab-Knopf hat keine eigenen Widgets; er nutzt die Regler aus Zeile 1/2.
+- Der Tab-Knopf hat keine eigenen Widgets; er nutzt dieselben Regler wie die
+  Knöpfe in Zeile 1 (Think) bzw. die beiden Felder oben im Tab (Min/Max).
 - **Bilder — Stufe 1:** Fortsetzungsvideo (`L`/`V` ohne Startbild) liefert kein
   dekodiertes Frame; die Prompt-/Fensteraufteilung bleibt beim Ein-Prompt-Verhalten
   des Plugins (nur der erste Fensteranker kommt an); der OpenCode-Knopf sendet
