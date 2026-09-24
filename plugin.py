@@ -65,6 +65,35 @@ _WORD_LIMIT_MAX = 2000
 _MIN_WORDS_KEY = "local_enhance_min_words"
 _MAX_WORDS_KEY = "local_enhance_max_words"
 _WORD_LIMIT_KEY = "local_enhance_word_limit"   # Altbestand, Fallback fuer Max
+# Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
+# auch ohne WanGP-Start geprueft werden kann (siehe AGENTS.md, Abschnitt Pruefen).
+_UI_CSS = (
+    # Der eingebaute Knopf verschwindet per ID; an visible=False kommt WanGPs
+    # modellabhaengiges UI-Update sonst vorbei.
+    "#local_enhance_builtin_btn{display:none !important;}"
+    # Zeile 1 wird nur so breit wie ihr Inhalt, damit die Modus-Zeile darunter
+    # umbrechen kann statt die Knoepfe zu quetschen.
+    "#local_enhance_row{flex-wrap:wrap !important;}"
+    "#local_enhance_row .local-enhance-label,"
+    "#local_enhance_row .cbx_centered{"
+    "width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}"
+    # Die Modus-Zeile: der gr.Form hinter der Knopfreihe, in dem das Dropdown und
+    # die beiden Zahlenfelder sitzen.
+    "#local_enhance_row + .form{flex-basis:100% !important;}"
+    # Min/Max bleiben winzig: Gradio setzt width:100% und min_width (Default
+    # 160px) auf jedes Kind, beides muss weg. 84px passt auch fuer vierstellige
+    # Werte (maximal erlaubt sind 2000).
+    "#local_enhance_row + .form > .local-enhance-words{"
+    "width:84px !important;max-width:84px !important;"
+    "flex:0 0 84px !important;min-width:0 !important;}"
+    # "min:" / "max:" steht als Gradio-Label ueber der Eingabe und darf die
+    # Breite nicht mitwachsen lassen.
+    "#local_enhance_row + .form > .local-enhance-words label{"
+    "font-size:11px !important;line-height:1.2 !important;margin:0 !important;"
+    "padding:0 !important;white-space:nowrap !important;}"
+    "#local_enhance_row + .form > .local-enhance-words input{"
+    "font-size:12px !important;padding:2px 4px !important;text-align:center !important;}"
+)
 _WORD_KEEP_SENTENCE = "Keep within 150 words."
 _WORD_LIMIT_SENTENCE = "Do not exceed the 150 word limit!"
 _BASE_OUTPUT_TOKENS = 512
@@ -848,31 +877,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         }
         return """
 (function () {
-  // Gradio squeezes flex children below their content width, which wrapped the
-  // buttons onto separate lines and clipped the label to "Enh". Pin the row and
-  // let the parent row wrap the mode dropdown instead.
   var style = document.createElement('style');
-  // flex:0 0 auto is the important part: the parent row hands out width by
-  // scale (dropdown 5 vs this row 1), so without refusing to shrink the row
-  // collapsed and its buttons overflowed invisibly.
-  // Measured in the live DOM: Gradio gives BOTH the label block and the checkbox
-  // block width:100%. With the previous flex-wrap:nowrap the label therefore
-  // filled line 1 on its own and pushed the buttons out of view. Their inline
-  // width:fit-content was fine all along.
-  style.textContent =
-    // The built-in button gets this id from create_inline_button. CSS survives
-    // the model switch that resets its visible attribute.
-    '#local_enhance_builtin_btn{display:none !important;}' +
-    '#local_enhance_row{flex-wrap:wrap !important;}' +
-    '#local_enhance_row .local-enhance-label,' +
-    '#local_enhance_row .cbx_centered{width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}' +
-    // Min/Max sitzen im Dropdown-Container (Zeile 2). Auch dort setzt Gradio
-    // width:100% und wuerde die Felder strecken.
-    '#local_enhance_row + .form > .local-enhance-words,' +
-    '#local_enhance_row + .form > .local-enhance-words-label{width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}' +
-    // The mode dropdown sits in a gr.Form right after this row; a full flex-basis
-    // makes it wrap onto its own line below.
-    '#local_enhance_row + .form{flex-basis:100% !important;}';
+  style.textContent = __CSS__;
   document.head.appendChild(style);
   var tips = __TIPS__;
   function apply() {
@@ -887,11 +893,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
   var n = 0;
   var t = setInterval(function () { apply(); if (++n > 60) clearInterval(t); }, 500);
 })();
-""".replace("__TIPS__", json.dumps(tips, ensure_ascii=False))
+""".replace("__TIPS__", json.dumps(tips, ensure_ascii=False)).replace(
+            "__CSS__", json.dumps(_UI_CSS, ensure_ascii=False)
+        )
 
     def create_inline_button(self):
         """Zeile 1: Beschriftung, beide Knoepfe und die Think-Checkbox.
-        Zeile 2: das Modus-Dropdown.
+        Zeile 2: das Modus-Dropdown, daneben die beiden kleinen Wortfelder
+        "min:" / "max:".
 
         run_component_insertion_and_setup() verschiebt nur das ZULETZT erzeugte
         Kind an die Zielposition (shared/utils/plugins.py:1659). Diese Reihe ist
@@ -926,47 +935,42 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 f"{self._button_label()} \u24d8", size="sm", scale=0, min_width=0,
                 elem_id="local_enhance_local_btn", elem_classes="btn_centered",
             )
-            # Min/Max der Wortgrenze. Bewusst OHNE Gradio-Label: Gradio stapelt
-            # Label ueber Eingabe, das Feld wird in einer Reihe gestaucht und
-            # bricht um. Die Beschriftung ist deshalb ein eigenes Inline-Element.
-            # Beide wandern gleich in den Container des Modus-Dropdowns (Zeile 2).
-            min_label = gr.HTML(
-                "<span style='font-weight:600; white-space:nowrap;'>Min words</span>",
-                elem_classes=["local-enhance-words-label"],
-            )
+            # Min/Max der Wortgrenze: winzige Zahlenfelder mit dem Label
+            # "min:" / "max:" direkt darueber - das erledigt Gradios eigenes
+            # Label, ein zusaetzliches HTML-Element waere nur Ballast und wuerde
+            # die Formulargruppe zerreissen. Beide wandern gleich in den
+            # Container des Modus-Dropdowns (Zeile 2); die Breite begrenzt das CSS.
             min_field = gr.Number(
                 value=min_words,
-                show_label=False,
+                label="min:",
+                show_label=True,
                 precision=0,
                 minimum=0,
                 maximum=_WORD_LIMIT_MAX,
                 step=10,
                 scale=0,
-                min_width=70,
+                min_width=0,
                 elem_id="local_enhance_min_words",
                 elem_classes=["local-enhance-words"],
             )
-            max_label = gr.HTML(
-                "<span style='font-weight:600; white-space:nowrap;'>Max words</span>",
-                elem_classes=["local-enhance-words-label"],
-            )
             max_field = gr.Number(
                 value=max_words,
-                show_label=False,
+                label="max:",
+                show_label=True,
                 precision=0,
                 minimum=0,
                 maximum=_WORD_LIMIT_MAX,
                 step=10,
                 scale=0,
-                min_width=70,
+                min_width=0,
                 elem_id="local_enhance_max_words",
                 elem_classes=["local-enhance-words"],
             )
-            words_children = (min_label, min_field, max_label, max_field)
+            words_children = (min_field, max_field)
 
-        # Die vier Elemente aus ihren gr.Form-Wrappern loesen. Gradio gruppiert
-        # nur aufeinanderfolgende Formularfelder; die HTML-Beschriftungen
-        # dazwischen zerreissen den Lauf, es entstehen also MEHRERE Wrapper.
+        # Beide Zahlenfelder aus ihrem gr.Form-Wrapper loesen: Gradio gruppiert
+        # aufeinanderfolgende Formularfelder, sie stecken also gemeinsam in einem
+        # Wrapper, der hier leer laeuft und verschwindet.
         ours = {id(child) for child in words_children}
         try:
             for candidate in list(getattr(button_row, "children", []) or []):
@@ -1038,8 +1042,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if dropdown_container is not None:
             try:
                 for child in words_children:
-                    # Die Beschriftungen haengen noch direkt in der Knopfreihe;
-                    # ohne dieses Entfernen staenden sie in zwei Eltern gleichzeitig.
+                    # Die Felder haengen noch direkt in der Knopfreihe; ohne
+                    # dieses Entfernen staenden sie in zwei Eltern gleichzeitig.
                     if any(existing is child for existing in button_row.children):
                         button_row.children.remove(child)
                     dropdown_container.children.append(child)
@@ -1124,7 +1128,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "<b>OpenCode</b> enhances remotely through the configured engine, "
                 "<b>Local 27B</b> enhances on this GPU with Qwen3.8-27B. "
                 "Both write the result straight into the prompt field. "
-                "<b>Think</b>, <b>Min words</b> and <b>Max words</b> apply to every button. "
+                "<b>Think</b> and the small <b>min:</b>/<b>max:</b> word bounds apply to every button. "
                 "Hover the info button for details."
             )
             text_in = gr.Textbox(

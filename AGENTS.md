@@ -20,8 +20,8 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `reasoning_effort` des Modells als `variant` (`opencode_backend.py:226`).
   Ungesetzt: kein Denken lokal, niedrigster Level remote (Anbieter haben kein
   echtes „aus").
-- **Min/Max words** (Zeile 2, neben dem Modus-Dropdown) — ersetzen die feste
-  150-Wort-Grenze in WanGPs Anweisungen
+- **min: / max:** (Zeile 2, zwei kleine Felder neben dem Modus-Dropdown) —
+  ersetzen die feste 150-Wort-Grenze in WanGPs Anweisungen
   (`shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56`):
   beide gesetzt → „Keep between MIN and MAX words.", nur Max → wie bisher,
   nur Min → „Write at least MIN words.", beide 0 → Sätze entfernt.
@@ -85,10 +85,15 @@ neu starten.
   - Beim Verschieben aus der Reihe in den Dropdown-Container **zuerst aus
     `button_row.children` entfernen**, sonst steht die Komponente in zwei Eltern
     gleichzeitig (im Layout doppelt sichtbar).
-  - Gradio setzt `width:100%` auf die Kinder; die Reihe und der Dropdown-Container
-    brauchen `width:auto !important; flex:0 0 auto !important`.
-  - Gradios eigenes Label stapelt über der Eingabe → in einer Reihe unbrauchbar.
-    Beschriftungen sind deshalb eigene `gr.HTML`-Elemente mit `show_label=False`.
+  - Gradio setzt `width:100%` **und** ein Inline-`min-width` (Default 160px, aus
+    `min_width`) auf die Kinder. Breiten deshalb per CSS mit `!important`
+    vorgeben — das schlägt auch das Inline-Style. Betrifft die Reihe, die
+    Think-Checkbox und die beiden Min/Max-Felder (84px, siehe `_UI_CSS`).
+  - Die Min/Max-Felder nutzen **Gradios eigenes Label** (`label="min:"` /
+    `"max:"`, `show_label=True`): es steht direkt über der Eingabe, kostet keine
+    eigene Komponente und hält die Formulargruppe zusammen. Die früheren
+    `gr.HTML`-Beschriftungen sind weg — genau deshalb ist der Unwrap-Code jetzt
+    kurz (nur noch die beiden Zahlenfelder).
   - Die Regler werden **nach Typ** ausgelesen (`*controls`), weil die
     Think-Checkbox fehlen kann. Zahlen kommen in fester Reihenfolge: erst Min,
     dann Max.
@@ -101,13 +106,22 @@ neu starten.
 
 - Syntax/Import (WanGP-venv, aus dem WanGP-Ordner):
   `cd ~/git/Wan2GP && ./.wan2gp/bin/python -c "import sys; sys.path.insert(0,'/home/stefan/git/wan2gp-local-enhance'); import plugin; print(plugin.PlugIn_Name)"`
-- UI ohne Start: in einem `gr.Blocks()` eine Row mit Button + Dropdown + Checkbox
-  bauen, `LocalEnhancePlugin` mit `state`/`prompt` bestücken,
-  `with parent: row = p.create_inline_button()`, dann die `insert_after`-Mechanik
-  nachstellen (`pop(-1)` + `insert(target_index+1, …)`). Erwartung:
+- UI ohne WanGP-Start: `dev/ui_preview.py` baut die Umgebung nach (Row mit
+  eingebautem Knopf + verstecktem `gr.Text` + Dropdown + Think-Checkbox, danach
+  die `insert_after`-Mechanik `pop(-1)` + `insert(target_index+1, …)`) und gibt
+  den Komponentenbaum aus. Aufruf aus dem WanGP-Ordner:
+  `./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py 7899`.
+  Erwartung:
   Zeile 1 = `[HTML, Button, Button, Checkbox]`,
-  Zeile 2 (der `Form` mit dem Dropdown) = `[Dropdown, HTML, Number, HTML, Number]`,
-  und im Layout darf keine Komponente doppelt eingetragen sein.
+  Zeile 2 (der `Form` mit dem Dropdown) = `[Dropdown, Number(min:), Number(max:)]`,
+  Regler = `[Checkbox, Number, Number]` → **5** Klick-Eingaben, und im Layout darf
+  keine Komponente doppelt eingetragen sein.
+- Bild der Zeile ohne Browserfenster (Chromium ist installiert, Playwright nicht):
+  `--headless=new --user-data-dir=.ui-shots/prof --force-device-scale-factor=2
+  --virtual-time-budget=9000 --window-size=780,300 --screenshot=….png
+  "http://127.0.0.1:7899/?__theme=dark"` (mit `env -u DISPLAY`, sonst bricht
+  Chromium an der X11-Autorisierung ab). `.ui-shots/` ist ignoriert und
+  Crashpad/Benutzerprofil wandern dorthin.
 - End-to-End (WanGP läuft): `http://127.0.0.1:7860/config` abrufen — die
   Dependencies von `local_enhance_local_btn` und `local_enhance_remote_btn`
   müssen **5 Inputs** haben (`state, prompt, Think, Min, Max`).
