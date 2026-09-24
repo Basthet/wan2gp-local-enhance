@@ -86,14 +86,15 @@ neu starten.
   (`_IMAGE_INPUT_NAMES` als Klick-Eingaben), Aufbereitung über
   `prepare_manual`/`image_contexts` mit Fallback, IT2I/IT2V-Anweisungen,
   Bildhinweis in der Statuszeile, `dev/check_vision_inputs.py`
-- **Arbeitsstand, noch nicht committet** — Modus-Fix: der Modus kommt live aus
-  WanGPs verstecktem `prompt_enhancer`-Text (`request_component`,
-  `_mode_components`, `_split_mode_input`, `_effective_mode`), `_resolve_mode`
-  ist nur noch Fallback bei leerem Wert. Beide Knöpfe haben dadurch **7**
-  Klick-Eingaben (`state, prompt, Modus, Think, Preset, Min, Max`), der lokale
-  **7 + Bild-Eingaben**. Vorher stand im Klick immer der Modell-Default, wodurch
+- `0dde6f4` — Modus-Fix: der Modus kommt live aus WanGPs verstecktem
+  `prompt_enhancer`-Text (`request_component`, `_mode_components`,
+  `_split_mode_input`, `_effective_mode`), `_resolve_mode` ist nur noch Fallback
+  bei leerem Wert. Beide Knöpfe haben dadurch **7** Klick-Eingaben
+  (`state, prompt, Modus, Think, Preset, Min, Max`), der lokale **7 +
+  Bild-Eingaben**. Vorher stand im Klick immer der Modell-Default, wodurch
   Modelle mit erstem Modus `"T"` (`qwen_image_21_7B`) die Bilder verwarfen.
-- **`2f6f3e6`, `446da1e`, `61f25ae`, `40215b9` und `084acf1` sind gepusht.**
+- **`2f6f3e6`, `446da1e`, `61f25ae`, `40215b9`, `084acf1` und `0dde6f4` sind
+  gepusht.**
   Nach dem Neustart prüfen: `local_enhance_remote_btn` **7 Inputs**,
   `local_enhance_local_btn` **7 + Anzahl der Bild-Eingaben** des Modells, alle
   vier Kästen in Zeile 2 auf einer Linie, Preset wechseln → Felder verschwinden,
