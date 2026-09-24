@@ -76,10 +76,16 @@ neu starten.
   (`show_label=True`), Zahlenfelder auf Gradio-Maß (gleiche Höhe/Grundlinie wie
   die Dropdowns), Captions `Words`/`Min`/`Max`; Vorschau baut den
   On-Demand-Fall (`show_label=False`) nach
-- **`2f6f3e6`, `446da1e`, `61f25ae` und `40215b9` sind gepusht.** Nach dem
-  Neustart prüfen: beide Knöpfe **6 Inputs** (`state, prompt, Think, Preset,
-  Min, Max`), alle vier Kästen in Zeile 2 auf einer Linie, Preset wechseln →
-  Felder verschwinden, `custom` → sie kommen mit ihren alten Werten zurück.
+- `084acf1` — Vision im Local-27B-Aufruf: Bilder live aus den Komponenten
+  (`_IMAGE_INPUT_NAMES` als Klick-Eingaben), Aufbereitung über
+  `prepare_manual`/`image_contexts` mit Fallback, IT2I/IT2V-Anweisungen,
+  Bildhinweis in der Statuszeile, `dev/check_vision_inputs.py`
+- **`2f6f3e6`, `446da1e`, `61f25ae`, `40215b9` und `084acf1` sind gepusht.**
+  Nach dem Neustart prüfen: `local_enhance_remote_btn` **6 Inputs**,
+  `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, alle
+  vier Kästen in Zeile 2 auf einer Linie, Preset wechseln → Felder verschwinden,
+  `custom` → sie kommen mit ihren alten Werten zurück, und der Vision-Lauf aus
+  „Prüfen".
 
 ## Technisches, das man sonst neu herausfinden muss
 
