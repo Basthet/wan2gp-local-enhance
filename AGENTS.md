@@ -39,14 +39,17 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   (`_output_token_budget`), sonst schneidet das 512-Token-Limit den Prompt ab.
 
 Unter den beiden Feldern steht der **Modell-Check**: die englische Hinweiszeile
-(`_MODEL_CHECK_HINT`), darunter ein eingeklapptes `Which models ignore Min/Max?`
-mit dem Knopf *Check models*, einer Statuszeile und der Liste. Beim Aufbau des
-Tabs wird **nichts** berechnet — Liste und Status kommen aus
-`enhancer_models.json` neben `plugin.py`; erst der Klick auf *Check models* liest
-den Katalog (`_main("models_def")`, nur lesen), zählt, rendert und schreibt die
-Datei. Die Liste nennt die Modelle, deren Definitionen eigene
-Enhancer-Anweisungen mitbringen — dort gewinnen sie gegen die vom Plugin
-übergebenen (`_fallback_instructions`), Min/Max wirken also nicht.
+(`_MODEL_CHECK_HINT`), darunter die immer sichtbare Zeile zum **aktuellen**
+Modell, dann ein eingeklapptes `Which models ignore Min/Max?` mit dem Knopf
+*Check models*, einer Statuszeile und der Liste. Beim Aufbau des Tabs wird
+**nichts** berechnet: die Zeile zum aktuellen Modell kommt live aus dem
+Host-Zustand, Liste und Status aus den **strukturiert** abgelegten Familien in
+`enhancer_models.json` neben `plugin.py` — den Anzeigetext rendert erst der
+Tab-Aufbau. Erst der Klick auf *Check models* liest den Katalog
+(`_main("models_def")`, nur lesen), zählt, rendert und schreibt die Datei. Die
+Liste nennt die Modelle, deren Definitionen eigene Enhancer-Anweisungen
+mitbringen — dort gewinnen sie gegen die vom Plugin übergebenen
+(`_fallback_instructions`), Min/Max wirken also nicht.
 
 ## Zwei Klone — die wichtigste Regel
 
@@ -82,6 +85,7 @@ neu starten.
 - `d429ffb` — diese Anleitung ins Repo (vorher untracked)
 - `2f6f3e6` — Min/Max kompakt: Gradio-Label `min:`/`max:` über der Eingabe,
   Felder per CSS auf 84px, `_UI_CSS` als Modulkonstante, `dev/ui_preview.py`
+  (die 84px-Regel ist seit `39dbd33` weg, die Breite kommt aus `min_width`)
 - `61f25ae` — Wortgrenze als Preset-Dropdown (`no limit` / `150` / `300` / `500`
   / `custom`), Custom blendet die Zahlenfelder ein; `_read_controls` löst das
   Preset auf, `dev/ui_preview.py` kann per `PREVIEW_MAX` beide Fälle zeigen
@@ -96,9 +100,10 @@ neu starten.
 - `0dde6f4` — Modus-Fix: der Modus kommt live aus WanGPs verstecktem
   `prompt_enhancer`-Text (`request_component`, `_mode_components`,
   `_split_mode_input`, `_effective_mode`), `_resolve_mode` ist nur noch Fallback
-  bei leerem Wert. Beide Knöpfe haben dadurch **7** Klick-Eingaben
+  bei leerem Wert. Beide Knöpfe hatten dadurch **7** Klick-Eingaben
   (`state, prompt, Modus, Think, Preset, Min, Max`), der lokale **7 +
-  Bild-Eingaben**. Seit `e5ed6d8` sind es **6** (`… Think, Min, Max`), das
+  Bild-Eingaben**; seit `e5ed6d8` sind es **6**
+  (`state, prompt, Modus, Think, Min, Max`), das
   Preset ist weg. Vorher stand im Klick immer der Modell-Default, wodurch
   Modelle mit erstem Modus `"T"` (`qwen_image_21_7B`) die Bilder verwarfen.
 - `e5ed6d8` — Wortgrenze in den Plugin-Tab: Preset-Dropdown entfernt, Min/Max
@@ -111,13 +116,24 @@ neu starten.
   die Liste daraus
 - `39dbd33` — Felder nebeneinander (`min_width` statt CSS), Ziffernsuffixe im
   Schlüsselmuster, Dateizähler über den Pfad des Hauptmoduls, Kommentare
-- **Alle Commits bis `39dbd33` sind gepusht**, samt dieser Fassung der
-  Anleitung.
+- `144c206` — Modell-Check lesbar: Zeile zum aktuellen Modell immer sichtbar,
+  Familien gebündelt (eine Zeile je Familie, Zähler nur bei mehreren Varianten),
+  Liste in scrollbarer Box mit Inline-Stil und fester Höhe, Knopf einzeilig
+- `b0bd5ba` — Zwischenspeicher des Modell-Checks **strukturiert**: die Datei hält
+  Gruppen mit Name, Variantenzahl und internen Typen plus Format-Kennzeichen
+  statt des fertigen Listentexts; den Anzeigetext rendert der Tab-Aufbau, ein
+  alter oder fremder Stand gilt als „noch nicht geprüft" und zeigt den
+  Ersatztext
+- **Gepusht sind alle Commits bis `39dbd33`.** `144c206` und `b0bd5ba` waren
+  lokal voraus und gehen mit demselben Arbeitsschritt nach `origin/main`
+  (kein Force-Push, kein Rebase).
   Nach dem Neustart prüfen: `local_enhance_remote_btn` **6 Inputs**,
   `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, die
   beiden Felder **Min words** / **Max words** ganz oben im Plugin-Tab
-  nebeneinander und ohne abgeschnittene „1500", darunter der Modell-Check
-  (Klick auf *Check models* füllt Status und Liste), und der Vision-Lauf aus
+  nebeneinander und ohne abgeschnittene „1500", darunter die Zeile zum aktuellen
+  Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
+  *Check models* füllt Status und Liste; ein alter Zwischenspeicher zeigt
+  vorher den Ersatztext statt einer Textwand), und der Vision-Lauf aus
   „Prüfen".
 
 ## Technisches, das man sonst neu herausfinden muss
@@ -261,9 +277,34 @@ neu starten.
   treffen. Gruppiert wird nach der Medienart aus `metadata.main_output`
   (`Image`, `Image + Video`, `Video`, `Audio`, innerhalb Audio nach
   `family_label` wie `TTS`/`Music`), Anzeigename ist `name`,
-  `visible == False` wird übersprungen. Ergebnis und Status landen in
+  `visible == False` wird übersprungen. Gebündelt wird über
+  `_enhancer_base_model_type()` — `metadata.base_model_type`, sonst
+  `architecture`, zuletzt der interne Typ; eine Zeile je Familie, der Zähler nur
+  bei mehreren Varianten. Ergebnis und Status landen in
   `enhancer_models.json` neben `plugin.py` (Name in `.gitignore`, damit
-  Testläufe und der geladene Klon sauber bleiben).
+  Testläufe und der geladene Klon sauber bleiben). Gespeichert wird
+  **strukturiert**: `format` (aktuell `enhancer-models/2`) plus `groups` aus
+  `{label, families: [{name, count, model_types}]}` — der fertige Listentext
+  steht **nicht** mehr in der Datei. `_cache_groups()` prüft Kennzeichen und
+  jeden Eintrag defensiv; ein alter Stand (nur `list`), ein unbekanntes
+  Kennzeichen oder unbrauchbare Struktur ergibt `None` und damit denselben
+  Ersatztext wie „noch nie geprüft". Fehlende, leere, kaputte oder fremdformatige
+  Dateien werfen nie.
+- **Zeile zum aktuellen Modell (live, nicht zwischengespeichert):** sie steht
+  ausserhalb des eingeklappten Bereichs direkt unter der Hinweiszeile und
+  antwortet auf die eigentlich interessante Frage. Den internen Typ holt
+  `_resolve_current_model_type()` in drei Stufen: `get_state_model_type(state)`
+  (`wgp.py:356-358`), sonst `state["model_type"]` bzw. `state["edit_model_type"]`
+  direkt aus dem Snapshot, sonst `server_config["last_model_type"]`
+  (`wgp.py:10728` schreibt, `wgp.py:3366` liest). „Eigene Anweisungen?" entscheidet
+  `_has_enhancer_instructions()` gegen `_main("models_def")` — nur lesen, wie beim
+  Knopf. Jede Stufe steht in `try/except`: fehlt der Typ oder der Katalogeintrag,
+  steht dort `**Current model:** unknown.` statt eines Fehlers. Neu berechnet wird
+  die Zeile bei jedem Tab-Aufbau **und** bei jedem Tab-Wechsel: `create_ui()` setzt
+  `self.on_tab_outputs = [text_in, current_model_out]`, der Host verdrahtet
+  `tab.select` → `_handle_one_tab_selection` → `on_tab_select(state)` mit genau
+  diesen Ausgaben (`shared/utils/plugins.py:1797-1804` und `1835-1843`), und
+  `on_tab_select()` gibt `(Prompt, Modellzeile)` zurück.
 - **Warum es den Check gibt:** ein Teil der Modelldefinitionen bringt eigene
   Enhancer-Anweisungen mit (Grössenordnung: gut ein Drittel des Katalogs — im
   Nachbau dieses Checkouts mit 238 Definitionsdateien 90 betroffene). Der Host
@@ -301,11 +342,28 @@ neu starten.
   (bzw. 6 + Bild-Eingaben am lokalen Knopf),
   `mode-components-at-wiring=1`, und im Layout darf keine Komponente doppelt
   eingetragen sein.
-  Der Dump zeigt ausserdem den Modell-Check: Hinweis-Text vorhanden, Accordion
-  `open=False`, der Knopf-Klick mit den Ausgaben Liste/Statuszeile und beim
-  Aufbau den Ersatztext `Not checked yet in this installation - press **Check
-  models**.` bei leerer Statuszeile. Der Klick wird **nicht** ausgelöst — er
-  würde `enhancer_models.json` schreiben.
+  Der Dump zeigt ausserdem den Modell-Check. Erwartung (soeben gemessen):
+  der Hinweis-Text ist als eigener Markdown-Block vorhanden,
+  die Zeile zum aktuellen Modell kommt aus der Katalog-Fixture
+  (`hidream_o1_dev` → `**Current model:** HiDream O1 Image Dev 10B - ships its own
+  enhancer instructions, so Min/Max are ignored.`, `preview_plain` → `… no own
+  enhancer instructions, Min/Max apply.`, leerer Snapshot →
+  `**Current model:** unknown.`),
+  der Detailbereich heisst `Which models ignore Min/Max?` mit
+  `open=False` (Objekt **und** Konfiguration),
+  sein Inhalt ist genau `[Row, Markdown, Markdown, HTML]` (Knopf, Statuszeile,
+  Einleitung, Liste),
+  der Knopf `Check models` hat `size='sm' scale=0 min_width=160`,
+  sein Klick ist mit `outputs=[Liste, Statuszeile]` und `inputs=[]` verdrahtet,
+  genau **1** `gr.HTML` trägt den Inline-Stil (`Scrollbare Box: 1`),
+  `Box in _UI_CSS: False`, und beim Aufbau steht in der Box
+  `<div style="max-height:260px;overflow-y:auto;">Not checked yet in this
+  installation - press <b>Check models</b>.</div>` bei leerer Statuszeile
+  (im HTML also `<b>`, nicht die Markdown-Sternchen). Der Klick wird **nicht**
+  ausgelöst — er würde `enhancer_models.json` schreiben. Liegt dort ein gültiger
+  Stand, zeigt der Dump stattdessen dessen gerenderte Liste und Statuszeile; ein
+  alter Stand zeigt wieder den Ersatztext (siehe Schritt „Zwischenspeicher" in
+  „Technisches").
   Das Modus-Dropdown wird im Nachbau mit `show_label=False` angelegt (wie WanGP
   im On-Demand-Modus) — der Dump muss danach `show_label=True` zeigen, sonst
   greift der Caption-Fix nicht.
@@ -316,6 +374,24 @@ neu starten.
   (`min(120px, 100%)`), die Eingabe darin 94px, beide auf y=364 —, und
   `input.scrollWidth - clientWidth` muss 0 sein, sonst ist ein Wert wie „1500"
   abgeschnitten.
+- Modell-Check live (headless, CDP; `dev/ui_preview.py` auf 7899 starten und
+  Chromium mit `--headless=new --remote-debugging-port` darauf zeigen lassen,
+  dann `Runtime.evaluate` über `websockets` aus der WanGP-venv; den
+  Accordion-Kopf vorher per `click()` öffnen, die Liste muss gefüllt sein):
+  - **Knopf einzeilig:** `Check models` ist live 160×25 px, sein Text belegt
+    genau **1** Zeilenbox (`Range.getClientRects()` über den Knopfinhalt = 1).
+    `scale=0` allein quetschte ihn auf zwei Zeilen, deshalb
+    `min_width=_MODEL_CHECK_BUTTON_WIDTH` (160).
+  - **Box scrollt:** `scrollHeight` **1117** > `clientHeight` **260** — genau
+    der Inline-Stil `max-height:260px;overflow-y:auto;`; ohne ihn zöge die Liste
+    den Tab auseinander.
+  - **Gruppenzeilen echt getrennt:** im Text der Box steht **kein** `\n`
+    (gemessen 0), die **5** Gruppentitel (`Image`, `Image + Video`, `Video`,
+    `Audio (Music)`, `Audio (TTS)`) liegen auf verschiedenen y. Der Mechanismus
+    dahinter, direkt im Browser gemessen: derselbe Text mit `\n` statt `<br>`
+    rendert als **eine** Zeile (Elementhöhe 20px), mit `<br>` als drei und mit
+    `<br><br>` als vier Zeilen (80px) — HTML faltet die Zeilenumbrüche des alten
+    Zwischenspeichers, `<br>` nicht. Genau das war die Textwand.
 - Auflösung ohne UI (schneller Matrix-Check gegen `_read_controls`, Eingabe ist
   immer `(Think, Min, Max)`): `(False, 0, 1500)` → `(False, 0, 1500)`,
   `(True, 800, 100)` → `(True, 100, 800)` (Tausch bei Min > Max),
@@ -347,14 +423,24 @@ neu starten.
   `_collect_enhancer_overrides()` — kein Hoststart, kein Katalog auf der Platte.
   Aufruf:
   `./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/check_enhancer_overrides.py`.
-  Erwartung: 18 `PASS`-Zeilen und `Alle Faelle bestanden.` (Exit 0). Geprüft
-  werden die beiden Zähler, Gruppenzuordnung und -reihenfolge, alphabetische
-  duplikatfreie Namen, das Überspringen von `visible == False` (das aber als
-  untersucht zählt), Ziffernsuffixe innerhalb und ausserhalb 1-4, dass
-  `*_max_tokens*`-Schlüssel **nicht** treffen, die Audio-Unterteilung nach
-  `family_label`, kaputte Einträge und das Rendern (eine Zeile je Gruppe, keine
-  Tabelle). `--dump <models_def.json>` gibt ohne Testlauf den gerenderten Text
-  für einen eigenen Katalog aus.
+  Erwartung: **23** `PASS`-Zeilen und `Alle Faelle bestanden.` (Exit 0; nachgezählt
+  mit `… | grep -c '^PASS'`). Geprüft werden die beiden Zähler, Bündelung und
+  Gruppenreihenfolge, der Zähler nur bei mehreren Varianten, der Anzeigename aus
+  der Definition mit passendem internen Typ, das Fehlen von Modellen ohne
+  Schlüssel und von `visible == False` (das aber als untersucht zählt),
+  Ziffernsuffixe innerhalb und ausserhalb 1-4, dass `*_max_tokens*`-Schlüssel
+  **nicht** treffen, `v2i_switch_supported` in `Image + Video`, die
+  Audio-Unterteilung nach `family_label`, kaputte Einträge, fehlende Namen und
+  Metadaten, leere/falsche Kataloge, `metadata.main_output` gegen den Fallback
+  und das Rendern: eine Zeile je **Familie**, Gruppen wirklich getrennt
+  (`<br><br>`), kein `\n` im Text, Escaping, keine Tabelle.
+  Danach läuft die „realistische Namensprobe": sie baut die Fixture aus
+  `~/git/Wan2GP/defaults/*.json` (+ `finetunes/`) und liest die betroffenen
+  Modelle aus `enhancer_models.json` — **beide** Formate (strukturierte `groups`
+  des neuen Stands über die internen Typen, sonst den gerenderten `list`-Text des
+  alten). Im Nachbau: 238 Definitionsdateien, 90 betroffene, 48 Familienzeilen.
+  `--dump <models_def.json>` gibt ohne Testlauf den gerenderten Text für einen
+  eigenen Katalog aus.
 - Verdrahtung der Knöpfe (ohne WanGP-Start): im `gr.Blocks`-Aufbau Bild-Komponenten
   auf den Plugin-Instanzen setzen (`p.image_start = gr.File(...)`,
   `p.image_prompt_type = gr.CheckboxGroup(...)`, `p.video_prompt_type = …`) und
@@ -387,11 +473,13 @@ neu starten.
   nur `bool` und Zahlen. Ein künftiger Verdrahtungsfehler würde die Wortgrenzen
   also still verschieben, ohne Fehlermeldung. Heute ist das nicht erreichbar,
   weil der Modus-String vorher mit `_split_mode_input()` abgezogen wird.
-- Bewusst **nicht** gebaut: ein Hinweis beim Klick, ob das **aktuelle** Modell
-  eigene Anweisungen hat. Wäre machbar, aber die beiden Zeilen-Knöpfe schreiben
-  nur ins Promptfeld (`outputs=[prompt_component]`; Status geht allenfalls als
+- Der Hinweis zum **aktuellen** Modell ist gebaut — aber nur im Plugin-Tab: die
+  live berechnete Zeile steht über dem eingeklappten Modell-Check und wird beim
+  Tab-Wechsel neu gezogen (`on_tab_outputs`, siehe „Technisches"). Die beiden
+  Knöpfe in Zeile 1 bekommen weiterhin **keinen** eigenen Hinweis: sie schreiben
+  nur ins Promptfeld (`outputs=[prompt_component]`; Status ginge allenfalls als
   `gr.Info`/`gr.Warning`-Toast raus) und haben keine Statuszeile — ein Hinweis
-  bräuchte dort eine eigene Ausgabe-Komponente.
+  dort bräuchte eine eigene Ausgabe-Komponente.
 - Das Denk-Budget der 27B ist hart auf **2000 Tokens** begrenzt
   (`shared/prompt_enhancer/qwen35_text.py:64`) — es gibt keinen Config-Key dafür.
 - Der Tab-Knopf hat keine eigenen Widgets; er nutzt dieselben Regler wie die
