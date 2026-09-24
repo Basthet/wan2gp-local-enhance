@@ -10,7 +10,8 @@ Aufruf (aus dem WanGP-Ordner, mit dessen venv):
 Geprueft werden die Faelle aus AGENTS.md ("Bilder"): Modus ohne "I", Startbild,
 Endbild, zwei Referenzen, nur Control Image, fake_start_image (On-Demand-Paritaet),
 Fenstermodell, Fallback bei mehreren Startbildern, fehlendes convert_image sowie
-die Bild-Anweisungen (IT2I/IT2V) und die Trennung der Klick-Eingaben.
+die Bild-Anweisungen (IT2I/IT2V), die Trennung der Klick-Eingaben und die
+Modus-Eingabe (_effective_mode/_split_mode_input).
 """
 
 import sys
@@ -45,6 +46,33 @@ def estimate_first_window_overlap_frames(image_start, *_args):
 
 def prompt_enhancer_outputs_multiple_prompts(mode):
     return "M" in str(mode)
+
+
+def get_prompt_enhancer_choices(model_def, audio_only, image_mode, include_disabled=True, **_kwargs):
+    """Stub wie WanGP (wgp.py:10876-10889).
+
+    Nachgebaut ist nur, was _resolve_mode() braucht: eine eigene
+    `prompt_enhancer_def` im model_def liefert deren `default` und ihre Labels,
+    sonst zaehlt `prompt_enhancer_choices_allowed` (Default "T", bei audio_only
+    nur "T"). `include_disabled` stellt "Disabled" voran - _resolve_mode() ruft
+    ohne diesen Eintrag auf."""
+    model_def = model_def if isinstance(model_def, dict) else {}
+    choices = [("Disabled", "")] if include_disabled else []
+    definition = model_def.get("prompt_enhancer_def")
+    if definition is not None:
+        choices += [
+            (label, key) for key, label in (definition.get("labels") or {}).items()
+        ]
+        return choices, definition.get("default") or "", definition
+    selection = model_def.get(
+        "prompt_enhancer_choices_allowed", ["T"] if audio_only else ["T", "TI"]
+    )
+    labels = {
+        "T": "Based on Text Prompt Content",
+        "TI": "Based on Text Prompt and Images",
+    }
+    choices += [(labels.get(value, value), value) for value in selection]
+    return choices, "", None
 
 
 _BASE_SETTINGS = {
@@ -289,6 +317,65 @@ def main():
         list(controls) == ["think", "preset", "min", "max"]
         and images == {"image_start": "IMG-START", "video_prompt_type": "FLAGS"},
         f"-> {controls} / {images}",
+    )
+
+    # 14. _effective_mode: leerer Live-Wert -> Modell-Default. Ohne eigene
+    #     Enhancer-Definition bleibt der erste erlaubte Modus; eine echte
+    #     `prompt_enhancer_def` liefert ihren eigenen default, und eine
+    #     eingeschraenkte `prompt_enhancer_choices_allowed` ihren ersten Wert -
+    #     bei ["TI"] also "TI" (die Modelle, bei denen der alte Code die Bilder
+    #     zufaellig mitschickte).
+    fallback = P.LocalEnhancePlugin._effective_mode("", {"image_mode": 1}, False, 1)
+    explicit = P.LocalEnhancePlugin._effective_mode(
+        "",
+        {"prompt_enhancer_def": {"labels": {"T": "Text", "V": "Video"}, "default": "V"}},
+        False,
+        1,
+    )
+    allowed = P.LocalEnhancePlugin._effective_mode(
+        "", {"prompt_enhancer_choices_allowed": ["TI"], "image_mode": 1}, False, 1
+    )
+    check(
+        "_effective_mode faellt auf den Modell-Default zurueck",
+        fallback == "T" and explicit == "V" and allowed == "TI",
+        f"-> {fallback!r} / {explicit!r} / {allowed!r}",
+    )
+
+    # 15. _effective_mode: ein gesetzter Live-Wert gewinnt gegen den Default.
+    live = P.LocalEnhancePlugin._effective_mode("TI", {"image_mode": 1}, False, 1)
+    live_think = P.LocalEnhancePlugin._effective_mode(" TIK ", {"image_mode": 1}, False, 1)
+    check(
+        "_effective_mode nimmt den Live-Wert",
+        live == "TI" and live_think == "TIK",
+        f"-> {live!r} / {live_think!r}",
+    )
+
+    # 16. _split_mode_input: mit Modus-Komponente wandert die erste Eingabe in
+    #     den Modus, der Rest bleibt in der Reihenfolge der Verdrahtung.
+    mode_instance = P.LocalEnhancePlugin()
+    mode_instance.prompt_enhancer = "MODE"
+    mode_value, rest = mode_instance._split_mode_input(("TI", "think", "preset", "min", "max"))
+    empty_value, empty_rest = mode_instance._split_mode_input(())
+    check(
+        "_split_mode_input zieht den Modus ab",
+        mode_value == "TI"
+        and tuple(rest) == ("think", "preset", "min", "max")
+        and (empty_value, tuple(empty_rest)) == (None, ())
+        and len(mode_instance._mode_components()) == 1,
+        f"-> {mode_value!r} / {rest}",
+    )
+
+    # 17. Ohne Modus-Komponente bleiben die Eingaben unangetastet: ein Modell
+    #     ohne Enhancer-Zeile darf die Regler nicht um eins verschieben.
+    plain_instance = P.LocalEnhancePlugin()
+    plain_instance.prompt_enhancer = None
+    mode_value, rest = plain_instance._split_mode_input(("think", "preset"))
+    check(
+        "_split_mode_input ohne Komponente laesst alles stehen",
+        mode_value is None
+        and tuple(rest) == ("think", "preset")
+        and plain_instance._mode_components() == [],
+        f"-> {mode_value!r} / {rest}",
     )
 
     print()

@@ -4,6 +4,11 @@ Baut genau die Umgebung nach, in der create_inline_button() laeuft:
 
     gr.Row -> [eingebauter Knopf, verstecktes gr.Text, Dropdown, Think-Checkbox]
 
+Das versteckte gr.Text IST WanGPs Modus-Komponente `prompt_enhancer`
+(wgp.py:12169): sie traegt die Nutzerauswahl und wird hier wie vom
+PluginManager vor der Insert-Verarbeitung auf das Plugin gesetzt
+(shared/utils/plugins.py:1626-1627 vor 1649-1660).
+
 Danach dieselbe insert_after-Mechanik wie shared/utils/plugins.py:1659.
 Das Skript gibt den Komponentenbaum, die Zahl der Klick-Eingaben und die URL
 der Vorschau aus. Die Vorschau laeuft, bis der Prozess beendet wird.
@@ -66,7 +71,7 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
             "Enhance Prompt", visible=False, size="lg", scale=1,
             elem_classes="btn_centered",
         )
-        hidden = gr.Text(visible=False)
+        hidden = gr.Text(value="T", visible=False, elem_id="prompt_enhancer")
         # show_label=False wie WanGP im On-Demand-Modus (wgp.py:12176) - nur so
         # zeigt die Vorschau denselben Versatz, den das Plugin ausgleicht.
         dropdown = gr.Dropdown(
@@ -80,6 +85,27 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
             label="Think", value=False, scale=1, elem_classes="cbx_centered",
         )
 
+    # Der PluginManager setzt die angefragten Komponenten VOR der
+    # Insert-Verarbeitung (shared/utils/plugins.py:1626-1627 vor 1649-1660).
+    # Genau diese Reihenfolge hier: request_component() wie in setup_ui(), dann
+    # das setattr, erst danach create_inline_button(). Nur so kann
+    # _mode_components() beim Verdrahten schon etwas liefern.
+    components = {
+        "state": state,
+        "prompt": prompt,
+        "prompt_enhancer_btn": builtin,
+        "prompt_enhancer": hidden,
+    }
+    p.request_component("prompt_enhancer")
+    for comp_id in p.component_requests:
+        if comp_id in components and getattr(p, comp_id, None) is None:
+            setattr(p, comp_id, components[comp_id])
+
+    # Wird gemessen, weil _mode_components() beim Verdrahten schon greifen muss:
+    # der PluginManager setzt die Komponenten vor der Insert-Verarbeitung
+    # (shared/utils/plugins.py:1626-1627 vor 1649-1660). Der Zaehler wird direkt
+    # vor create_inline_button() genommen und muss 1 sein.
+    mode_components_at_wiring = len(p._mode_components())
     with parent:
         p.create_inline_button()
 
@@ -115,11 +141,27 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
 
     print("=== Komponentenbaum ===")
     _dump(parent)
-    controls = p._control_components()
+    mode_components = p._mode_components()
+    controls = mode_components + p._control_components()
+    image_components = p._image_components()
     print("=== Regler ===")
+    print("mode:", [type(c).__name__ for c in mode_components])
     print(
         "controls:", [type(c).__name__ for c in controls],
         "-> click-inputs:", 2 + len(controls),
+    )
+    print(
+        "image-inputs:", len(image_components),
+        "-> local click-inputs:", 2 + len(controls) + len(image_components),
+    )
+    # Erwartung (AGENTS.md, "Pruefen"): Modus-Komponente vorhanden, also 7 Inputs
+    # fuer den Remote-Knopf und 7 + Anzahl der Bild-Eingaben fuer den lokalen.
+    print(
+        "=== Erwartung ===",
+        f"mode-components-at-wiring={mode_components_at_wiring} (erwartet 1),",
+        f"remote={2 + len(controls)} (erwartet 7),",
+        f"local={2 + len(controls) + len(image_components)}"
+        f" (erwartet 7 + {len(image_components)} Bild-Eingaben)",
     )
 
 demo.launch(

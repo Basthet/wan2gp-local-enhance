@@ -16,6 +16,12 @@ Zwei Knöpfe neben WanGPs „Enhance Prompt":
   Vision-Teil des Modells (Start-/Endbild, Referenzen, Control Image) und nennt
   sie in der Statuszeile; alle anderen Modi bleiben text-only.
 
+Der **Modus** (WanGPs Dropdown „Enhance Prompt using a LLM") gilt für beide
+Knöpfe und kommt **live** aus WanGPs verstecktem `prompt_enhancer`-Text — auch
+`"K"` aus der Think-Checkbox steckt darin. Nur wenn dieser Wert leer ist
+(„Disabled" gewählt) oder die Komponente fehlt, fällt das Plugin auf den
+Modell-Default zurück (`_resolve_mode`).
+
 Drei Regler, alle gelten für **beide** Knöpfe:
 
 - **Think** — WanGPs eigene Checkbox (Zeile 1). Gesetzt: lokal `K` im
@@ -80,9 +86,16 @@ neu starten.
   (`_IMAGE_INPUT_NAMES` als Klick-Eingaben), Aufbereitung über
   `prepare_manual`/`image_contexts` mit Fallback, IT2I/IT2V-Anweisungen,
   Bildhinweis in der Statuszeile, `dev/check_vision_inputs.py`
+- **Arbeitsstand, noch nicht committet** — Modus-Fix: der Modus kommt live aus
+  WanGPs verstecktem `prompt_enhancer`-Text (`request_component`,
+  `_mode_components`, `_split_mode_input`, `_effective_mode`), `_resolve_mode`
+  ist nur noch Fallback bei leerem Wert. Beide Knöpfe haben dadurch **7**
+  Klick-Eingaben (`state, prompt, Modus, Think, Preset, Min, Max`), der lokale
+  **7 + Bild-Eingaben**. Vorher stand im Klick immer der Modell-Default, wodurch
+  Modelle mit erstem Modus `"T"` (`qwen_image_21_7B`) die Bilder verwarfen.
 - **`2f6f3e6`, `446da1e`, `61f25ae`, `40215b9` und `084acf1` sind gepusht.**
-  Nach dem Neustart prüfen: `local_enhance_remote_btn` **6 Inputs**,
-  `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, alle
+  Nach dem Neustart prüfen: `local_enhance_remote_btn` **7 Inputs**,
+  `local_enhance_local_btn` **7 + Anzahl der Bild-Eingaben** des Modells, alle
   vier Kästen in Zeile 2 auf einer Linie, Preset wechseln → Felder verschwinden,
   `custom` → sie kommen mit ihren alten Werten zurück, und der Vision-Lauf aus
   „Prüfen".
@@ -92,6 +105,22 @@ neu starten.
 - **Nur ein lokaler LLM-Slot:** `resolve_role_engine()` ignoriert die Rolle. Das
   Plugin stellt `llm_engines.deepy` und `enhancer_enabled` nur für den Klick um
   und restauriert danach exakt.
+- **Enhancer-Modus kommt live aus WanGPs verstecktem `prompt_enhancer`-Text**
+  (`wgp.py:12169`); aktuell gehalten wird er vom sichtbaren Dropdown und der
+  Think-Checkbox (`wgp.py:13036-13037`), und WanGPs eigener Enhance-Knopf
+  bekommt genau diese Komponente als Klick-Eingabe (`wgp.py:13189`). Das Plugin
+  fragt sie in `setup_ui` an (`request_component("prompt_enhancer")`) und hängt
+  sie als **erste** Klick-Eingabe an beide Knöpfe; `_effective_mode()` nimmt
+  ihren Wert. Erst wenn er leer ist (Nutzer hat „Disabled" gewählt, oder die
+  Komponente fehlt), greift `_resolve_mode()` als Fallback — also der
+  Modell-Default, `default` bzw. `choices[0]`. Vorher stand dort **immer** der
+  Default: bei Modellen, deren erster erlaubter Modus `"T"` ist
+  (`qwen_image_21_7B`), verwarf `_enhancer_images()` deshalb die Bilder
+  (`"I" not in mode`) und `_fallback_instructions()` schickte `T2I` statt `IT2I`.
+  Reihenfolge: der PluginManager setzt die angefragten Komponenten **vor** der
+  Insert-Verarbeitung (`shared/utils/plugins.py:1627` vor `1657`), beim
+  Verdrahten in `create_inline_button` liefert `_mode_components()` also schon
+  genau 1 Komponente (siehe `dev/ui_preview.py`).
 - **Aufruf:** `process_prompt_enhancer(model_type, model_def, mode, [prompt],
   image_start, image_refs, is_image, audio_only, -1,
   prompt_enhancer_instructions=…, text_encoder_max_tokens=…,
@@ -103,7 +132,7 @@ neu starten.
     aktiviert ihn also nicht, es benutzt ihn nur.
   - WanGPs Bedingung für den Bildpfad ist `"I" in mode` **und**
     `enhancer_enabled in (3,4,5)` **und** lokale Engine
-    (`images.py:20`). Das Plugin erfüllt sie, weil es beides für den Klick
+    (`images.py:21`). Das Plugin erfüllt sie, weil es beides für den Klick
     umstellt (`enhancer_enabled=5` + `llm_engines.deepy`), und wertet die Bilder
     erst **nach** dem Umstellen aus.
   - Die Bilder kommen **live aus den Komponenten** (`_IMAGE_INPUT_NAMES`, als
@@ -160,7 +189,7 @@ neu starten.
     Caption stylen will, darf nicht `… label{…}` schreiben; die Schriftgrössen
     sind ohne Zutun schon einheitlich.
   - **WanGP versteckt die Caption des Modus-Dropdowns**, wenn der Enhancer
-    on-demand läuft (`wgp.py:12176`: `show_label = not on_demand_prompt_enhancer`).
+    on-demand läuft (`wgp.py:12174`: `show_label = not on_demand_prompt_enhancer`).
     Ohne Caption sitzt dessen Eingabe 32px höher als unsere beschrifteten Regler
     (live gemessen: y665 gegen y697) — genau der schiefe Screenshot. Das Plugin
     schaltet WanGPs eigene Caption deshalb in `create_inline_button` ein
@@ -181,7 +210,9 @@ neu starten.
   - Die Regler werden **nach Typ** ausgelesen (`*controls`), weil die
     Think-Checkbox fehlen kann: `bool` = Think, `str` = Preset-Schlüssel, Zahlen
     = Custom-Felder. Feste Reihenfolge der Klick-Eingaben:
-    `state, prompt, Think, Preset, Min, Max`.
+    `state, prompt, Modus, Think, Preset, Min, Max`. Der Modus-String wird
+    vorher mit `_split_mode_input()` abgezogen — sonst läse `_read_controls()`
+    ihn als Preset und alles verschöbe sich um eins.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 0 (= keine Untergrenze), Max 150.
@@ -193,15 +224,21 @@ neu starten.
   `cd ~/git/Wan2GP && ./.wan2gp/bin/python -c "import sys; sys.path.insert(0,'/home/stefan/git/wan2gp-local-enhance'); import plugin; print(plugin.PlugIn_Name)"`
 - UI ohne WanGP-Start: `dev/ui_preview.py` baut die Umgebung nach (Row mit
   eingebautem Knopf + verstecktem `gr.Text` + Dropdown + Think-Checkbox, danach
-  die `insert_after`-Mechanik `pop(-1)` + `insert(target_index+1, …)`) und gibt
-  den Komponentenbaum aus. Aufruf aus dem WanGP-Ordner:
+  die `insert_after`-Mechanik `pop(-1)` + `insert(target_index+1, …)`). Das
+  versteckte `gr.Text` ist WanGPs Modus-Komponente `prompt_enhancer`; das Skript
+  setzt sie wie der PluginManager **vor** `create_inline_button()` auf das Plugin
+  (`shared/utils/plugins.py:1627` vor `1657`) und gibt den Komponentenbaum, die
+  Zahl der Klick-Eingaben und `mode-components-at-wiring` aus. Aufruf aus dem
+  WanGP-Ordner:
   `./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py 7899`.
   Erwartung:
   Zeile 1 = `[HTML, Button, Button, Checkbox]`,
-  Zeile 2 (der `Form` mit dem Dropdown) =
-  `[Dropdown, Dropdown(preset "Words"), Number(Min), Number(Max)]`,
-  Regler = `[Checkbox, Dropdown, Number, Number]` → **6** Klick-Eingaben, und im
-  Layout darf keine Komponente doppelt eingetragen sein.
+  Zeile 2 (der `Form` mit dem Dropdown) = `[Textbox(prompt_enhancer),
+  Dropdown, Dropdown(preset "Words"), Number(Min), Number(Max)]`,
+  Regler = `[Textbox(Modus), Checkbox, Dropdown, Number, Number]` → **7**
+  Klick-Eingaben (bzw. 7 + Bild-Eingaben am lokalen Knopf),
+  `mode-components-at-wiring=1`, und im Layout darf keine Komponente doppelt
+  eingetragen sein.
   Das Modus-Dropdown wird im Nachbau mit `show_label=False` angelegt (wie WanGP
   im On-Demand-Modus) — der Dump muss danach `show_label=True` zeigen, sonst
   greift der Caption-Fix nicht.
@@ -222,23 +259,27 @@ neu starten.
   Crashpad/Benutzerprofil wandern dorthin.
 - Bild-Aufbereitung ohne GPU/WanGP: `dev/check_vision_inputs.py` (WanGP-venv, aus
   dem WanGP-Ordner) täuscht `convert_image`, `get_computed_fps`,
-  `get_base_model_type`, `estimate_first_window_overlap_frames` und
-  `prompt_enhancer_outputs_multiple_prompts` als Modul `__main__` vor und prüft
-  13 Fälle: Modus ohne `"I"`, Startbild, Endbild, zwei Referenzen, Control Image
-  allein, `fake_start_image` (On-Demand-Parität), Fenstermodell (erster Anker),
-  Fallback bei mehreren Startbildern, fehlendes `convert_image`, IT2I- vs.
-  T2I-Anweisungen, `_image_note`, Trennung der Klick-Eingaben.
+  `get_base_model_type`, `estimate_first_window_overlap_frames`,
+  `prompt_enhancer_outputs_multiple_prompts` und `get_prompt_enhancer_choices`
+  als Modul `__main__` vor und prüft 17 Fälle: Modus ohne `"I"`, Startbild,
+  Endbild, zwei Referenzen, Control Image allein, `fake_start_image`
+  (On-Demand-Parität), Fenstermodell (erster Anker), Fallback bei mehreren
+  Startbildern, fehlendes `convert_image`, IT2I- vs. T2I-Anweisungen,
+  `_image_note`, Trennung der Klick-Eingaben, `_effective_mode` (leerer
+  Live-Wert → Modell-Default, gesetzter Live-Wert gewinnt) und
+  `_split_mode_input` (mit und ohne Modus-Komponente).
   Erwartung: `Alle Faelle bestanden.` (Exit 0).
 - Verdrahtung der Knöpfe (ohne WanGP-Start): im `gr.Blocks`-Aufbau Bild-Komponenten
   auf den Plugin-Instanzen setzen (`p.image_start = gr.File(...)`,
   `p.image_prompt_type = gr.CheckboxGroup(...)`, `p.video_prompt_type = …`) und
   `demo.get_config_file()` nach `targets == [<knopf-id>, "click"]` durchsuchen:
-  `local_enhance_remote_btn` muss **6** Inputs haben, `local_enhance_local_btn`
-  **6 + Anzahl der Bild-Komponenten** (live geprüft: 9 bei drei Bild-Eingaben).
+  `local_enhance_remote_btn` muss **7** Inputs haben, `local_enhance_local_btn`
+  **7 + Anzahl der Bild-Komponenten** (früher 9 bei drei Bild-Eingaben; jetzt
+  7 + Anzahl).
 - End-to-End (WanGP läuft): `http://127.0.0.1:7860/config` abrufen — die
-  Dependencies von `local_enhance_remote_btn` müssen **6 Inputs** haben
-  (`state, prompt, Think, Preset, Min, Max`), `local_enhance_local_btn`
-  **6 + Anzahl der Bild-Eingaben** des Modells.
+  Dependencies von `local_enhance_remote_btn` müssen **7 Inputs** haben
+  (`state, prompt, Modus, Think, Preset, Min, Max`), `local_enhance_local_btn`
+  **7 + Anzahl der Bild-Eingaben** des Modells.
 - Vision live: Modus *Based on Text Prompt and Images* wählen, Startbild mit
   markantem Inhalt setzen, Prompt „a cat" → der verbesserte Prompt muss den
   Bildinhalt beschreiben und die Statuszeile `images: start image` nennen. Dann

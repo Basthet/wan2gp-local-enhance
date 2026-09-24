@@ -182,6 +182,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # ueber dieselbe Remote-Engine wie der OpenCode-Knopf und waere damit
         # ein Doppel. An seiner Stelle steht nur noch die Beschriftung.
         self.request_component("prompt_enhancer_btn")
+        # Der vom Nutzer gewaehlte Modus liegt in WanGPs verstecktem gr.Text
+        # `prompt_enhancer` (wgp.py:12169). Er wird vom sichtbaren Dropdown und
+        # der Think-Checkbox aktuell gehalten (wgp.py:13036-13037) und ist auch
+        # die Klick-Eingabe von WanGPs eigenem Knopf (wgp.py:13189). Ohne diese
+        # Komponente faellt das Plugin auf den Modell-Default zurueck
+        # (_effective_mode) und verwirft z. B. die Bilder, wenn der Nutzer
+        # "Based on Text Prompt and Images" gewaehlt hat.
+        self.request_component("prompt_enhancer")
         # Bilder fuer den lokalen Pfad. Namen, die ein Modell nicht hat, werden
         # vom PluginManager still uebersprungen (shared/utils/plugins.py:1626),
         # _image_components() filtert sie dann heraus.
@@ -292,6 +300,21 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if choices:
             return str(choices[0][1])
         return "T"
+
+    @staticmethod
+    def _effective_mode(live_mode, model_def, audio_only, image_mode):
+        """Der Modus, mit dem der Enhancer laeuft - Live-Wert vor Default.
+
+        `live_mode` ist der Inhalt von WanGPs verstecktem `prompt_enhancer`-Text,
+        also genau die Buchstaben, die Dropdown und Think-Checkbox schreiben
+        (wgp.py:13036-13037). Er ist die einzige Quelle fuer die Nutzerauswahl.
+        Leer ist er, wenn der Nutzer "Disabled" gewaehlt hat oder die Komponente
+        fehlt - dann bleibt _resolve_mode() als Fallback (bisheriges Verhalten).
+        """
+        mode = str(live_mode or "").strip()
+        if mode:
+            return mode
+        return LocalEnhancePlugin._resolve_mode(model_def, audio_only, image_mode)
 
     @staticmethod
     def _local_enhancer_ready():
@@ -529,6 +552,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             if (component := getattr(self, name, None)) is not None
         ]
 
+    def _mode_components(self):
+        """WanGPs versteckter Modus-Text als Klick-Eingabe.
+
+        Fehlt die Komponente (aeltere WanGP-Fassung, Modell ohne Enhancer-Zeile),
+        bleibt die Liste leer - dann greift in _effective_mode() der
+        Modell-Default. Der PluginManager ueberspringt unbekannte Namen still,
+        das Attribut kann also fehlen oder None sein.
+        """
+        component = getattr(self, "prompt_enhancer", None)
+        return [component] if component is not None else []
+
     def _split_image_inputs(self, values):
         """Klick-Eingaben in (Regler, Bilder) trennen.
 
@@ -541,6 +575,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             name for name in _IMAGE_INPUT_NAMES if getattr(self, name, None) is not None
         ]
         return controls, dict(zip(names, images))
+
+    def _split_mode_input(self, values):
+        """Modus-Eingabe von den uebrigen Klick-Eingaben abziehen.
+
+        Steht die Modus-Komponente in der Verdrahtung, ist sie die erste
+        Eingabe nach (state, text) und muss vor _split_image_inputs() weg - sonst
+        liest _read_controls() den Modus-String als Wortzahl-Preset und die
+        Eingaben verschieben sich um eins.
+        """
+        values = tuple(values or ())
+        if self._mode_components() and values:
+            return values[0], values[1:]
+        return None, values
 
     @staticmethod
     def _on_word_preset_change(preset_key):
@@ -770,9 +817,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def enhance(self, state, text, *values):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
 
-        `values` sind erst die Regler (Think/Preset/Min/Max), danach die
-        Bild-Eingaben - siehe _split_image_inputs().
+        `values` sind erst der Modus, dann die Regler (Think/Preset/Min/Max),
+        danach die Bild-Eingaben - siehe _split_mode_input() und
+        _split_image_inputs().
         """
+        mode_value, values = self._split_mode_input(values)
         controls, live_images = self._split_image_inputs(values)
         think, min_words, max_words = self._read_controls(controls)
         self._remember_word_range(min_words, max_words)
@@ -811,8 +860,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except (TypeError, ValueError):
             image_mode = 0
         is_image = image_mode > 0
-        # Checkbox "Think" -> 'K' im Modus. Ohne das denkt die 27B nie.
-        mode = self._with_thinking(self._resolve_mode(model_def, audio_only, image_mode), think)
+        # Checkbox "Think" -> 'K' im Modus. Ohne das denkt die 27B nie. Der Modus
+        # selbst kommt live aus WanGPs verstecktem `prompt_enhancer`-Text, nur
+        # bei leerem Wert aus dem Modell-Default.
+        mode = self._effective_mode(mode_value, model_def, audio_only, image_mode)
+        # 'K' nur anfassen, wenn die Think-Checkbox wirklich aufgeloest wurde:
+        # fehlt sie, bleibt think=False, und _with_thinking() wuerde ein 'K' aus
+        # WanGPs Checkbox entfernen, das der Remote-Pfad (ohne _with_thinking)
+        # behaelt.
+        if getattr(self, "_think_checkbox", None) is not None:
+            mode = self._with_thinking(mode, think)
 
         # Ans Modell geht nur der sichtbare Prompt, nicht die Historienzeile:
         # sonst wird '#!PROMPT!:' mitverbessert und erscheint danach doppelt.
@@ -1038,14 +1095,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         executable = str(profile.get("executable", "opencode") or "opencode")
         return base_url or "<not configured>", executable, (urlparse(base_url).port or 4096)
 
-    def enhance_remote(self, state, text, *controls):
+    def enhance_remote(self, state, text, *values):
         """Verbessern ueber die Remote-Engine - ohne lokalen Modell-Load.
 
         Anders als enhance() wird hier kein VRAM belegt: process_prompt_enhancer()
         erkennt an der Engine, dass remote gearbeitet wird (wgp.py:6409), und
         ueberspringt den lokalen Loader (local_runtime, wgp.py:6505).
+
+        `values` sind erst der Modus, dann die Regler (Think/Preset/Min/Max).
         """
-        think, min_words, max_words = self._read_controls(controls)
+        mode_value, values = self._split_mode_input(values)
+        think, min_words, max_words = self._read_controls(values)
         self._remember_word_range(min_words, max_words)
         text = str(text or "").strip()
         if not text:
@@ -1077,7 +1137,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except (TypeError, ValueError):
             image_mode = 0
         is_image = image_mode > 0
-        mode = self._resolve_mode(model_def, audio_only, image_mode)
+        # Wie in enhance(), nur ohne Think: der Modus kommt live aus WanGPs
+        # verstecktem `prompt_enhancer`-Text, sonst aus dem Modell-Default.
+        mode = self._effective_mode(mode_value, model_def, audio_only, image_mode)
 
         enhancer_input = self._visible_prompt(text)
         if not enhancer_input:
@@ -1437,10 +1499,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Alle Regler gelten fuer BEIDE Knoepfe: die Checkbox schaltet lokal das
         # Denken und remote den Reasoning-Level, Min/Max die Wortgrenze. Fehlt
         # ein Widget, bleibt der jeweilige Default aktiv.
+        # Der Modus steht ganz vorne: WanGPs versteckter `prompt_enhancer`-Text
+        # traegt die Nutzerauswahl, ohne ihn liefe alles auf dem Modell-Default.
         # Die Bilder haengen nur am lokalen Knopf: nur der lokale 27B-Pfad hat
         # einen Vision-Teil, und sie muessen live aus den Komponenten kommen
         # (der Settings-Snapshot ist nach einem frisch hinzugefuegten Bild alt).
-        controls = self._control_components()
+        controls = self._mode_components() + self._control_components()
         image_components = self._image_components()
         remote_btn.click(
             fn=self.enhance_inline_remote,
@@ -1483,6 +1547,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
+        # Fuer die Statuszeile dieselbe Trennung wie in enhance(): erst den
+        # Modus abziehen, sonst liest _read_controls() ihn als Preset.
+        _mode_value, values = self._split_mode_input(values)
         controls, _live_images = self._split_image_inputs(values)
         think, min_words, max_words = self._read_controls(controls)
         marker = " + Think" if think else ""
@@ -1541,7 +1608,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         enhance_btn.click(
             fn=self.enhance,
-            inputs=[state, text_in] + self._control_components() + self._image_components(),
+            inputs=[state, text_in] + self._mode_components()
+            + self._control_components() + self._image_components(),
             outputs=[text_out, status],
         )
 
