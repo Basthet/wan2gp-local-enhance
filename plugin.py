@@ -51,6 +51,10 @@ PlugIn_Id = "LocalEnhance"
 # wird. Innerhalb dieses Fensters ist ein zweiter Klick sofort schnell.
 _GPU_HOLD_SECONDS = 0
 
+# Rangfolge der OpenCode-Reasoning-Level. Der Katalog liefert sie als Liste, die
+# Reihenfolge ist nicht garantiert - deshalb wird nach Rang sortiert.
+_REASONING_RANK = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5, "ultra": 6}
+
 
 def _main(name, default=None):
     """Live-Zugriff auf Globals des Hauptmoduls (nicht die eingefrorene Kopie)."""
@@ -110,6 +114,64 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return {}
 
     # ------------------------------------------------------------- Hilfsmittel
+
+    @staticmethod
+    def _with_thinking(mode, enabled):
+        """Das Thinking-Flag 'K' an den Enhancer-Modus haengen.
+
+        wgp.py:6451 leitet thinking_enabled ausschliesslich aus `"K" in
+        prompt_enhancer_mode` ab. Ohne 'K' denkt das lokale Modell nie - die
+        Think-Checkbox war deshalb wirkungslos. chaining.with_thinking() ist die
+        offizielle Umsetzung (shared/prompt_enhancer/chaining.py:37).
+        """
+        chaining = _main("prompt_enhancer_chaining")
+        if chaining is not None:
+            try:
+                return chaining.with_thinking(mode, enabled)
+            except Exception:  # noqa: BLE001 - Fallback unten
+                pass
+        mode = str(mode or "")
+        if enabled:
+            return f"{mode}K" if mode and "K" not in mode else mode
+        return mode.replace("K", "")
+
+    @staticmethod
+    def _reasoning_efforts(profile):
+        """Verfuegbare Reasoning-Level des im Profil gewaehlten Modells."""
+        catalog = profile.get("model_catalog") or []
+        provider = str(profile.get("provider", "") or "")
+        model = str(profile.get("model", "") or "")
+        entry = next(
+            (
+                item
+                for item in catalog
+                if isinstance(item, dict)
+                and str(item.get("provider", "")) == provider
+                and str(item.get("model", "")) == model
+            ),
+            None,
+        )
+        efforts = entry.get("reasoning_efforts") if isinstance(entry, dict) else None
+        return [str(effort) for effort in (efforts or []) if str(effort).strip()]
+
+    @classmethod
+    def _remote_reasoning_effort(cls, profile, think):
+        """Reasoning-Level fuer den Remote-Aufruf.
+
+        OpenCode kennt kein 'aus', nur Varianten - der Wert geht als 'variant'
+        in den Request (opencode_backend.py:226). Ein leeres Level heisst
+        'Automatic' und ueberlaesst die Entscheidung dem Anbieter; deshalb wird
+        ohne Think aktiv der niedrigste Level geschickt. Ist das Modell im
+        Katalog unbekannt, bleibt das Profil unangetastet.
+        """
+        efforts = cls._reasoning_efforts(profile)
+        if not efforts:
+            return ""
+        ordered = sorted(
+            efforts,
+            key=lambda effort: (_REASONING_RANK.get(effort.lower(), 99), efforts.index(effort)),
+        )
+        return ordered[-1] if think else ordered[0]
 
     @staticmethod
     def _resolve_mode(model_def, audio_only, image_mode):
@@ -232,7 +294,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     # -------------------------------------------------------------- Kernlogik
 
-    def enhance(self, state, text):
+    def enhance(self, state, text, think=False):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext."""
         text = str(text or "").strip()
         if not text:
@@ -269,7 +331,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except (TypeError, ValueError):
             image_mode = 0
         is_image = image_mode > 0
-        mode = self._resolve_mode(model_def, audio_only, image_mode)
+        # Checkbox "Think" -> 'K' im Modus. Ohne das denkt die 27B nie.
+        mode = self._with_thinking(self._resolve_mode(model_def, audio_only, image_mode), think)
 
         # Ans Modell geht nur der sichtbare Prompt, nicht die Historienzeile:
         # sonst wird '#!PROMPT!:' mitverbessert und erscheint danach doppelt.
@@ -478,7 +541,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         executable = str(profile.get("executable", "opencode") or "opencode")
         return base_url or "<not configured>", executable, (urlparse(base_url).port or 4096)
 
-    def enhance_remote(self, state, text):
+    def enhance_remote(self, state, text, think=False):
         """Verbessern ueber die Remote-Engine - ohne lokalen Modell-Load.
 
         Anders als enhance() wird hier kein VRAM belegt: process_prompt_enhancer()
@@ -530,6 +593,22 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             previous_engine = llm_section.get("deepy")
             llm_section["deepy"] = engine
             flipped = True
+
+        # Denk-Level ebenfalls nur fuer diesen Aufruf setzen. create_backend()
+        # liest das Profil erst im Aufruf (registry.py:11-13), die Aenderung
+        # wirkt also sofort - und wird unten exakt zurueckgesetzt.
+        profiles = llm_section.get("profiles") if isinstance(llm_section, dict) else None
+        profile = profiles.get(engine) if isinstance(profiles, dict) else None
+        previous_effort = None
+        effort_changed = False
+        effort = ""
+        if isinstance(profile, dict):
+            effort = self._remote_reasoning_effort(profile, think)
+            if effort:
+                previous_effort = profile.get("reasoning_effort")
+                if str(previous_effort or "") != effort:
+                    profile["reasoning_effort"] = effort
+                    effort_changed = True
         started = time.time()
         try:
             prompts = process(
@@ -554,6 +633,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         finally:
             if flipped and isinstance(llm_section, dict):
                 llm_section["deepy"] = previous_engine
+            if effort_changed and isinstance(profile, dict):
+                profile["reasoning_effort"] = previous_effort
 
         result = self._first_prompt(prompts)
         if not result:
@@ -561,9 +642,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self._last_enhanced = result
         self._last_source = text
         seconds = time.time() - started
+        effort_note = f" Reasoning effort `{effort}`." if effort else ""
         return result, (
-            f"Enhanced remotely with **{engine}** (mode `{mode}`) in {seconds:.1f}s. "
-            "No local VRAM used."
+            f"Enhanced remotely with **{engine}** (mode `{mode}`) in {seconds:.1f}s."
+            f"{effort_note} No local VRAM used."
         )
 
     def write_back(self, state, text):
@@ -602,14 +684,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 f"WanGP starts the server at {base_url} on demand and applies the\n"
                 "OpenCode configuration from the settings when it does.\n"
                 "The plugin supplies the enhancer instructions, so the agent\n"
-                "rewrites the prompt instead of asking a question."
+                "rewrites the prompt instead of asking a question.\n"
+                "Think: sends the highest reasoning level of the selected model;\n"
+                "unticked it sends the lowest one - providers have no real off."
             ),
             "local_enhance_local_btn": (
                 f"{self._button_label()} - enhance on this GPU\n"
                 "Uses Qwen3.8-27B and forces it even if the config selects\n"
                 "another local model.\n"
                 "An already loaded model is unloaded first, so this can take\n"
-                "30-60 s. No remote tokens are used."
+                "30-60 s. No remote tokens are used.\n"
+                "Think: Qwen reasons before rewriting, with its own thinking\n"
+                "budget; unticked it answers straight away."
             ),
         }
         return """
@@ -689,6 +775,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             )
 
         parent = getattr(button_row, "parent", None)
+        think_checkbox = None
 
         # Die Think-Checkbox hierher holen. Gradio gruppiert aufeinanderfolgende
         # Formularfelder in EINEN gr.Form-Container, in dem Dropdown und Checkbox
@@ -721,18 +808,25 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     button_row.children.append(checkbox)
                     checkbox.parent = button_row
                     checkbox.scale = 0          # naturale Breite statt strecken
+                    think_checkbox = checkbox
                 except Exception as exc:  # noqa: BLE001
                     print(f"[{PlugIn_Name}] Could not move the Think checkbox: {exc}")
 
+        # Die Checkbox gilt fuer BEIDE Knoepfe: lokal schaltet sie das Denken,
+        # remote den Reasoning-Level. Fehlt sie (Modell ohne Enhancer oder
+        # anderer WanGP-Aufbau), bleibt think auf dem Default False.
+        shared_inputs = [self.state, prompt_component]
+        if think_checkbox is not None:
+            shared_inputs.append(think_checkbox)
         remote_btn.click(
             fn=self.enhance_inline_remote,
-            inputs=[self.state, prompt_component],
+            inputs=list(shared_inputs),
             outputs=[prompt_component],
             show_progress="hidden",
         )
         local_btn.click(
             fn=self.enhance_inline,
-            inputs=[self.state, prompt_component],
+            inputs=list(shared_inputs),
             outputs=[prompt_component],
             show_progress="hidden",
         )
@@ -750,22 +844,23 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         return button_row
 
-    def enhance_inline_remote(self, state, text):
+    def enhance_inline_remote(self, state, text, think=False):
         """Wie enhance_remote(), schreibt das Ergebnis direkt ins Prompfeld."""
-        result, status = self.enhance_remote(state, text)
+        result, status = self.enhance_remote(state, text, think)
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
         gr.Info(str(status).replace("**", "").replace("`", ""))
         return self._with_history(result)
 
-    def enhance_inline(self, state, text):
+    def enhance_inline(self, state, text, think=False):
         """Wie enhance(), schreibt das Ergebnis aber direkt ins Prompfeld."""
-        result, status = self.enhance(state, text)
+        result, status = self.enhance(state, text, think)
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
-        gr.Info(f"{self._button_label()}: enhanced with {self._variant_label()}")
+        marker = " + Think" if think else ""
+        gr.Info(f"{self._button_label()}: enhanced with {self._variant_label()}{marker}")
         return self._with_history(result)
 
     # ------------------------------------------------------------------- UI
@@ -786,6 +881,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "<b>OpenCode</b> enhances remotely through the configured engine, "
                 "<b>Local 27B</b> enhances on this GPU with Qwen3.8-27B. "
                 "Both write the result straight into the prompt field. "
+                "<b>Think</b> applies to both buttons. "
                 "Hover the info button for details."
             )
             text_in = gr.Textbox(
