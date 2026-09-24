@@ -20,7 +20,11 @@ Gradio sie unterwegs in einen vertikal stapelnden gr.Form gruppiert
 (BlockContext.__exit__ -> fill_expected_parents, blocks.py:456-486).
 
 Das Skript gibt den Komponentenbaum, die Zahl der Klick-Eingaben und die URL
-der Vorschau aus. Die Vorschau laeuft, bis der Prozess beendet wird.
+der Vorschau aus. Fuer den Modell-Check kommen dazu: der Text der Zeile zum
+aktuellen Modell (aus einer __main__.models_def-Fixture), das Vorhandensein der
+scrollbaren Box samt Inline-Stil, die Knopfbreite (min_width) und die Reihenfolge
+im Accordion (Knopf oben, Statuszeile darunter). Die Vorschau laeuft, bis der
+Prozess beendet wird.
 
 Aufruf (aus dem WanGP-Ordner, mit dessen venv):
 
@@ -71,12 +75,31 @@ server_config = {
     "local_enhance_max_words": int(os.environ.get("PREVIEW_MAX", 1500)),
 }
 
+# Katalog-Fixture fuer die Zeile zum aktuellen Modell. Sie liegt als
+# __main__.models_def bereit, weil _current_model_line() den Katalog des Hosts
+# ueber _main("models_def") liest - hier eine Fixture statt des echten Katalogs.
+# Zwei Faelle: ein Modell mit eigenen Enhancer-Anweisungen und eines ohne.
+models_def = {
+    "hidream_o1_dev": {
+        "name": "HiDream O1 Image Dev 10B",
+        "metadata": {"main_output": ["image"], "base_model_type": "hidream_o1_dev"},
+        "image_prompt_enhancer_instructions": "describe the image",
+    },
+    "preview_plain": {
+        "name": "Preview Plain Model",
+        "metadata": {"main_output": ["video"], "base_model_type": "preview_plain"},
+    },
+}
+
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 7899
 
 p = P.LocalEnhancePlugin()
 
 with gr.Blocks(title="Enhancer-Zeile") as demo:
-    state = gr.State()
+    # Der state-Snapshot traegt den aktuellen Modelltyp (wgp.py:356-358 liest
+    # state["model_type"]); die Vorschau setzt ihn auf das Fixture-Modell mit
+    # eigenen Anweisungen.
+    state = gr.State({"model_type": "hidream_o1_dev"})
     prompt = gr.Textbox(label="Prompt", value="a cat sitting on a windowsill", lines=3)
     p.state = state
     p.prompt = prompt
@@ -142,7 +165,7 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         with gr.Row() as word_row:
             pass
         p._attach_word_fields(word_row)
-        check_btn, model_list, model_status = p._build_model_check_section()
+        check_btn, current_model, model_list, model_status = p._build_model_check_section()
 
     css = getattr(P, "_UI_CSS", "")
     # WanGP haelt .btn_centered in shared/gradio/ui_studio.css schmal; ohne diese
@@ -330,6 +353,18 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
     )
     accordion_props = (accordion_config or {}).get("props", {})
 
+    print("=== Modell-Zeile (ausserhalb des eingeklappten Bereichs) ===")
+    print("Aktuelles Modell:", repr(getattr(current_model, "value", None)))
+    print(
+        "unbekannter Modelltyp:",
+        repr(p._current_model_line({})),
+        "(erwartet '**Current model:** unknown.')",
+    )
+    print(
+        "Modell ohne eigene Anweisungen:",
+        repr(p._current_model_line({"model_type": "preview_plain"})),
+    )
+
     print("=== Modell-Check ===")
     print("Hinweis-Text vorhanden:", expected_hint in markdown_values)
     print(
@@ -338,6 +373,22 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         "| open:", getattr(accordion, "open", None),
         "| Konfiguration open:", accordion_props.get("open"),
         "(erwartet False)",
+    )
+    # Der Knopf steht allein in einer Zeile, die Statuszeile darunter - der
+    # Accordion-Inhalt ist genau: Row(Knopf), Markdown(Status), Markdown(Intro),
+    # HTML(Liste).
+    print(
+        "Accordion-Inhalt:",
+        _types(accordion) if accordion is not None else "nicht gefunden",
+        "(erwartet [Row, Markdown, Markdown, HTML])",
+    )
+    print(
+        "Knopf 'Check models':",
+        f"size={getattr(check_btn, 'size', None)!r}",
+        f"scale={getattr(check_btn, 'scale', None)!r}",
+        f"min_width={getattr(check_btn, 'min_width', None)!r}",
+        f"(erwartet scale=0, min_width={P._MODEL_CHECK_BUTTON_WIDTH} - einzeilig; "
+        "scale=0/min_width=0 quetschte ihn auf zwei Zeilen)",
     )
     for dependency in click_deps:
         print(
@@ -349,6 +400,26 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         )
     if not click_deps:
         print("Knopf-Klick: nicht verdrahtet")
+    print(
+        "Scrollbare Box:",
+        sum(
+            1
+            for item in nodes
+            if isinstance(item, gr.HTML)
+            and P._MODEL_CHECK_BOX_STYLE in str(getattr(item, "value", "") or "")
+        ),
+        "(erwartet 1)",
+    )
+    print(
+        "Box-Inline-Stil:",
+        P._MODEL_CHECK_BOX_STYLE,
+        "(erwartet max-height + overflow-y:auto)",
+    )
+    print(
+        "Box in _UI_CSS:",
+        "max-height" in getattr(P, "_UI_CSS", ""),
+        "(erwartet False - der Stil gehoert inline an das div)",
+    )
     print("Liste beim Aufbau:", repr(getattr(model_list, "value", None)))
     print("Status beim Aufbau:", repr(getattr(model_status, "value", None)))
 

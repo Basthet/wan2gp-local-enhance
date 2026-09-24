@@ -30,6 +30,7 @@ Deepy -> LLM Engine auf ein lokales Qwen-Modell zeigen lassen). Der Wert bestimm
 welches lokale Modell geladen wird.
 """
 
+import html
 import json
 import re
 import sys
@@ -138,16 +139,32 @@ class _EnhancerOverrides(NamedTuple):
               ausgeblendeten und die kaputten.
     affected: Definitionen mit eigenen Anweisungen, die nicht ausgeblendet sind
               und einen Anzeigenamen haben, also genau die Modelle in groups
-              (gleicher Name mehrfach gezaehlt, groups fasst ihn zusammen).
-    groups:   ((Anzeige, (Name, ...)), ...) in fester Reihenfolge: Image,
+              (jede Variante einzeln gezaehlt; groups buendelt sie zu Familien).
+    groups:   ((Anzeige, (Familie, ...)), ...) in fester Reihenfolge: Image,
               Image + Video, Video, danach Audio je family_label alphabetisch.
-              Namen sind alphabetisch sortiert und duplikatfrei, leere Gruppen
-              fehlen ganz.
+              Eine Familie ist ein _EnhancerFamily-Eintrag; die Familien einer
+              Gruppe sind alphabetisch sortiert, leere Gruppen fehlen ganz.
     """
 
     examined: int
     affected: int
     groups: tuple
+
+
+class _EnhancerFamily(NamedTuple):
+    """Eine Modellfamilie im Modell-Check - eine Zeile der Ausgabe.
+
+    Varianten desselben Modells (gleicher Buendelungsschluessel) stehen in einer
+    Zeile, count nennt ihre Zahl. base_model_type ist der Schluessel der
+    Buendelung (metadata.base_model_type, sonst architecture, sonst der interne
+    Typ), name der Anzeigename der Familie, model_types die internen Typen aller
+    Varianten (alphabetisch, fuer Test und Fehlersuche).
+    """
+
+    base_model_type: str
+    name: str
+    count: int
+    model_types: tuple
 
 
 # ------------------------------------------------------------- Modell-Check
@@ -168,7 +185,38 @@ _MODEL_CHECK_INTRO = (
     "WanGP prefers a model's own enhancer instructions over the ones this plugin supplies, "
     "so Min/Max have no effect for these models."
 )
-_MODEL_CHECK_EMPTY = "Not checked yet in this installation - press **Check models**."
+# Die Liste sitzt in einem gr.HTML, deshalb HTML statt Markdown: frueher stand
+# hier "**Check models**", im HTML waeren die Sternchen sichtbar geblieben.
+_MODEL_CHECK_EMPTY = (
+    "Not checked yet in this installation - press <b>Check models</b>."
+)
+_MODEL_CHECK_NO_CATALOG = (
+    "<b>No model definitions loaded.</b> The model catalog of WanGP is "
+    "empty. Load a model or refresh the catalog in WanGP first."
+)
+_MODEL_CHECK_NO_MODEL = (
+    "No model in the current catalog ships its own enhancer instructions."
+)
+# Zeile zum AKTUELLEN Modell. Sie ist die eigentlich nuetzliche Antwort und
+# steht immer sichtbar ueber dem eingeklappten Bereich - deshalb wird sie NICHT
+# zwischengespeichert, sondern bei jedem Tab-Aufbau und Tab-Wechsel neu aus dem
+# Live-Zustand des Hosts berechnet (siehe _current_model_line).
+_MODEL_CHECK_CURRENT_UNKNOWN = "**Current model:** unknown."
+_MODEL_CHECK_CURRENT_OWN = (
+    "**Current model:** {name} - ships its own enhancer instructions, "
+    "so Min/Max are ignored."
+)
+_MODEL_CHECK_CURRENT_PLAIN = (
+    "**Current model:** {name} - no own enhancer instructions, Min/Max apply."
+)
+# Scrollbare Box der Liste: fester Hoechstwert plus eigener Scrollbalken, damit
+# der Tab nicht auseinandergezogen wird. Der Stil sitzt inline am
+# umschliessenden div - _UI_CSS bleibt dafuer unberuehrt.
+_MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
+# Normale Knopfbreite. Gradios Default ist 160px; scale=0 verhindert nur das
+# Wachsen ueber die Zeile, min_width gibt dem Label die noetige Breite, damit
+# "Check models" einzeilig bleibt.
+_MODEL_CHECK_BUTTON_WIDTH = 160
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -788,6 +836,75 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return _ENHANCER_GROUP_IMAGE, ""
         return _ENHANCER_GROUP_VIDEO, ""
 
+    @staticmethod
+    def _enhancer_base_model_type(model_type, model_def):
+        """Buendelungsschluessel einer Definition.
+
+        Quelle ist das Feld `base_model_type` aus `metadata` der Definition. Der
+        Host schreibt es in `store_metadata()` (models/model_metadata.py:238) und
+        setzt es auf `model_def["architecture"]` bzw. den internen Typ
+        (models/model_metadata.py:232) - verifiziert im Host-Quelltext. Fehlt der
+        Eintrag (aelterer Zwischenspeicher, Testfixture), gilt `architecture`,
+        zuletzt der interne Typ selbst.
+        """
+        model_def = model_def if isinstance(model_def, dict) else {}
+        metadata = model_def.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        base = str(metadata.get("base_model_type") or "").strip()
+        if not base:
+            base = str(model_def.get("architecture") or "").strip()
+        if not base:
+            base = str(model_type or "").strip()
+        return base
+
+    @staticmethod
+    def _enhancer_family_name(base_model_type, entries, definitions):
+        """Anzeigename einer Familie.
+
+        Erste Wahl ist der Name der Definition, deren INTERNER Typ dem Basistyp
+        entspricht (typisch die Hauptdefinition der Familie). Gibt es keine,
+        gewinnt der kuerzeste Name der Gruppe (bei Gleichstand alphabetisch),
+        zuletzt der Basistyp selbst.
+        """
+        base_def = (
+            definitions.get(base_model_type)
+            if isinstance(definitions, dict)
+            else None
+        )
+        if isinstance(base_def, dict):
+            name = str(base_def.get("name") or "").strip()
+            if name:
+                return name
+        names = sorted(
+            {name for _type, name in entries},
+            key=lambda value: (len(value), value.casefold()),
+        )
+        return names[0] if names else str(base_model_type)
+
+    @classmethod
+    def _enhancer_families(cls, bucket, definitions):
+        """Eine Gruppe von Varianten zu Familien buendeln (alphabetisch).
+
+        bucket: {Basistyp: [(interner Typ, Anzeigename), ...]}. Varianten
+        desselben Basistyps ergeben genau eine _EnhancerFamily-Zeile; count ist
+        die Zahl der Varianten.
+        """
+        families = []
+        for base, entries in (bucket or {}).items():
+            entries = sorted(entries, key=lambda item: (item[1].casefold(), item[0]))
+            families.append(
+                _EnhancerFamily(
+                    base_model_type=base,
+                    name=cls._enhancer_family_name(base, entries, definitions),
+                    count=len(entries),
+                    model_types=tuple(
+                        sorted(model_type for model_type, _name in entries)
+                    ),
+                )
+            )
+        families.sort(key=lambda family: (family.name.casefold(), family.base_model_type))
+        return tuple(families)
+
     @classmethod
     def _collect_enhancer_overrides(cls, models_def):
         """Modelle sammeln, die eigene Enhancer-Anweisungen mitbringen.
@@ -805,6 +922,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         gewinnt. Ohne Modus sammelt diese Funktion deshalb lieber zu viel als zu
         wenig.
 
+        Statt jeder Variante landet genau eine Zeile je Modellfamilie in der
+        Ausgabe (Buendelung ueber _enhancer_base_model_type). Varianten mit
+        demselben Anzeigenamen zaehlen weiterhin zusammen.
+
         Nicht-Dict-Eintraege, fehlende Namen und fehlende Metadaten sind erlaubt
         und werden still uebergangen. Ausgeblendete Modelle (visible == False)
         fehlen in der Ausgabe, zaehlen aber als untersucht.
@@ -813,7 +934,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         examined = 0
         affected = 0
         collected = {}
-        for model_def in definitions.values():
+        for model_type, model_def in definitions.items():
             examined += 1
             if not cls._has_enhancer_instructions(model_def):
                 continue
@@ -824,32 +945,46 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 continue
             affected += 1
             group, subgroup = cls._enhancer_media_group(model_def)
-            collected.setdefault((group, subgroup), set()).add(name)
+            base = cls._enhancer_base_model_type(model_type, model_def)
+            bucket = collected.setdefault((group, subgroup), {})
+            bucket.setdefault(base, []).append((str(model_type), name))
 
         groups = []
         for group in _ENHANCER_GROUPS:
-            names = collected.get((group, ""))
-            if names:
-                groups.append((group, tuple(sorted(names, key=str.casefold))))
+            families = cls._enhancer_families(collected.get((group, "")), definitions)
+            if families:
+                groups.append((group, families))
         # Audio: eine Zeile je family_label, alphabetisch.
         for group, subgroup in sorted(collected):
-            if group != _ENHANCER_GROUP_AUDIO or not collected[(group, subgroup)]:
+            if group != _ENHANCER_GROUP_AUDIO:
+                continue
+            families = cls._enhancer_families(
+                collected.get((group, subgroup)), definitions
+            )
+            if not families:
                 continue
             label = (
                 f"{_ENHANCER_GROUP_AUDIO} ({subgroup})"
                 if subgroup
                 else _ENHANCER_GROUP_AUDIO
             )
-            groups.append((label, tuple(sorted(collected[(group, subgroup)], key=str.casefold))))
+            groups.append((label, families))
 
         return _EnhancerOverrides(examined, affected, tuple(groups))
 
     @staticmethod
     def _render_enhancer_overrides(overrides):
-        """Markdown-Text zu _collect_enhancer_overrides(): eine Zeile je Gruppe.
+        """HTML-Text zu _collect_enhancer_overrides(): Familie fuer Familie.
 
-        Form: <b>Image</b> — Name A, Name B. Keine Tabelle. Ohne betroffene
-        Modelle bleibt der Text leer.
+        Form je Gruppe: fetter Titel, darunter eine Zeile je Modellfamilie, die
+        Zahl der Varianten in Klammern nur bei mehr als einer. Titel und
+        Familien sind mit <br> getrennt (ein einfacher Zeilenumbruch wuerde in
+        HTML zu einem Absatz verschmelzen), die Gruppen zusaetzlich durch eine
+        Leerzeile (<br><br>). Keine Tabelle. Ohne betroffene Modelle bleibt der
+        Text leer.
+
+        Die Namen stammen aus den Modelldefinitionen und gehen durch
+        html.escape(), weil die Liste als gr.HTML ausgegeben wird.
 
         Auch hier gilt die grobe Pruefung: gelistet ist, wer irgendeinen
         Enhancer-Anweisungs-Schluessel mitbringt. Ob der Host ihn im gewaehlten
@@ -859,17 +994,38 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         groups = getattr(overrides, "groups", None)
         if groups is None and isinstance(overrides, (list, tuple)):
             groups = overrides
-        lines = []
+        rendered_groups = []
         for entry in groups or ():
             try:
-                label, names = entry
+                label, families = entry
             except (TypeError, ValueError):
                 continue
-            clean = [str(item).strip() for item in (names or ()) if str(item).strip()]
-            if not clean:
+            lines = []
+            for family in families or ():
+                name = str(getattr(family, "name", family) or "").strip()
+                if not name:
+                    continue
+                try:
+                    count = int(getattr(family, "count", 1) or 1)
+                except (TypeError, ValueError):
+                    count = 1
+                suffix = f" ({count})" if count > 1 else ""
+                lines.append(html.escape(name) + suffix)
+            if not lines:
                 continue
-            lines.append(f"<b>{label}</b> — " + ", ".join(clean))
-        return "\n".join(lines)
+            rendered_groups.append(
+                "<b>" + html.escape(str(label)) + "</b><br>"
+                + "<br>".join(lines)
+            )
+        return "<br><br>".join(rendered_groups)
+
+    @staticmethod
+    def _model_check_box(content):
+        """Liste in die scrollbare Box legen (feste Hoehe, eigener Scrollbalken).
+
+        Der Stil sitzt inline am umschliessenden div - _UI_CSS bleibt unberuehrt.
+        """
+        return f'<div style="{_MODEL_CHECK_BOX_STYLE}">{content}</div>'
 
     # -------------------------------------------------------- Zwischenspeicher
 
@@ -939,6 +1095,78 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return 0
         return count
 
+    # ------------------------------------------------- aktuelles Modell (live)
+
+    def _resolve_current_model_type(self, state_value):
+        """Interner Typ des aktuellen Modells - "" wenn nicht ermittelbar.
+
+        Reihenfolge, alle Quellen im Host-Quelltext verifiziert:
+        1. `get_state_model_type` (wgp.py:356-358): liefert
+           `state["model_type"]`, bei aktivem Bearbeiten `state["edit_model_type"]`
+           (wgp.py:357). Die Funktion ist in setup_ui() per request_global
+           angefragt und liegt damit als Attribut an.
+        2. Derselbe Schluessel direkt aus dem Settings-Snapshot des state, falls
+           der Host die Funktion einmal nicht bereitstellt.
+        3. `server_config["last_model_type"]` aus den Globals des Hauptmoduls -
+           der Host schreibt den Schluessel bei jedem Modellwechsel (wgp.py:10728)
+           und liest ihn beim Start aus der gespeicherten Config (wgp.py:3366).
+
+        Jede Stufe steht in try/except: die Zeile darf nie werfen, im Zweifel
+        gilt "unknown".
+        """
+        resolver = getattr(self, "get_state_model_type", None)
+        if callable(resolver) and isinstance(state_value, dict):
+            try:
+                model_type = resolver(state_value)
+            except Exception:  # noqa: BLE001 - Snapshot kann unvollstaendig sein
+                model_type = None
+            if model_type:
+                return str(model_type)
+        if isinstance(state_value, dict):
+            try:
+                key = (
+                    "model_type"
+                    if state_value.get("active_form", "add") == "add"
+                    else "edit_model_type"
+                )
+                model_type = state_value.get(key)
+            except Exception:  # noqa: BLE001 - siehe oben
+                model_type = None
+            if model_type:
+                return str(model_type)
+        config = _main("server_config") or {}
+        if isinstance(config, dict) and config.get("last_model_type"):
+            return str(config["last_model_type"])
+        return ""
+
+    def _current_model_line(self, state_value):
+        """Sichtbare Zeile zum aktuellen Modell (englisch, wortgetreu).
+
+        Die Entscheidung "eigenes Anweisungen?" nutzt die vorhandene Erkennung
+        des Plugins (_has_enhancer_instructions) gegen den Katalog aus
+        `_main("models_def")` - nur lesend, kein refresh_model_defs, kein
+        map_family_handlers, kein Host-Import. Ist der Typ nicht ermittelbar oder
+        nicht im Katalog, steht dort "unknown." - ohne Fehler. Die Zeile wird
+        NICHT zwischengespeichert: sie haengt am Live-Zustand und wird bei jedem
+        Tab-Aufbau und Tab-Wechsel neu berechnet.
+        """
+        try:
+            model_type = self._resolve_current_model_type(state_value)
+            if not model_type:
+                return _MODEL_CHECK_CURRENT_UNKNOWN
+            models_def = _main("models_def") or {}
+            model_def = (
+                models_def.get(model_type) if isinstance(models_def, dict) else None
+            )
+            if not isinstance(model_def, dict):
+                return _MODEL_CHECK_CURRENT_UNKNOWN
+            name = str(model_def.get("name") or "").strip() or str(model_type)
+            if self._has_enhancer_instructions(model_def):
+                return _MODEL_CHECK_CURRENT_OWN.format(name=name)
+            return _MODEL_CHECK_CURRENT_PLAIN.format(name=name)
+        except Exception:  # noqa: BLE001 - die Zeile darf nie werfen
+            return _MODEL_CHECK_CURRENT_UNKNOWN
+
     def _run_model_check(self):
         """Knopf "Check models": Katalog lesen, zaehlen, rendern, ablegen.
 
@@ -947,7 +1175,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         refresh_model_defs, kein map_family_handlers, kein Import von
         Host-Modulen). Der Klick laeuft in der Host-Oberflaeche, deshalb darf
         hier nichts nach aussen fliegen: der Rumpf steht in try/except und
-        liefert im Fehlerfall Markdown statt einer Exception.
+        liefert im Fehlerfall HTML statt einer Exception.
         """
         try:
             models_def = _main("models_def") or {}
@@ -959,10 +1187,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             files = self._definition_file_count()
             if not examined:
                 # Leerer Katalog: verstaendliche Zeile statt einer leeren Liste.
-                listing = (
-                    "**No model definitions loaded.** The model catalog of WanGP is "
-                    "empty. Load a model or refresh the catalog in WanGP first."
-                )
+                listing = _MODEL_CHECK_NO_CATALOG
                 status = f"Checked {stamp} - the model catalog is empty, nothing to check."
             else:
                 status = f"Checked {stamp} - {affected} of {examined} model definitions"
@@ -972,10 +1197,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         "refresh the model catalog in WanGP first."
                     )
                 if not listing:
-                    listing = (
-                        "No model in the current catalog ships its own enhancer "
-                        "instructions."
-                    )
+                    listing = _MODEL_CHECK_NO_MODEL
             payload = {
                 # Zeitstempel als ISO, dazu die beiden Zaehler des Laufs, die
                 # Zahl der Katalogeintraege und der fertig gerenderte Listentext.
@@ -991,9 +1213,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 self._write_model_check_cache(payload)
             except Exception as exc:  # noqa: BLE001 - Liste trotzdem anzeigen
                 status += f" (Could not save the result: {type(exc).__name__}: {exc})"
-            return listing, status
+            # Der Zwischenspeicher haelt den Listentext OHNE die Box; die
+            # scrollbare Huelle kommt erst beim Ausgeben an die Komponente.
+            return self._model_check_box(listing), status
         except Exception as exc:  # noqa: BLE001 - der Klick laeuft in der Host-UI
-            return "", f"**Model check failed:** `{type(exc).__name__}: {exc}`"
+            return self._model_check_box(""), f"**Model check failed:** `{type(exc).__name__}: {exc}`"
 
     # -------------------------------------------------------------- Kernlogik
 
@@ -1946,28 +2170,44 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     # ------------------------------------------------------------------- UI
 
     def _build_model_check_section(self):
-        """Hinweiszeile, eingeklappter Detailbereich und der Knopf "Check models".
+        """Zeile zum aktuellen Modell, Hinweiszeile, eingeklappter Detailbereich,
+        Knopf "Check models" und die scrollbare Liste.
 
         Eigener Block, weil create_ui() ein Session-Argument entgegennimmt, das
         im Nachbauskript (dev/ui_preview.py) fehlt - so laesst sich genau dieser
         Teil ohne Session aufbauen und pruefen. Der Block wird im Tab-Container
         erzeugt und laesst die Reihenfolge der uebrigen Kinder unberuehrt.
 
-        Die Liste kommt beim Aufbau ausschliesslich aus dem Zwischenspeicher
-        (_model_check_texts): hier wird nichts berechnet. Erst der Klick auf
-        "Check models" liest den Katalog und schreibt den Zwischenspeicher.
+        Die Zeile zum aktuellen Modell steht AUSSERHALB des eingeklappten
+        Bereichs, direkt unter der Hinweiszeile: sie ist die eigentlich
+        nuetzliche Antwort und wird live berechnet (nicht zwischengespeichert).
+        Die Liste darunter kommt beim Aufbau ausschliesslich aus dem
+        Zwischenspeicher (_model_check_texts): hier wird nichts berechnet. Erst
+        der Klick auf "Check models" liest den Katalog und schreibt ihn.
 
-        Rueckgabe: (Knopf, Listen-Markdown, Status-Markdown) - nur zur Pruefung.
+        Rueckgabe: (Knopf, Markdown des aktuellen Modells, Listen-HTML,
+        Status-Markdown) - der Knopf und die Zeile zum aktuellen Modell werden in
+        create_ui() bzw. on_tab_select() weiterverdrahtet.
         """
         gr.Markdown(_MODEL_CHECK_HINT)
+        current_out = gr.Markdown(value=self._current_model_line(self._state_value()))
         listing, status = self._model_check_texts()
         with gr.Accordion("Which models ignore Min/Max?", open=False):
+            # Der Knopf steht allein in seiner Zeile und bekommt normale Breite
+            # (min_width) - scale=0 allein quetschte ihn auf zwei Zeilen.
             with gr.Row():
-                check_btn = gr.Button("Check models", size="sm", scale=0, min_width=0)
-                status_out = gr.Markdown(value=status)
-            # Einleitender Text ueber der Liste, darunter die Liste selbst.
+                check_btn = gr.Button(
+                    "Check models",
+                    size="sm",
+                    scale=0,
+                    min_width=_MODEL_CHECK_BUTTON_WIDTH,
+                )
+            # Statuszeile darunter statt daneben.
+            status_out = gr.Markdown(value=status)
+            # Einleitender Text ueber der Liste, darunter die Liste in der
+            # scrollbaren Box (gr.HTML, Inline-Stil am div).
             gr.Markdown(_MODEL_CHECK_INTRO)
-            list_out = gr.Markdown(value=listing)
+            list_out = gr.HTML(value=self._model_check_box(listing))
         # Keine Eingaben: der Klick liest den Katalog selbst. Reihenfolge der
         # Ausgaben wie in _run_model_check(): erst die Liste, dann die Statuszeile.
         check_btn.click(
@@ -1976,7 +2216,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             outputs=[list_out, status_out],
             show_progress="hidden",
         )
-        return check_btn, list_out, status_out
+        return check_btn, current_out, list_out, status_out
+
+    def _state_value(self):
+        """Wert des state-Snapshots beim Tab-Aufbau - None, wenn er fehlt."""
+        try:
+            return getattr(self.state, "value", None)
+        except Exception:  # noqa: BLE001 - beim Nachbau kann state fehlen
+            return None
 
     def create_ui(self, api_session):
         state = self.state
@@ -1999,9 +2246,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             with gr.Row() as word_row:
                 pass
             self._attach_word_fields(word_row)
-            # Direkt unter den Wort-Reglern: der Hinweis, der eingeklappte
-            # Detailbereich mit dem Knopf und die Liste aus dem Zwischenspeicher.
-            self._build_model_check_section()
+            # Direkt unter den Wort-Reglern: die Zeile zum aktuellen Modell, der
+            # Hinweis, der eingeklappte Detailbereich mit dem Knopf und die Liste
+            # aus dem Zwischenspeicher.
+            _check_btn, current_model_out, _list_out, _status_out = (
+                self._build_model_check_section()
+            )
             gr.HTML(
                 "<b>Enhance: OpenCode / Bonsai 27B</b><br>"
                 "Adds two buttons next to <i>Enhance Prompt</i>: "
@@ -2034,7 +2284,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     apply_btn = None
             status = gr.Markdown()
 
-        self.on_tab_outputs = [text_in]
+        # Der Tab-Wechsel setzt den Prompt UND die Zeile zum aktuellen Modell:
+        # beide haengen am Live-Zustand. Die Reihenfolge muss zur Rueckgabe von
+        # on_tab_select() passen; der Host verdrahtet sie als outputs
+        # (shared/utils/plugins.py:1797-1804).
+        self.on_tab_outputs = [text_in, current_model_out]
 
         enhance_btn.click(
             fn=self.enhance,
@@ -2063,8 +2317,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     # ------------------------------------------------------------ Tab-Wechsel
 
     def on_tab_select(self, state):
-        """Beim Wechsel auf den Tab den aktuellen Prompt des Panels anzeigen."""
+        """Beim Wechsel auf den Tab den aktuellen Prompt des Panels anzeigen.
+
+        Zweite Ausgabe ist die Zeile zum aktuellen Modell (on_tab_outputs); sie
+        wird hier neu berechnet, weil sie am Live-Zustand haengt und nicht
+        zwischengespeichert wird. Beide Rueckgaben sind gegen Fehler gesichert -
+        der Tab-Wechsel darf nie werfen.
+        """
         try:
-            return str(self.get_current_model_settings(state).get("prompt", "") or "")
-        except Exception:
-            return ""
+            prompt = str(self.get_current_model_settings(state).get("prompt", "") or "")
+        except Exception:  # noqa: BLE001 - Prompt ist nur die erste Ausgabe
+            prompt = ""
+        return prompt, self._current_model_line(state)
