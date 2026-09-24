@@ -67,6 +67,31 @@ _MIN_WORDS_KEY = "local_enhance_min_words"
 _MAX_WORDS_KEY = "local_enhance_max_words"
 _WORD_LIMIT_KEY = "local_enhance_word_limit"   # Altbestand, Fallback fuer Max
 
+# Modelle mit eigenen Enhancer-Anweisungen. Der Host holt die Anweisungen an
+# diesen Schluesseln; die optionale Ziffer 1-4 am Ende waehlt ein Profil, das
+# der Modus vorgibt (re.search(r"\d", prompt_enhancer_mode), wgp.py:6461-6464).
+# Bringt ein Modell so einen Schluessel mit, gewinnen seine Anweisungen gegen
+# die vom Plugin uebergebenen (_fallback_instructions) - die Wortgrenzen-Felder
+# Min/Max wirken dort also nicht.
+_ENHANCER_INSTRUCTION_RE = re.compile(
+    r"^(?:text|image|video)_prompt_enhancer_instructions[1-4]?$"
+)
+# Medien-Token aus metadata.main_output. Der Host schreibt "audio", "image" und
+# "video"; Gross-/Kleinschreibung und ein angehaengtes Plural-s werden grob
+# mitgenommen, damit eine unbekannte Schreibweise nichts verliert.
+_MEDIA_TOKEN_RE = re.compile(r"^(image|video|audio)s?$", re.IGNORECASE)
+# Gruppen der Ausgabe in genau dieser Reihenfolge. Audio steht zuletzt und wird
+# dort nach family_label unterteilt (typisch "TTS" und "Music").
+_ENHANCER_GROUP_IMAGE = "Image"
+_ENHANCER_GROUP_IMAGE_VIDEO = "Image + Video"
+_ENHANCER_GROUP_VIDEO = "Video"
+_ENHANCER_GROUP_AUDIO = "Audio"
+_ENHANCER_GROUPS = (
+    _ENHANCER_GROUP_IMAGE,
+    _ENHANCER_GROUP_IMAGE_VIDEO,
+    _ENHANCER_GROUP_VIDEO,
+)
+
 # Bild-Eingaben, die LIVE aus den Komponenten kommen muessen: der Settings-
 # Snapshot (state["all_settings"]) wird nur von save_inputs()-Fluessen
 # geschrieben, nicht beim Hinzufuegen eines Bildes zur Galerie. WanGPs eigener
@@ -95,6 +120,25 @@ class _EnhancerImages(NamedTuple):
     image_refs: list | None
     kwargs: dict
     labels: tuple
+
+
+class _EnhancerOverrides(NamedTuple):
+    """Ergebnis von _collect_enhancer_overrides().
+
+    examined: untersuchte Definitionen - alle Eintraege von models_def, auch die
+              ausgeblendeten und die kaputten.
+    affected: Definitionen mit eigenen Anweisungen, die nicht ausgeblendet sind
+              und einen Anzeigenamen haben, also genau die Modelle in groups
+              (gleicher Name mehrfach gezaehlt, groups fasst ihn zusammen).
+    groups:   ((Anzeige, (Name, ...)), ...) in fester Reihenfolge: Image,
+              Image + Video, Video, danach Audio je family_label alphabetisch.
+              Namen sind alphabetisch sortiert und duplikatfrei, leere Gruppen
+              fehlen ganz.
+    """
+
+    examined: int
+    affected: int
+    groups: tuple
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -637,6 +681,156 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except (TypeError, ValueError):
             number = 0
         return engine_from_legacy_enhancer(number)
+
+    # ---------------------------------------------------------- Modell-Katalog
+
+    @staticmethod
+    def _has_enhancer_instructions(model_def):
+        """Bringt die Definition irgendeinen Enhancer-Anweisungs-Schluessel?
+
+        Geprueft wird GROB - nur die Schluesselform zaehlt
+        (_ENHANCER_INSTRUCTION_RE). Ob der Host den Schluessel im gewaehlten
+        Modus wirklich benutzt, entscheidet er zusaetzlich am Modus: die erste
+        Ziffer im Modus waehlt ein Profil, und nur der Schluessel mit genau
+        dieser Ziffer gewinnt gegen die Anweisungen des Plugins
+        (wgp.py:6461-6480).
+        """
+        if not isinstance(model_def, dict):
+            return False
+        return any(_ENHANCER_INSTRUCTION_RE.match(str(key)) for key in model_def)
+
+    @staticmethod
+    def _media_tokens(outputs):
+        """Medien-Token aus metadata.main_output, grob normalisiert."""
+        tokens = []
+        for value in outputs if isinstance(outputs, (list, tuple, set)) else ():
+            match = _MEDIA_TOKEN_RE.match(str(value or "").strip())
+            if match is None:
+                continue
+            token = match.group(1).lower()
+            if token not in tokens:
+                tokens.append(token)
+        return tokens
+
+    @classmethod
+    def _enhancer_media_group(cls, model_def):
+        """Medienart einer Definition als (Gruppe, Untergruppe).
+
+        Primaer entscheidet `metadata.main_output` des Hosts (z. B. ["audio"],
+        ["image"], ["image", "video"]). Fehlt `metadata`, gilt dieselbe Regel
+        wie im Host (models/model_metadata.py:92): `audio_only` -> Audio,
+        `image_outputs` -> Image, `v2i_switch_supported` oder `inpaint_support`
+        -> Image + Video, sonst Video.
+
+        Audio wird zusaetzlich nach `family_label` unterteilt (typisch "TTS"
+        und "Music"); ohne Label bleibt die Untergruppe leer. Bei allen anderen
+        Medienarten ist die Untergruppe immer leer.
+        """
+        model_def = model_def if isinstance(model_def, dict) else {}
+        metadata = model_def.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+
+        tokens = cls._media_tokens(metadata.get("main_output"))
+        if not tokens:
+            if model_def.get("audio_only", False):
+                tokens = ["audio"]
+            elif model_def.get("image_outputs", False):
+                tokens = ["image"]
+            elif model_def.get("v2i_switch_supported", False) or model_def.get(
+                "inpaint_support", False
+            ):
+                tokens = ["image", "video"]
+            else:
+                tokens = ["video"]
+
+        if "audio" in tokens:
+            return _ENHANCER_GROUP_AUDIO, str(metadata.get("family_label") or "").strip()
+        if "image" in tokens and "video" in tokens:
+            return _ENHANCER_GROUP_IMAGE_VIDEO, ""
+        if "image" in tokens:
+            return _ENHANCER_GROUP_IMAGE, ""
+        return _ENHANCER_GROUP_VIDEO, ""
+
+    @classmethod
+    def _collect_enhancer_overrides(cls, models_def):
+        """Modelle sammeln, die eigene Enhancer-Anweisungen mitbringen.
+
+        Reine Funktion: kein UI, kein Dateizugriff, keine Host-Importe, keine
+        Nebenwirkungen. Den Katalog liefert der Aufrufer - zur Laufzeit
+        `_main("models_def")` (das Modul-Dict des Hosts), im Test eine Fixture.
+
+        Geprueft wird GROB: betroffen ist jede Definition mit irgendeinem
+        Schluessel der Form text_/image_/video_prompt_enhancer_instructions
+        (Ziffer 1-4 optional). Ob der Host den Schluessel im gewaehlten Modus
+        wirklich benutzt, entscheidet er zusaetzlich am Modus - die erste Ziffer
+        im Modus waehlt ein Profil, nur der passende Schluessel gewinnt. Ohne
+        Modus sammelt diese Funktion deshalb lieber zu viel als zu wenig.
+
+        Nicht-Dict-Eintraege, fehlende Namen und fehlende Metadaten sind erlaubt
+        und werden still uebergangen. Ausgeblendete Modelle (visible == False)
+        fehlen in der Ausgabe, zaehlen aber als untersucht.
+        """
+        definitions = models_def if isinstance(models_def, dict) else {}
+        examined = 0
+        affected = 0
+        collected = {}
+        for model_def in definitions.values():
+            examined += 1
+            if not cls._has_enhancer_instructions(model_def):
+                continue
+            if model_def.get("visible", True) is False:
+                continue
+            name = str(model_def.get("name") or "").strip()
+            if not name:
+                continue
+            affected += 1
+            group, subgroup = cls._enhancer_media_group(model_def)
+            collected.setdefault((group, subgroup), set()).add(name)
+
+        groups = []
+        for group in _ENHANCER_GROUPS:
+            names = collected.get((group, ""))
+            if names:
+                groups.append((group, tuple(sorted(names, key=str.casefold))))
+        # Audio: eine Zeile je family_label, alphabetisch.
+        for group, subgroup in sorted(collected):
+            if group != _ENHANCER_GROUP_AUDIO or not collected[(group, subgroup)]:
+                continue
+            label = (
+                f"{_ENHANCER_GROUP_AUDIO} ({subgroup})"
+                if subgroup
+                else _ENHANCER_GROUP_AUDIO
+            )
+            groups.append((label, tuple(sorted(collected[(group, subgroup)], key=str.casefold))))
+
+        return _EnhancerOverrides(examined, affected, tuple(groups))
+
+    @staticmethod
+    def _render_enhancer_overrides(overrides):
+        """Markdown-Text zu _collect_enhancer_overrides(): eine Zeile je Gruppe.
+
+        Form: <b>Image</b> — Name A, Name B. Keine Tabelle. Ohne betroffene
+        Modelle bleibt der Text leer.
+
+        Auch hier gilt die grobe Pruefung: gelistet ist, wer irgendeinen
+        Enhancer-Anweisungs-Schluessel mitbringt. Ob der Host ihn im gewaehlten
+        Modus benutzt, haengt zusaetzlich am Modus (die erste Ziffer im Modus
+        waehlt ein Profil) und wird hier nicht entschieden.
+        """
+        groups = getattr(overrides, "groups", None)
+        if groups is None and isinstance(overrides, (list, tuple)):
+            groups = overrides
+        lines = []
+        for entry in groups or ():
+            try:
+                label, names = entry
+            except (TypeError, ValueError):
+                continue
+            clean = [str(item).strip() for item in (names or ()) if str(item).strip()]
+            if not clean:
+                continue
+            lines.append(f"<b>{label}</b> — " + ", ".join(clean))
+        return "\n".join(lines)
 
     # -------------------------------------------------------------- Kernlogik
 
@@ -1420,6 +1614,62 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     dropdown_container = container
                 except Exception as exc:  # noqa: BLE001
                     print(f"[{PlugIn_Name}] Could not move the Think checkbox: {exc}")
+
+        # Nach dem Herausholen der Checkbox bleiben leere Formular-Wrapper uebrig.
+        # Gradio legt beim Schliessen der Knopfreihe einen gr.Form um die
+        # aufeinanderfolgenden Formularfelder (fill_expected_parents,
+        # blocks.py:456-477) und registriert ihn in der Komponentenliste des
+        # Blocks. Das Auspacken oben hat den Wrapper aus den Kindern der Reihe
+        # genommen, aber nicht aus dieser Liste: dort steht er weiter als leerer
+        # "form"-Knoten. demo.get_config_file() liefert ihn deshalb mit, obwohl
+        # der Layout-Baum ihn nicht mehr kennt - der Host rendert ihn dann als
+        # leeren Kasten. Angefasst werden ausschliesslich Container ohne Kinder;
+        # Checkbox und Zahlenfelder sind zu diesem Zeitpunkt schon woanders
+        # (die Checkbox hier umgehaengt, die Zahlenfelder fuer den Tab geparkt).
+        try:
+            # Die Komponentenliste haengt am Wurzel-Blocks; er ist ueber die
+            # Elternkette erreichbar und traegt default_config (blocks.py:1170).
+            registry = None
+            node = getattr(button_row, "parent", None)
+            walked = set()
+            while node is not None and id(node) not in walked:
+                walked.add(id(node))
+                if hasattr(node, "default_config"):
+                    registry = getattr(node, "blocks", None)
+                    break
+                node = getattr(node, "parent", None)
+
+            def _is_empty_wrapper(candidate):
+                """Nur echte BlockContexts ohne Kinder sind Wrapper-Muell."""
+                inner = getattr(candidate, "children", None)
+                return inner is not None and not inner
+
+            orphans = [
+                child
+                for child in list(getattr(button_row, "children", []) or [])
+                if _is_empty_wrapper(child)
+            ]
+            if isinstance(registry, dict):
+                # Wrapper, die nur noch hier registriert sind: ihr parent zeigt
+                # auf die Knopfreihe, in deren Kindern stehen sie nicht mehr.
+                orphans += [
+                    candidate
+                    for candidate in list(registry.values())
+                    if getattr(candidate, "parent", None) is button_row
+                    and not any(candidate is child for child in button_row.children)
+                    and _is_empty_wrapper(candidate)
+                ]
+
+            for orphan in orphans:
+                if any(orphan is child for child in button_row.children):
+                    button_row.children.remove(orphan)
+                unrender = getattr(orphan, "unrender", None)
+                if callable(unrender):
+                    unrender()      # nimmt ihn aus Layout und Komponentenliste
+                if isinstance(registry, dict):
+                    registry.pop(getattr(orphan, "_id", None), None)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Could not drop the empty form wrapper: {exc}")
 
         # Den Container des Modus-Dropdowns nur noch suchen, um WanGPs Caption
         # wieder einzuschalten - angehaengt wird dort nichts mehr. Der Container

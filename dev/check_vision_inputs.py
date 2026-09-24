@@ -10,8 +10,8 @@ Aufruf (aus dem WanGP-Ordner, mit dessen venv):
 Geprueft werden die Faelle aus AGENTS.md ("Bilder"): Modus ohne "I", Startbild,
 Endbild, zwei Referenzen, nur Control Image, fake_start_image (On-Demand-Paritaet),
 Fenstermodell, Fallback bei mehreren Startbildern, fehlendes convert_image sowie
-die Bild-Anweisungen (IT2I/IT2V), die Trennung der Klick-Eingaben und die
-Modus-Eingabe (_effective_mode/_split_mode_input).
+die Bild-Anweisungen (IT2I/IT2V), die Trennung der Klick-Eingaben - mit und ohne
+Think-Checkbox - und die Modus-Eingabe (_effective_mode/_split_mode_input).
 """
 
 import sys
@@ -302,21 +302,52 @@ def main():
     )
 
     # 13. Positions-Trennung der Klick-Eingaben (Regler zuerst, dann Bilder).
+    #     Vor den Bildern stehen nur die real moeglichen Regler: Think, Min, Max.
     instance = P.LocalEnhancePlugin()
     instance._think_checkbox = "think"
-    instance._word_preset_field = "preset"
     instance._min_words_field = "min"
     instance._max_words_field = "max"
     instance.image_start = "IMG-START"
     instance.video_prompt_type = "FLAGS"
     controls, images = instance._split_image_inputs(
-        ("think", "preset", "min", "max", "IMG-START", "FLAGS")
+        ("think", "min", "max", "IMG-START", "FLAGS")
     )
     check(
         "Klick-Eingaben werden getrennt",
-        list(controls) == ["think", "preset", "min", "max"]
+        list(controls) == ["think", "min", "max"]
         and images == {"image_start": "IMG-START", "video_prompt_type": "FLAGS"},
         f"-> {controls} / {images}",
+    )
+
+    # 13b. Die eigentliche Staerke der Trennung: WanGP legt die Think-Checkbox
+    #      nur fuer lokale Enhancer an - fehlt sie, haengen die Bilder trotzdem
+    #      richtig, weil von rechts ueber die bekannte Bild-Liste getrennt wird.
+    without_think = P.LocalEnhancePlugin()
+    without_think._min_words_field = "min"
+    without_think._max_words_field = "max"
+    without_think.image_start = "IMG-START"
+    without_think.video_prompt_type = "FLAGS"
+    controls, images = without_think._split_image_inputs(
+        ("min", "max", "IMG-START", "FLAGS")
+    )
+    check(
+        "Trennung ohne Think-Checkbox",
+        list(controls) == ["min", "max"]
+        and images == {"image_start": "IMG-START", "video_prompt_type": "FLAGS"},
+        f"-> {controls} / {images}",
+    )
+
+    #      Mit echten Werten gelesen muss dabei dasselbe herauskommen: kein
+    #      Denken, Min 0, Max 300.
+    numeric_controls, numeric_images = without_think._split_image_inputs(
+        (0, 300, "IMG-START", "FLAGS")
+    )
+    check(
+        "Trennung ohne Think-Checkbox liest die Regler richtig",
+        P.LocalEnhancePlugin._read_controls(numeric_controls) == (False, 0, 300)
+        and numeric_images
+        == {"image_start": "IMG-START", "video_prompt_type": "FLAGS"},
+        f"-> {P.LocalEnhancePlugin._read_controls(numeric_controls)} / {numeric_images}",
     )
 
     # 14. _effective_mode: leerer Live-Wert -> Modell-Default. Ohne eigene
@@ -354,12 +385,12 @@ def main():
     #     den Modus, der Rest bleibt in der Reihenfolge der Verdrahtung.
     mode_instance = P.LocalEnhancePlugin()
     mode_instance.prompt_enhancer = "MODE"
-    mode_value, rest = mode_instance._split_mode_input(("TI", "think", "preset", "min", "max"))
+    mode_value, rest = mode_instance._split_mode_input(("TI", "think", "min", "max"))
     empty_value, empty_rest = mode_instance._split_mode_input(())
     check(
         "_split_mode_input zieht den Modus ab",
         mode_value == "TI"
-        and tuple(rest) == ("think", "preset", "min", "max")
+        and tuple(rest) == ("think", "min", "max")
         and (empty_value, tuple(empty_rest)) == (None, ())
         and len(mode_instance._mode_components()) == 1,
         f"-> {mode_value!r} / {rest}",
@@ -369,11 +400,11 @@ def main():
     #     ohne Enhancer-Zeile darf die Regler nicht um eins verschieben.
     plain_instance = P.LocalEnhancePlugin()
     plain_instance.prompt_enhancer = None
-    mode_value, rest = plain_instance._split_mode_input(("think", "preset"))
+    mode_value, rest = plain_instance._split_mode_input(("think", "min"))
     check(
         "_split_mode_input ohne Komponente laesst alles stehen",
         mode_value is None
-        and tuple(rest) == ("think", "preset")
+        and tuple(rest) == ("think", "min")
         and plain_instance._mode_components() == [],
         f"-> {mode_value!r} / {rest}",
     )
