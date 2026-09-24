@@ -1,0 +1,115 @@
+# AGENTS.md — WanGP-Plugin „Enhance: OpenCode / Bonsai 27B"
+
+Kurzfassung für jede Session in diesem Repo. Was der Code tut, steht im Code —
+hier steht nur, was man sonst mühsam herausfinden muss.
+
+## Was das Plugin tut
+
+Zwei Knöpfe neben WanGPs „Enhance Prompt":
+
+- **OpenCode** — verbessert remote über die konfigurierte Engine
+  (`process_prompt_enhancer()` erkennt am Engine-Namen, dass remote gearbeitet
+  wird, `wgp.py:6409`).
+- **Local 27B** — lädt Qwen3.8-27B lokal (`enhancer_enabled=5`, `gguf_ptq1`) und
+  gibt den VRAM danach wieder frei.
+
+Drei Regler, alle gelten für **beide** Knöpfe:
+
+- **Think** — WanGPs eigene Checkbox (Zeile 1). Gesetzt: lokal `K` im
+  Enhancer-Modus (`wgp.py:6451` → `thinking_enabled`), remote der höchste
+  `reasoning_effort` des Modells als `variant` (`opencode_backend.py:226`).
+  Ungesetzt: kein Denken lokal, niedrigster Level remote (Anbieter haben kein
+  echtes „aus").
+- **Min/Max words** (Zeile 2, neben dem Modus-Dropdown) — ersetzen die feste
+  150-Wort-Grenze in WanGPs Anweisungen
+  (`shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56`):
+  beide gesetzt → „Keep between MIN and MAX words.", nur Max → wie bisher,
+  nur Min → „Write at least MIN words.", beide 0 → Sätze entfernt.
+  Das Token-Budget wächst mit (`_output_token_budget`), sonst schneidet das
+  512-Token-Limit den Prompt ab.
+
+## Zwei Klone — die wichtigste Regel
+
+| Ort | Rolle |
+|---|---|
+| `~/git/wan2gp-local-enhance` | **Quelle der Wahrheit** — hier editieren, committen, pushen |
+| `~/git/Wan2GP/plugins/wan2gp-local-enhance` | **wird von WanGP geladen** (eigener Klon, Eintrag `installed_remote_plugins`) |
+
+Nie im geladenen Klon editieren — das nächste Update überschreibt es. Genau diese
+Doppelablage hat schon zweimal zu Fehldiagnosen geführt.
+
+**Ablauf:** pushen → *Update* in WanGP auslösen → **WanGP neu starten**. Plugins
+werden beim Start einmal importiert; ein laufender Prozess behält den alten Code.
+Der Updater ist ein reines `origin.pull()` (`shared/utils/plugins.py:1327`) und
+scheitert an einem dirty working tree — den geladenen Klon also sauber halten.
+
+## Stand
+
+- `212cb3e` — zwei Knöpfe, Tooltips, Remote-Fix (das Plugin liefert
+  Ersatz-Anweisungen, weil die meisten Modelle keine definieren)
+- `6fb5862` — Think-Checkbox gilt für beide Knöpfe (läuft)
+- `6d48958` — Feld „Max words" (ein Feld, ersetzt durch Min/Max)
+- **Min/Max-Umbau: im Arbeitsverzeichnis fertig und getestet, aber noch NICHT
+  committet/gepusht.** Betrifft `plugin.py` (Min/Max auf Zeile 2) und diese Datei.
+
+## Technisches, das man sonst neu herausfinden muss
+
+- **Nur ein lokaler LLM-Slot:** `resolve_role_engine()` ignoriert die Rolle. Das
+  Plugin stellt `llm_engines.deepy` und `enhancer_enabled` nur für den Klick um
+  und restauriert danach exakt.
+- **Aufruf:** `process_prompt_enhancer(model_type, model_def, mode, [prompt],
+  None, None, is_image, audio_only, -1,
+  prompt_enhancer_instructions=…, text_encoder_max_tokens=…)`.
+- **Startreihenfolge:** `create_inline_button` (`wgp.py:13628`) läuft **vor** den
+  Plugin-Tabs (`wgp.py:13976`). Deshalb sitzen die Regler in Zeile 1/2 und der
+  Tab-Knopf wird in `create_ui()` nachträglich mitverdrahtet.
+- **`insert_after`** verschiebt nur das **zuletzt erzeugte** Kind
+  (`shared/utils/plugins.py:1659`). Nichts direkt in `parent` erzeugen, sonst
+  wandert das Falsche.
+- **Gradio-Fallen (alle live verifiziert):**
+  - `gr.Number`/`gr.Checkbox` werden in einen `gr.Form` gruppiert, und zwar pro
+    Lauf **aufeinanderfolgender** Formularfelder. Ein `gr.HTML` dazwischen
+    zerreisst den Lauf → **mehrere** Wrapper. Der Code löst deshalb alle Wrapper
+    in einer Schleife auf (`ours = {id(child) …}`).
+  - Beim Verschieben aus der Reihe in den Dropdown-Container **zuerst aus
+    `button_row.children` entfernen**, sonst steht die Komponente in zwei Eltern
+    gleichzeitig (im Layout doppelt sichtbar).
+  - Gradio setzt `width:100%` auf die Kinder; die Reihe und der Dropdown-Container
+    brauchen `width:auto !important; flex:0 0 auto !important`.
+  - Gradios eigenes Label stapelt über der Eingabe → in einer Reihe unbrauchbar.
+    Beschriftungen sind deshalb eigene `gr.HTML`-Elemente mit `show_label=False`.
+  - Die Regler werden **nach Typ** ausgelesen (`*controls`), weil die
+    Think-Checkbox fehlen kann. Zahlen kommen in fester Reihenfolge: erst Min,
+    dann Max.
+- **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
+  (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
+  Defaults: Min 0 (= keine Untergrenze), Max 150.
+- Ist Min > Max, werden beide getauscht.
+
+## Prüfen
+
+- Syntax/Import (WanGP-venv, aus dem WanGP-Ordner):
+  `cd ~/git/Wan2GP && ./.wan2gp/bin/python -c "import sys; sys.path.insert(0,'/home/stefan/git/wan2gp-local-enhance'); import plugin; print(plugin.PlugIn_Name)"`
+- UI ohne Start: in einem `gr.Blocks()` eine Row mit Button + Dropdown + Checkbox
+  bauen, `LocalEnhancePlugin` mit `state`/`prompt` bestücken,
+  `with parent: row = p.create_inline_button()`, dann die `insert_after`-Mechanik
+  nachstellen (`pop(-1)` + `insert(target_index+1, …)`). Erwartung:
+  Zeile 1 = `[HTML, Button, Button, Checkbox]`,
+  Zeile 2 (der `Form` mit dem Dropdown) = `[Dropdown, HTML, Number, HTML, Number]`,
+  und im Layout darf keine Komponente doppelt eingetragen sein.
+- End-to-End (WanGP läuft): `http://127.0.0.1:7860/config` abrufen — die
+  Dependencies von `local_enhance_local_btn` und `local_enhance_remote_btn`
+  müssen **5 Inputs** haben (`state, prompt, Think, Min, Max`).
+- Schreibzugriffe außerhalb des Workspace (WanGP-Klon, WanGP-Repo) brauchen in der
+  Sandbox `danger-full-access`.
+
+## Offen
+
+- Modelle mit **eigenen** Enhancer-Anweisungen: dort wirken Min/Max nicht, weil
+  `model_def` gegen die übergebenen Anweisungen gewinnt (`wgp.py:6476`).
+- Das Denk-Budget der 27B ist hart auf **2000 Tokens** begrenzt
+  (`shared/prompt_enhancer/qwen35_text.py:64`) — es gibt keinen Config-Key dafür.
+- Der Tab-Knopf hat keine eigenen Widgets; er nutzt die Regler aus Zeile 1/2.
+- Min/Max-Umbau ist noch nicht committet und noch nicht in WanGP geladen
+  (Stand dort: `6fb5862` in der laufenden Instanz, `6d48958` im geladenen Klon
+  wäre nach einem Update aktiv).
