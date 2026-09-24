@@ -1,4 +1,4 @@
-"""Vorschau der Enhancer-Zeile - ohne WanGP zu starten.
+"""Vorschau der Enhancer-Zeile und des Plugin-Tabs - ohne WanGP zu starten.
 
 Baut genau die Umgebung nach, in der create_inline_button() laeuft:
 
@@ -10,6 +10,13 @@ PluginManager vor der Insert-Verarbeitung auf das Plugin gesetzt
 (shared/utils/plugins.py:1626-1627 vor 1649-1660).
 
 Danach dieselbe insert_after-Mechanik wie shared/utils/plugins.py:1659.
+
+Zum Schluss der Plugin-Tab: create_ui() laeuft laut Host NACH
+create_inline_button() (wgp.py:13628 vor 13976). Der Nachbau oeffnet dafuer
+denselben Container (gr.Column mit einer gr.Row) und ruft daraus
+_attach_word_fields() auf - die beiden Wort-Regler wandern damit aus der
+Knopfreihe in den Tab.
+
 Das Skript gibt den Komponentenbaum, die Zahl der Klick-Eingaben und die URL
 der Vorschau aus. Die Vorschau laeuft, bis der Prozess beendet wird.
 
@@ -18,9 +25,7 @@ Aufruf (aus dem WanGP-Ordner, mit dessen venv):
     ./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py [port]
     # http://127.0.0.1:7899/?__theme=dark
 
-PREVIEW_MIN/PREVIEW_MAX setzen die Startwerte der Wortgrenze: der Default
-(0/1500) ergibt den Custom-Fall mit sichtbaren Zahlenfeldern, PREVIEW_MAX=150
-den Preset-Fall ("short - 150 words", Felder versteckt).
+PREVIEW_MIN/PREVIEW_MAX setzen die Startwerte der Wortgrenze (Default 0/1500).
 
 Screenshot ohne Browserfenster (aus dem Plugin-Ordner):
 
@@ -49,8 +54,7 @@ import gradio as gr  # noqa: E402
 import plugin as P  # noqa: E402
 
 # _word_range() liest die Grenzen aus __main__.server_config; hier stehen
-# Beispielwerte (0 = keine Untergrenze). Ueber PREVIEW_MIN/PREVIEW_MAX laesst
-# sich ein Preset statt "custom" einstellen, z. B. PREVIEW_MAX=150.
+# Beispielwerte (0 = keine Untergrenze).
 server_config = {
     "local_enhance_min_words": int(os.environ.get("PREVIEW_MIN", 0)),
     "local_enhance_max_words": int(os.environ.get("PREVIEW_MAX", 1500)),
@@ -111,8 +115,15 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
 
     # insert_after: das zuletzt erzeugte Kind hinter den Zielknopf schieben
     target_index = parent.children.index(builtin)
-    newly_added = parent.children.pop(-1)
-    parent.children.insert(target_index + 1, newly_added)
+    button_row = parent.children.pop(-1)
+    parent.children.insert(target_index + 1, button_row)
+
+    # Der Plugin-Tab. create_ui() laeuft beim Host erst nach
+    # create_inline_button() (wgp.py:13628 vor 13976); genau dort holt
+    # _attach_word_fields() die beiden Wort-Regler aus der Knopfreihe hierher.
+    with gr.Column() as tab:
+        with gr.Row() as word_row:
+            p._attach_word_fields(word_row)
 
     css = getattr(P, "_UI_CSS", "")
     # WanGP haelt .btn_centered in shared/gradio/ui_studio.css schmal; ohne diese
@@ -124,6 +135,24 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         "flex:0 0 auto !important;min-width:0 !important;width:max-content !important;}"
     )
     gr.HTML("<style>" + css + "</style>")
+
+    def _types(container):
+        return [
+            type(child).__name__
+            for child in (getattr(container, "children", None) or [])
+        ]
+
+    def _numbers(container):
+        """Alle gr.Number-Felder unterhalb eines Containers, auch durch Gradios
+        eigenen gr.Form-Wrapper hindurch (der entsteht beim Schliessen des
+        Row-Kontexts aus aufeinanderfolgenden Formularfeldern)."""
+        found = []
+        for child in getattr(container, "children", None) or []:
+            if isinstance(child, gr.Number):
+                found.append(child)
+            else:
+                found.extend(_numbers(child))
+        return found
 
     def _dump(component, depth=0):
         classes = getattr(component, "elem_classes", None) or []
@@ -139,8 +168,78 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         for child in getattr(component, "children", None) or []:
             _dump(child, depth + 1)
 
-    print("=== Komponentenbaum ===")
+    def _walk(component, seen, duplicates):
+        key = id(component)
+        if key in seen:
+            duplicates.append(component)
+            return
+        seen.add(key)
+        for child in getattr(component, "children", None) or []:
+            _walk(child, seen, duplicates)
+
+    print("=== Komponentenbaum (fremde Zeile) ===")
     _dump(parent)
+    print("=== Komponentenbaum (Plugin-Tab) ===")
+    _dump(tab)
+
+    # Die fremde Formularzeile ist der gr.Form, in dem WanGPs versteckter
+    # Modus-Text liegt. Darin darf jetzt nur noch das Modus-Dropdown stehen.
+    form_row = next(
+        (
+            child
+            for child in (getattr(parent, "children", None) or [])
+            if child is not hidden
+            and any(
+                item is hidden
+                for item in (getattr(child, "children", None) or [])
+            )
+        ),
+        None,
+    )
+    mode_dropdown = next(
+        (
+            child
+            for child in (getattr(form_row, "children", None) or [])
+            if isinstance(child, gr.Dropdown)
+        ),
+        None,
+    )
+
+    print("=== Aufbau ===")
+    print("Zeile 1:", _types(button_row))
+    print(
+        "Fremde Formularzeile:",
+        _types(form_row) if form_row is not None else "nicht gefunden",
+    )
+    print("Tab-Wortzeile:", _types(word_row))
+    print(
+        "Wort-Regler im Tab:",
+        [
+            f"{type(field).__name__}({getattr(field, 'label', None)!r})"
+            for field in _numbers(word_row)
+        ],
+    )
+    print(
+        "Modus-Dropdown show_label:",
+        getattr(mode_dropdown, "show_label", None),
+        "(erwartet True)",
+    )
+
+    seen, duplicates = set(), []
+    _walk(demo, seen, duplicates)
+    print("=== Layout-Check ===")
+    print("Komponenten im Baum:", len(seen))
+    if duplicates:
+        print(
+            "DUPLIKATE:",
+            [
+                f"{type(c).__name__} id={getattr(c, 'elem_id', None)!r}"
+                for c in duplicates
+            ],
+        )
+    else:
+        print("Duplikate: keine")
+
     mode_components = p._mode_components()
     controls = mode_components + p._control_components()
     image_components = p._image_components()
@@ -154,15 +253,20 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         "image-inputs:", len(image_components),
         "-> local click-inputs:", 2 + len(controls) + len(image_components),
     )
-    # Erwartung (AGENTS.md, "Pruefen"): Modus-Komponente vorhanden, also 7 Inputs
-    # fuer den Remote-Knopf und 7 + Anzahl der Bild-Eingaben fuer den lokalen.
+    # Erwartung: Zeile 1 = [HTML, Button, Button, Checkbox], die fremde
+    # Formularzeile = [Textbox(Modus), Dropdown], die Regler = [Textbox(Modus),
+    # Checkbox, Number, Number], also 6 Klick-Eingaben fuer den Remote-Knopf und
+    # 6 + Anzahl der Bild-Eingaben fuer den lokalen.
     print(
         "=== Erwartung ===",
         f"mode-components-at-wiring={mode_components_at_wiring} (erwartet 1),",
-        f"remote={2 + len(controls)} (erwartet 7),",
+        f"remote={2 + len(controls)} (erwartet 6),",
         f"local={2 + len(controls) + len(image_components)}"
-        f" (erwartet 7 + {len(image_components)} Bild-Eingaben)",
+        f" (erwartet 6 + {len(image_components)} Bild-Eingaben)",
     )
+
+    if duplicates:
+        sys.exit(2)
 
 demo.launch(
     server_name="127.0.0.1", server_port=port, quiet=True, prevent_thread_lock=True,

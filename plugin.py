@@ -66,18 +66,6 @@ _WORD_LIMIT_MAX = 2000
 _MIN_WORDS_KEY = "local_enhance_min_words"
 _MAX_WORDS_KEY = "local_enhance_max_words"
 _WORD_LIMIT_KEY = "local_enhance_word_limit"   # Altbestand, Fallback fuer Max
-# Presets des Wortzahl-Dropdowns in Zeile 2: (Schluessel, Anzeige, (Min, Max)).
-# Presets setzen Min bewusst auf 0 - eine Untergrenze gibt es nur im Custom-Fall,
-# wo die beiden kleinen Zahlenfelder erscheinen.
-_WORD_PRESETS = (
-    ("off", "no limit", (0, 0)),
-    ("150", "short - 150 words", (0, 150)),
-    ("300", "medium - 300 words", (0, 300)),
-    ("500", "long - 500 words", (0, 500)),
-)
-_WORD_PRESET_CUSTOM = "custom"
-_WORD_PRESET_CUSTOM_LABEL = "custom (min/max)"
-_WORD_PRESET_BY_KEY = {key: words for key, _label, words in _WORD_PRESETS}
 
 # Bild-Eingaben, die LIVE aus den Komponenten kommen muessen: der Settings-
 # Snapshot (state["all_settings"]) wird nur von save_inputs()-Fluessen
@@ -121,30 +109,10 @@ _UI_CSS = (
     "#local_enhance_row .local-enhance-label,"
     "#local_enhance_row .cbx_centered{"
     "width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}"
-    # Die Modus-Zeile: der gr.Form hinter der Knopfreihe, in dem das Dropdown,
-    # das Wortzahl-Preset und die beiden Zahlenfelder sitzen.
+    # Die Modus-Zeile: der gr.Form hinter der Knopfreihe, in dem nur noch das
+    # Modus-Dropdown sitzt. Die beiden Wort-Regler stehen im Plugin-Tab und
+    # brauchen hier keine eigenen Regeln mehr.
     "#local_enhance_row + .form{flex-basis:100% !important;}"
-    # Das Preset-Dropdown bleibt schmal und nimmt nur seine Textbreite.
-    "#local_enhance_row + .form > .local-enhance-preset{"
-    "width:190px !important;max-width:190px !important;"
-    "flex:0 0 190px !important;min-width:0 !important;}"
-    # Min/Max bleiben winzig: Gradio setzt width:100% und min_width (Default
-    # 160px) auf jedes Kind, beides muss weg. 84px passt auch fuer vierstellige
-    # Werte (maximal erlaubt sind 2000).
-    #
-    # Hoehe, Schrift und vertikales Padding der Eingaben bleiben Gradios
-    # Vorgabe: eine eigene Regel dort macht die Zahlenfelder niedriger als die
-    # Dropdowns daneben und zerreisst die gemeinsame Grundlinie. Nur horizontal
-    # darf es enger zugehen, sonst schneidet "1500" in den 84px ab
-    # (gemessen: 5px Ueberlauf).
-    # Die Caption ("Min"/"Max") wird nicht angefasst - sie ist ein
-    # <span data-testid="block-info"> im Kopf des Blocks, nicht das <label> des
-    # Eingabe-Wrappers.
-    "#local_enhance_row + .form > .local-enhance-words{"
-    "width:84px !important;max-width:84px !important;"
-    "flex:0 0 84px !important;min-width:0 !important;}"
-    "#local_enhance_row + .form > .local-enhance-words input{"
-    "padding-left:4px !important;padding-right:4px !important;}"
 )
 _WORD_KEEP_SENTENCE = "Keep within 150 words."
 _WORD_LIMIT_SENTENCE = "Do not exceed the 150 word limit!"
@@ -422,30 +390,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             config[_MIN_WORDS_KEY] = int(min_words)
             config[_MAX_WORDS_KEY] = int(max_words)
 
-    @classmethod
-    def _preset_choices(cls):
-        """Dropdown-Optionen: (Anzeige, Schluessel) plus Custom-Eintrag."""
-        return [(label, key) for key, label, _words in _WORD_PRESETS] + [
-            (_WORD_PRESET_CUSTOM_LABEL, _WORD_PRESET_CUSTOM)
-        ]
-
-    @classmethod
-    def _preset_key(cls, min_words, max_words):
-        """Passender Preset-Schluessel, sonst 'custom'."""
-        pair = (int(min_words), int(max_words))
-        for key, _label, words in _WORD_PRESETS:
-            if words == pair:
-                return key
-        return _WORD_PRESET_CUSTOM
-
-    @classmethod
-    def _preset_range(cls, preset_key, min_value=None, max_value=None):
-        """Preset-Schluessel in (Min, Max) uebersetzen; Custom nutzt die Felder."""
-        key = str(preset_key or "")
-        if key in _WORD_PRESET_BY_KEY:
-            return _WORD_PRESET_BY_KEY[key]
-        return min_value, max_value
-
     @staticmethod
     def _apply_word_limit(text, min_words, max_words):
         """Die festen 150-Wort-Saetze durch die gewaehlten Grenzen ersetzen."""
@@ -491,22 +435,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     @classmethod
     def _read_controls(cls, controls):
-        """Think-Checkbox, Wortzahl-Preset und Min/Max aus den Eingaben lesen.
+        """Think-Checkbox und Min/Max aus den Klick-Eingaben lesen.
 
         Die Widgets koennen fehlen (WanGP legt die Think-Checkbox nur fuer lokale
-        Enhancer an), deshalb wird nach Typ ausgewertet: bool = Think, str =
-        Preset-Schluessel, Zahlen = die beiden Custom-Felder (erst Min, dann Max).
-        Ein Preset gewinnt gegen die Felder, denn nur im Custom-Fall sind sie
-        sichtbar und gemeint.
+        Enhancer an), deshalb wird nach Typ ausgewertet: bool = Think, Zahlen =
+        die beiden Wort-Regler (erst Min, dann Max). Der Modus-String ist vorher
+        mit _split_mode_input() abgezogen, hier kommt also keiner mehr an.
         """
         think = False
-        preset = None
         numbers = []
         for value in controls:
             if isinstance(value, bool):        # vor int pruefen: bool ist int
                 think = value
-            elif isinstance(value, str):
-                preset = value
             elif (
                 isinstance(value, (list, tuple))
                 and len(value) == 2
@@ -525,19 +465,69 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             min_value, max_value = None, numbers[0]
         else:
             min_value = max_value = None
-        min_value, max_value = cls._preset_range(preset, min_value, max_value)
         min_words, max_words = cls._word_range(min_value, max_value)
         return think, min_words, max_words
 
     def _control_components(self):
-        """Die optionalen Regler: Think, Wortzahl-Preset, Min, Max."""
+        """Die Regler, die fuer beide Knoepfe gelten: Think, Min, Max."""
         fields = (
             getattr(self, "_think_checkbox", None),
-            getattr(self, "_word_preset_field", None),
             getattr(self, "_min_words_field", None),
             getattr(self, "_max_words_field", None),
         )
         return [field for field in fields if field is not None]
+
+    def _attach_word_fields(self, target):
+        """Die beiden Wort-Regler in den Plugin-Tab umhaengen.
+
+        Sie entstehen in create_inline_button() - die Knoepfe in Zeile 1
+        brauchen sie dort schon als Klick-Eingaben - und parken bis create_ui()
+        in der Knopfreihe (self._word_fields_home). create_ui() laeuft laut Host
+        erst danach (wgp.py:13628 vor 13976) und holt sie hierher.
+        """
+        fields = [
+            field
+            for field in (
+                getattr(self, "_min_words_field", None),
+                getattr(self, "_max_words_field", None),
+            )
+            if field is not None
+        ]
+        if target is None or not fields:
+            return fields
+
+        def _current_home(field):
+            """Container, der das Feld wirklich in children fuehrt (sonst None).
+
+            component.parent ist nach dem Auspacken aus dem gr.Form-Wrapper
+            nicht mehr verlaesslich - deshalb der Blick in children und der
+            Rueckfall auf den geparkten Container.
+            """
+            candidates = (
+                getattr(field, "parent", None),
+                getattr(self, "_word_fields_home", None),
+            )
+            for candidate in candidates:
+                if candidate is not None and any(
+                    child is field for child in (getattr(candidate, "children", None) or [])
+                ):
+                    return candidate
+            return None
+
+        for field in fields:
+            try:
+                # Erst aus dem alten Elterncontainer entfernen, dann beim
+                # Zielcontainer anhaengen: bleibt das Entfernen aus, steht die
+                # Komponente in zwei Eltern und erscheint doppelt im Layout.
+                home = _current_home(field)
+                if home is not None:
+                    home.children.remove(field)
+                if not any(child is field for child in (getattr(target, "children", None) or [])):
+                    target.children.append(field)
+                field.parent = target
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{PlugIn_Name}] Could not attach the word-limit fields: {exc}")
+        return fields
 
     def _image_components(self):
         """Die aufgeloesten Bild-Komponenten in fester Reihenfolge.
@@ -567,37 +557,30 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         """Klick-Eingaben in (Regler, Bilder) trennen.
 
         Gradio liefert alles positional: erst die Regler, dann die Bilder. Die
-        Reglerlaenge ist stabil (dieselbe Liste wie beim Verdrahten).
+        Bilder sind der bekannte Suffix (dieselbe Liste wie beim Verdrahten),
+        deshalb wird von rechts getrennt - die Grenze bleibt so auch dann
+        richtig, wenn links ein Regler fehlt.
         """
-        controls_count = len(self._control_components())
-        controls, images = values[:controls_count], values[controls_count:]
+        values = tuple(values or ())
         names = [
             name for name in _IMAGE_INPUT_NAMES if getattr(self, name, None) is not None
         ]
-        return controls, dict(zip(names, images))
+        if not names:
+            return values, {}
+        controls_count = max(0, len(values) - len(names))
+        return values[:controls_count], dict(zip(names, values[controls_count:]))
 
     def _split_mode_input(self, values):
         """Modus-Eingabe von den uebrigen Klick-Eingaben abziehen.
 
         Steht die Modus-Komponente in der Verdrahtung, ist sie die erste
         Eingabe nach (state, text) und muss vor _split_image_inputs() weg - sonst
-        liest _read_controls() den Modus-String als Wortzahl-Preset und die
-        Eingaben verschieben sich um eins.
+        verschieben sich die Eingaben um eins.
         """
         values = tuple(values or ())
         if self._mode_components() and values:
             return values[0], values[1:]
         return None, values
-
-    @staticmethod
-    def _on_word_preset_change(preset_key):
-        """Custom zeigt die beiden Zahlenfelder, jedes Preset versteckt sie.
-
-        Die Felder behalten dabei ihren Wert: Wer zurueck auf Custom schaltet,
-        findet dort seine zuletzt eingegebenen Grenzen wieder.
-        """
-        custom = str(preset_key or "") == _WORD_PRESET_CUSTOM
-        return gr.update(visible=custom), gr.update(visible=custom)
 
     @classmethod
     def _fallback_instructions(cls, is_image, audio_only, min_words=None, max_words=None, with_images=False):
@@ -817,7 +800,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def enhance(self, state, text, *values):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
 
-        `values` sind erst der Modus, dann die Regler (Think/Preset/Min/Max),
+        `values` sind erst der Modus, dann die Regler (Think/Min/Max),
         danach die Bild-Eingaben - siehe _split_mode_input() und
         _split_image_inputs().
         """
@@ -1102,7 +1085,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         erkennt an der Engine, dass remote gearbeitet wird (wgp.py:6409), und
         ueberspringt den lokalen Loader (local_runtime, wgp.py:6505).
 
-        `values` sind erst der Modus, dann die Regler (Think/Preset/Min/Max).
+        `values` sind erst der Modus, dann die Regler (Think/Min/Max).
         """
         mode_value, values = self._split_mode_input(values)
         think, min_words, max_words = self._read_controls(values)
@@ -1249,9 +1232,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "rewrites the prompt instead of asking a question.\n"
                 "Think: sends the highest reasoning level of the selected model;\n"
                 "unticked it sends the lowest one - providers have no real off.\n"
-                "Words: presets no limit / 150 / 300 / 500 words;\n"
-                "'custom' reveals the Min/Max fields (0 removes that bound,\n"
-                "presets set min to 0)."
+                "Words: the Min words / Max words fields at the top of the\n"
+                "plugin tab apply to this click (0 removes that bound)."
             ),
             "local_enhance_local_btn": (
                 f"{self._button_label()} - enhance on this GPU\n"
@@ -1261,9 +1243,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "30-60 s. No remote tokens are used.\n"
                 "Think: Qwen reasons before rewriting, with its own thinking\n"
                 "budget; unticked it answers straight away.\n"
-                "Words: presets no limit / 150 / 300 / 500 words;\n"
-                "'custom' reveals the Min/Max fields and the token budget\n"
-                "grows with max (0 removes that bound, presets set min to 0).\n"
+                "Words: the Min words / Max words fields at the top of the\n"
+                "plugin tab apply to this click and the token budget grows\n"
+                "with max (0 removes that bound).\n"
                 "Images: in mode 'Based on Text Prompt and Images' the selected\n"
                 "start/end/reference images are read by the vision part of the\n"
                 "model; every other mode stays text-only."
@@ -1293,8 +1275,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     def create_inline_button(self):
         """Zeile 1: Beschriftung, beide Knoepfe und die Think-Checkbox.
-        Zeile 2: das Modus-Dropdown, daneben das Wortzahl-Preset und - nur bei
-        "custom" - die beiden kleinen Felder "min:" / "max:".
+        Zeile 2: nur noch das Modus-Dropdown des Hosts.
+
+        Die beiden Wort-Regler (Min words / Max words) entstehen hier, weil die
+        Knoepfe sie schon jetzt als Klick-Eingaben brauchen. Angezeigt werden sie
+        aber im Plugin-Tab: create_ui() laeuft laut Host erst nach dieser
+        Funktion (wgp.py:13628 vor 13976) und holt sie mit
+        _attach_word_fields() dorthin.
 
         run_component_insertion_and_setup() verschiebt nur das ZULETZT erzeugte
         Kind an die Zielposition (shared/utils/plugins.py:1659). Diese Reihe ist
@@ -1312,9 +1299,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return gr.Button(self._button_label(), visible=False)
 
         remote_label = self._remote_button_label()
+        # Startwerte der beiden Felder kommen nur noch aus der Config
+        # (_word_range), Presets gibt es nicht mehr.
         min_words, max_words = self._word_range()
-        preset_key = self._preset_key(min_words, max_words)
-        custom_words = preset_key == _WORD_PRESET_CUSTOM
 
         with gr.Row(elem_id="local_enhance_row") as button_row:
             gr.HTML(
@@ -1331,28 +1318,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 f"{self._button_label()} \u24d8", size="sm", scale=0, min_width=0,
                 elem_id="local_enhance_local_btn", elem_classes="btn_centered",
             )
-            # Wortgrenze: ein Preset-Dropdown (no limit / short / medium / long)
-            # und dahinter die beiden winzigen Zahlenfelder fuer freie Werte.
-            # Die Felder sind nur bei "custom" sichtbar; umgeschaltet wird per
-            # change() weiter unten. Alle drei wandern gleich in den Container
-            # des Modus-Dropdowns (Zeile 2); die Breiten begrenzt das CSS.
-            preset_field = gr.Dropdown(
-                choices=self._preset_choices(),
-                value=preset_key,
-                label="Words",
-                show_label=True,
-                scale=0,
-                min_width=0,
-                elem_id="local_enhance_word_preset",
-                elem_classes=["local-enhance-preset"],
-            )
-            # Gradios eigene Caption sitzt ueber der Eingabe - ein zusaetzliches
-            # HTML-Element waere nur Ballast.
+            # Wortgrenze: die beiden Zahlenfelder fuer Min und Max. Sie entstehen
+            # hier, weil die Klick-Verdrahtung weiter unten sie schon braucht -
+            # angezeigt werden sie aber nicht in Zeile 1, sondern ganz oben im
+            # Plugin-Tab: _attach_word_fields() holt sie in create_ui() dorthin.
+            # Bis dahin parken sie in dieser Knopfreihe.
             min_field = gr.Number(
                 value=min_words,
-                label="Min",
+                label="Min words",
                 show_label=True,
-                visible=custom_words,
                 precision=0,
                 minimum=0,
                 maximum=_WORD_LIMIT_MAX,
@@ -1360,13 +1334,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 scale=0,
                 min_width=0,
                 elem_id="local_enhance_min_words",
-                elem_classes=["local-enhance-words"],
             )
             max_field = gr.Number(
                 value=max_words,
-                label="Max",
+                label="Max words",
                 show_label=True,
-                visible=custom_words,
                 precision=0,
                 minimum=0,
                 maximum=_WORD_LIMIT_MAX,
@@ -1374,18 +1346,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 scale=0,
                 min_width=0,
                 elem_id="local_enhance_max_words",
-                elem_classes=["local-enhance-words"],
             )
-            words_children = (preset_field, min_field, max_field)
-
-        # Preset umschalten: "custom" zeigt die beiden Felder, jedes Preset
-        # versteckt sie wieder.
-        preset_field.change(
-            fn=self._on_word_preset_change,
-            inputs=[preset_field],
-            outputs=[min_field, max_field],
-            show_progress="hidden",
-        )
+            words_children = (min_field, max_field)
 
         # Die Regler aus ihrem gr.Form-Wrapper loesen: Gradio gruppiert
         # aufeinanderfolgende Formularfelder, sie stecken also gemeinsam in einem
@@ -1404,6 +1366,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     button_row.children.remove(candidate)
         except Exception as exc:  # noqa: BLE001
             print(f"[{PlugIn_Name}] Could not unwrap the word-limit fields: {exc}")
+
+        # Nach dem Auspacken haengen die Felder in keinem Container mehr. Sie
+        # kommen zurueck in die Knopfreihe: _attach_word_fields() braucht einen
+        # bekannten Elterncontainer, aus dem es sie entfernen kann, und bis
+        # create_ui() laeuft, ist das hier ihr einziger. Beim Umzug in den Tab
+        # werden sie wieder entfernt - sichtbar sind sie in Zeile 1 also nie.
+        self._word_fields_home = button_row
+        try:
+            for child in words_children:
+                if not any(existing is child for existing in button_row.children):
+                    button_row.children.append(child)
+                child.parent = button_row
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Could not park the word-limit fields: {exc}")
 
         parent = getattr(button_row, "parent", None)
         think_checkbox = None
@@ -1445,9 +1421,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 except Exception as exc:  # noqa: BLE001
                     print(f"[{PlugIn_Name}] Could not move the Think checkbox: {exc}")
 
-        # Min/Max neben das Modus-Dropdown: so bleibt Zeile 1 genau so, wie sie
-        # war. Der Zielcontainer ist der gr.Form, in dem die Think-Checkbox lag -
-        # darin steckt das Dropdown. Fehlt er, wird er ueber das Dropdown gesucht.
+        # Den Container des Modus-Dropdowns nur noch suchen, um WanGPs Caption
+        # wieder einzuschalten - angehaengt wird dort nichts mehr. Der Container
+        # ist der gr.Form, in dem die Think-Checkbox lag; fehlt er, wird er ueber
+        # das Dropdown gesucht.
         if dropdown_container is None and parent is not None:
             dropdown_container = next(
                 (
@@ -1466,8 +1443,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             # beschrifteten Regler (live gemessen). Die Caption ist WanGPs eigene,
             # wir schalten sie nur ein. Ein Modellwechsel setzt sie nicht zurueck:
             # refresh_prompt_enhancer_labels schickt nur choices (wgp.py:10898).
-            # Wichtig: vor dem Anhaengen der eigenen Regler suchen, sonst findet
-            # diese Suche das Preset-Dropdown.
             mode_dropdown = next(
                 (
                     child
@@ -1478,21 +1453,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             )
             if mode_dropdown is not None:
                 mode_dropdown.show_label = True
-            try:
-                for child in words_children:
-                    # Die Felder haengen noch direkt in der Knopfreihe; ohne
-                    # dieses Entfernen staenden sie in zwei Eltern gleichzeitig.
-                    if any(existing is child for existing in button_row.children):
-                        button_row.children.remove(child)
-                    dropdown_container.children.append(child)
-                    child.parent = dropdown_container
-            except Exception as exc:  # noqa: BLE001
-                print(f"[{PlugIn_Name}] Could not attach the word-limit fields: {exc}")
 
         # Fuer den Tab-Knopf bereithalten: create_ui() laeuft erst nach dieser
-        # Funktion (wgp.py:13628 vor 13976) und kann die Regler mitverdrahten.
+        # Funktion (wgp.py:13628 vor 13976) und verdrahtet dieselben Regler; die
+        # beiden Wort-Regler holt es dort mit _attach_word_fields() in den Tab.
         self._think_checkbox = think_checkbox
-        self._word_preset_field = preset_field
         self._min_words_field = min_field
         self._max_words_field = max_field
 
@@ -1548,7 +1513,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
         # Fuer die Statuszeile dieselbe Trennung wie in enhance(): erst den
-        # Modus abziehen, sonst liest _read_controls() ihn als Preset.
+        # Modus abziehen, sonst verschieben sich die Eingaben um eins.
         _mode_value, values = self._split_mode_input(values)
         controls, _live_images = self._split_image_inputs(values)
         think, min_words, max_words = self._read_controls(controls)
@@ -1572,14 +1537,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             current_prompt = ""
 
         with gr.Column():
+            # Ganz oben im Tab stehen die beiden Wort-Regler. Sie gehoeren zu
+            # beiden Knoepfen in Zeile 1 und wandern hierher, nachdem
+            # create_inline_button() sie erzeugt und verdrahtet hat.
+            with gr.Row() as word_row:
+                self._attach_word_fields(word_row)
             gr.HTML(
                 "<b>Enhance: OpenCode / Bonsai 27B</b><br>"
                 "Adds two buttons next to <i>Enhance Prompt</i>: "
                 "<b>OpenCode</b> enhances remotely through the configured engine, "
                 "<b>Local 27B</b> enhances on this GPU with Qwen3.8-27B. "
                 "Both write the result straight into the prompt field. "
-                "<b>Think</b> and the <b>Words</b> preset apply to every button "
-                "(<i>custom</i> reveals the Min/Max fields). "
+                "<b>Think</b> and the <b>Min words</b> / <b>Max words</b> fields "
+                "at the top of this tab apply to every button. "
                 "In the <i>Based on Text Prompt and Images</i> mode the Local 27B "
                 "button also reads the selected images with the model's vision part. "
                 "Hover the info button for details."
