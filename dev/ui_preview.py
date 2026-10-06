@@ -28,7 +28,7 @@ Prozess beendet wird.
 
 Aufruf (aus dem WanGP-Ordner, mit dessen venv):
 
-    ./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py [port]
+    ./.venv/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py [port]
     # http://127.0.0.1:7899/?__theme=dark
 
 PREVIEW_MIN/PREVIEW_MAX setzen die Startwerte der Wortgrenze (Default 0/1500).

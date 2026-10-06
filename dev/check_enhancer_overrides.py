@@ -6,13 +6,13 @@ WanGP wird nur importiert, damit `import plugin` ueberhaupt laeuft.
 
 Aufruf (aus dem WanGP-Ordner, mit dessen venv):
 
-    ./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/check_enhancer_overrides.py
+    ./.venv/bin/python ~/git/wan2gp-local-enhance/dev/check_enhancer_overrides.py
 
 Optional, ohne Testlauf: den gerenderten Text fuer eine eigene JSON-Datei
 ausgeben (die Datei enthaelt entweder direkt das models_def-Objekt oder ein
 Objekt mit dem Schluessel "models_def"):
 
-    ./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/check_enhancer_overrides.py \
+    ./.venv/bin/python ~/git/wan2gp-local-enhance/dev/check_enhancer_overrides.py \
         --dump /pfad/models_def.json
 
 Geprueft wird die grobe Erkennung: betroffen ist jede Definition mit irgendeinem

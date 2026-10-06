@@ -5,7 +5,7 @@ Skript ist beim Start das Modul __main__, also findet _main() die Funktionen hie
 
 Aufruf (aus dem WanGP-Ordner, mit dessen venv):
 
-    ./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/check_vision_inputs.py
+    ./.venv/bin/python ~/git/wan2gp-local-enhance/dev/check_vision_inputs.py
 
 Geprueft werden die Faelle aus AGENTS.md ("Bilder"): Modus ohne "I", Startbild,
 Endbild, zwei Referenzen, nur Control Image, fake_start_image (On-Demand-Paritaet),

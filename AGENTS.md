@@ -322,7 +322,7 @@ neu starten.
 ## Prüfen
 
 - Syntax/Import (WanGP-venv, aus dem WanGP-Ordner):
-  `cd ~/git/Wan2GP && ./.wan2gp/bin/python -c "import sys; sys.path.insert(0,'/home/stefan/git/wan2gp-local-enhance'); import plugin; print(plugin.PlugIn_Name)"`
+  `cd ~/git/Wan2GP && ./.venv/bin/python -c "import sys; sys.path.insert(0,'/home/stefan/git/wan2gp-local-enhance'); import plugin; print(plugin.PlugIn_Name)"`
 - UI ohne WanGP-Start: `dev/ui_preview.py` baut die Umgebung nach (Row mit
   eingebautem Knopf + verstecktem `gr.Text` + Dropdown + Think-Checkbox, danach
   die `insert_after`-Mechanik `pop(-1)` + `insert(target_index+1, …)`). Das
@@ -331,7 +331,7 @@ neu starten.
   (`shared/utils/plugins.py:1627` vor `1657`) und gibt den Komponentenbaum, die
   Zahl der Klick-Eingaben und `mode-components-at-wiring` aus. Aufruf aus dem
   WanGP-Ordner:
-  `./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py 7899`.
+  `./.venv/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py 7899`.
   Erwartung:
   Zeile 1 = `[HTML, Button, Button, Checkbox]`,
   die fremde Formularzeile (der `Form`, in dem der versteckte Modus-Text liegt)
@@ -424,7 +424,7 @@ neu starten.
   aus dem WanGP-Ordner) wirft eine erfundene Fixture gegen
   `_collect_enhancer_overrides()` — kein Hoststart, kein Katalog auf der Platte.
   Aufruf:
-  `./.wan2gp/bin/python ~/git/wan2gp-local-enhance/dev/check_enhancer_overrides.py`.
+  `./.venv/bin/python ~/git/wan2gp-local-enhance/dev/check_enhancer_overrides.py`.
   Erwartung: **23** `PASS`-Zeilen und `Alle Faelle bestanden.` (Exit 0; nachgezählt
   mit `… | grep -c '^PASS'`). Geprüft werden die beiden Zähler, Bündelung und
   Gruppenreihenfolge, der Zähler nur bei mehreren Varianten, der Anzeigename aus
