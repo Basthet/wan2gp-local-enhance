@@ -766,6 +766,76 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return ", images: " + ", ".join(labels)
 
     @staticmethod
+    def _count_media(value):
+        """How many images does one click-input value carry?"""
+        if value is None:
+            return 0
+        if isinstance(value, (list, tuple)):
+            return len(value)
+        if isinstance(value, dict):
+            return len(value.get("items") or []) or (1 if value else 0)
+        return 1
+
+    @classmethod
+    def _media_inputs(cls, settings, live):
+        """The merged image inputs (settings snapshot plus live click values)."""
+        merged = dict(settings or {})
+        merged.update({key: value for key, value in (live or {}).items() if value is not None})
+        return merged
+
+    @classmethod
+    def _log_media_inputs(cls, mode, settings, live):
+        """Terminal diagnostic: what is actually in the image fields?
+
+        Independent of WanGP's dropdown labels: those only report what WanGP
+        itself counts (shared/prompt_enhancer/labels.py:24-45 - a start image
+        only counts with "S" in image_prompt_type). This line instead shows the
+        raw values that reach the button.
+        """
+        merged = cls._media_inputs(settings, live)
+        counts = {
+            name: cls._count_media(merged.get(name))
+            for name in ("image_start", "image_end", "image_refs", "image_guide")
+        }
+        live_set = sorted(key for key, value in (live or {}).items() if value is not None)
+        print(
+            f"[{PlugIn_Name}] enhance: mode={str(mode or '')!r} "
+            f"image_prompt_type={str(merged.get('image_prompt_type') or '')!r} "
+            f"video_prompt_type={str(merged.get('video_prompt_type') or '')!r} "
+            f"image_start={counts['image_start']} image_end={counts['image_end']} "
+            f"image_refs={counts['image_refs']} image_guide={counts['image_guide']} "
+            f"live={live_set}"
+        )
+
+    @classmethod
+    def _image_warning(cls, mode, settings, live, labels):
+        """Warn when an image sits in a field but is never evaluated.
+
+        WanGP drops a start image silently as long as "S" is missing from
+        image_prompt_type (images.py:210), and a mode without "I" ignores images
+        anyway. Both cases used to be invisible.
+        """
+        if labels:
+            return ""
+        merged = cls._media_inputs(settings, live)
+        present = [
+            name
+            for name in ("image_start", "image_end", "image_refs", "image_guide")
+            if cls._count_media(merged.get(name))
+        ]
+        if not present:
+            return ""
+        if "I" not in str(mode or ""):
+            return (
+                f"**{', '.join(present)} filled in, but mode `{mode}` carries no images** "
+                "- pick the option that mentions images. "
+            )
+        return (
+            f"**{', '.join(present)} filled in, but WanGP does not count it** "
+            "- set Location to 'Start with Image' (or enable Reference Images). "
+        )
+
+    @staticmethod
     def _local_engine_name():
         """Engine-Name, der zu enhancer_enabled gehoert (3 -> qwen35_4b usw.)."""
         config = _main("server_config") or {}
@@ -1632,6 +1702,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             images = self._enhancer_images(
                 settings, model_def, model_type, mode, audio_only, enhancer_input, live_images
             )
+            self._log_media_inputs(mode, settings, live_images)
+            image_advice = self._image_warning(mode, settings, live_images, images.labels)
             ensure_loaded(override_profile=-1, progress=progress)
             if progress is not None:
                 progress(0, desc="Enhancing Prompt")
@@ -1695,6 +1767,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return result, (
             f"Enhanced locally with **{self._variant_label()}** "
             f"(mode `{mode}`{self._image_note(images.labels)}) in {seconds:.1f}s. "
+            f"{image_advice}"
             "Not happy? Click again."
         )
 
@@ -1822,6 +1895,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Wie in enhance(), nur ohne Think: der Modus kommt live aus WanGPs
         # verstecktem `prompt_enhancer`-Text, sonst aus dem Modell-Default.
         mode = self._effective_mode(mode_value, model_def, audio_only, image_mode)
+        # Log here too: the remote path gets no images at all, but the mode still
+        # reveals whether the user expected them.
+        self._log_media_inputs(mode, settings, {})
 
         # Originalprompt statt sichtbarer Text - siehe enhance() fuer die Begruendung.
         enhancer_input = self._original_for_history(text)
