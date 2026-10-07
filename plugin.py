@@ -1518,7 +1518,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         cfg.setdefault("duration_seconds", settings.get("duration_seconds"))
         return cfg
 
-    def enhance(self, state, text, *values, progress=gr.Progress()):
+    def enhance(self, state, text, *values):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
 
         `values` sind erst der Modus, dann die Regler (Think/Min/Max),
@@ -1575,9 +1575,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if getattr(self, "_think_checkbox", None) is not None:
             mode = self._with_thinking(mode, think)
 
-        # Ans Modell geht nur der sichtbare Prompt, nicht die Historienzeile:
-        # sonst wird '#!PROMPT!:' mitverbessert und erscheint danach doppelt.
-        enhancer_input = self._visible_prompt(text)
+        # Ans Modell geht der ORIGINAL-Prompt, nicht der sichtbare - genau wie
+        # WanGPs eigener Knopf (wgp.py:6685, split_prompt_units(..., originals=True)).
+        # Der sichtbare Text ist schon poliert; ihn zurueckzugeben laesst das Modell
+        # an einem fertigen Cinematic-Prompt nur noch nagen, jede Änderung an der
+        # eigenen Zeile bleibt damit folgenlos. Der Originalprompt macht jede
+        # Editierung der Nutzerzeile zu einem echten Neuschreiben. Die Historienzeile
+        # (#!PROMPT!:) darf das Modell nie erreichen - sie wird mitverbessert und
+        # erschiene danach doppelt.
+        enhancer_input = self._original_for_history(text)
         if not enhancer_input:
             return "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
 
@@ -1626,9 +1632,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             images = self._enhancer_images(
                 settings, model_def, model_type, mode, audio_only, enhancer_input, live_images
             )
-            ensure_loaded(override_profile=-1, progress=progress)
-            if progress is not None:
-                progress(0, desc="Enhancing Prompt")
+            ensure_loaded(override_profile=-1)
             prompts = process(
                 model_type,
                 model_def,
@@ -1847,7 +1851,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # verstecktem `prompt_enhancer`-Text, sonst aus dem Modell-Default.
         mode = self._effective_mode(mode_value, model_def, audio_only, image_mode)
 
-        enhancer_input = self._visible_prompt(text)
+        # Originalprompt statt sichtbarer Text - siehe enhance() fuer die Begruendung.
+        enhancer_input = self._original_for_history(text)
         if not enhancer_input:
             return "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
 
@@ -2267,7 +2272,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             fn=self.enhance_inline,
             inputs=[self.state, prompt_component] + controls + image_components,
             outputs=[prompt_component],
-            show_progress="full",
+            show_progress="hidden",
         )
         # Den eingebauten "Enhance Prompt"-Knopf ausblenden. visible=False allein
         # genuegt nicht: beim Modellwechsel setzt WanGPs modellabhaengiges
@@ -2292,9 +2297,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         gr.Info(str(status).replace("**", "").replace("`", ""))
         return self._with_history(result)
 
-    def enhance_inline(self, state, text, *values, progress=gr.Progress()):
+    def enhance_inline(self, state, text, *values):
         """Wie enhance(), schreibt das Ergebnis aber direkt ins Prompfeld."""
-        result, status = self.enhance(state, text, *values, progress=progress)
+        result, status = self.enhance(state, text, *values)
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
