@@ -1715,36 +1715,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return " ".join(parts).strip()
 
     @classmethod
-    def _visible_prompt(cls, text):
-        """Sichtbaren Prompt ohne Historien-/Kommentarzeilen.
-
-        Ein '#!PROMPT!:'-Block ist reine Information fuer die Anzeige. Ginge er
-        ans Modell, wuerde er mitverbessert - und stuende danach doppelt da.
-        """
-        raw = str(text or "").replace("\r\n", "\n").strip()
-        if not raw:
-            return ""
-        try:
-            units = split_prompt_units(raw, "FG")
-            if units:
-                visible = str(units[0] or "").strip()
-                if visible:
-                    return visible
-        except Exception:
-            pass
-        # split_prompt_units verwirft jede Zeile, die mit '#' beginnt - also auch
-        # eine Zeile, die nur aus Markern plus Text besteht. Dann selbst abtragen.
-        parts = []
-        for raw_line in raw.split("\n"):
-            line = raw_line.strip()
-            while line.startswith(PROMPT_UNIT_PREFIX):
-                line = line[len(PROMPT_UNIT_PREFIX):].strip()
-            if not line or line.startswith("#"):
-                continue
-            parts.append(line)
-        return "\n".join(parts).strip()
-
-    @classmethod
     def _original_for_history(cls, source):
         """Urspruenglichen Prompt fuer die Historienzeile bestimmen.
 
