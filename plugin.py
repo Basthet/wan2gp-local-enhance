@@ -1497,6 +1497,27 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             tuple(labels),
         )
 
+    @staticmethod
+    def _enhancer_kwargs(settings, images):
+        """Enhancer-Kwargs as guaranteed dict - never None.
+
+        `resolve_prompt_enhancer_settings()` (wgp.py:6539) passes `enhancer_kwargs`
+        unguarded to the model handler. The LTX2 handler
+        (models/ltx2/prompt_enhancer.py:189) reads
+        `enhancer_kwargs.get("audio_prompt_type", "")` in its first line, without a
+        None guard. A text-only prompt (no "I" in the mode) yields empty kwargs and
+        `or None` turned that into None, which cost
+        `AttributeError: 'NoneType' object has no attribute 'get'`. WanGPs own
+        button always passes a dict (wgp.py:6747) - so do exactly that here, with
+        the three keys the handler expects.
+        """
+        cfg = dict((images.kwargs if images is not None else None) or {})
+        settings = settings or {}
+        cfg.setdefault("audio_prompt_type", str(settings.get("audio_prompt_type", "") or ""))
+        cfg.setdefault("video_prompt_type", str(settings.get("video_prompt_type", "") or ""))
+        cfg.setdefault("duration_seconds", settings.get("duration_seconds"))
+        return cfg
+
     def enhance(self, state, text, *values):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
 
@@ -1624,7 +1645,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     with_images=bool(images.labels),
                 ),
                 text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
-                enhancer_kwargs=images.kwargs or None,
+                enhancer_kwargs=self._enhancer_kwargs(settings, images),
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             return "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
@@ -1869,6 +1890,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 # Engine und der Agent fragt zurueck statt umzuschreiben.
                 prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, min_words, max_words),
                 text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
+                # The LTX2 handler requires a dict - None crashes it.
+                enhancer_kwargs=self._enhancer_kwargs(settings, None),
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             import traceback
