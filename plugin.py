@@ -1518,7 +1518,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         cfg.setdefault("duration_seconds", settings.get("duration_seconds"))
         return cfg
 
-    def enhance(self, state, text, *values):
+    def enhance(self, state, text, *values, progress=gr.Progress()):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
 
         `values` sind erst der Modus, dann die Regler (Think/Min/Max),
@@ -1626,7 +1626,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             images = self._enhancer_images(
                 settings, model_def, model_type, mode, audio_only, enhancer_input, live_images
             )
-            ensure_loaded(override_profile=-1)
+            ensure_loaded(override_profile=-1, progress=progress)
+            if progress is not None:
+                progress(0, desc="Enhancing Prompt")
             prompts = process(
                 model_type,
                 model_def,
@@ -2265,7 +2267,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             fn=self.enhance_inline,
             inputs=[self.state, prompt_component] + controls + image_components,
             outputs=[prompt_component],
-            show_progress="hidden",
+            show_progress="full",
         )
         # Den eingebauten "Enhance Prompt"-Knopf ausblenden. visible=False allein
         # genuegt nicht: beim Modellwechsel setzt WanGPs modellabhaengiges
@@ -2290,9 +2292,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         gr.Info(str(status).replace("**", "").replace("`", ""))
         return self._with_history(result)
 
-    def enhance_inline(self, state, text, *values):
+    def enhance_inline(self, state, text, *values, progress=gr.Progress()):
         """Wie enhance(), schreibt das Ergebnis aber direkt ins Prompfeld."""
-        result, status = self.enhance(state, text, *values)
+        result, status = self.enhance(state, text, *values, progress=progress)
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
