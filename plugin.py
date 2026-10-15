@@ -465,6 +465,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except Exception as exc:  # noqa: BLE001
             print(f"[{PlugIn_Name}] Could not request the inline button: {exc}")
 
+        # Die Bypass-LoRA gehoert in jede Generierung: der Host liest die
+        # LoRA-Liste in validate_settings() aus dem Formular.
+        self._install_lora_hook()
+
     def post_ui_setup(self, components):
         """Eingebauten Enhance-Knopf ausblenden - die Beschriftung liefert das Plugin.
 
@@ -822,6 +826,49 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         config[_BYPASS_LORA_KEY] = str(text or "").strip()
         if modelle is not None:
             config[_BYPASS_MODELS_KEY] = str(modelle or "").strip()
+
+    def _install_lora_hook(self):
+        """Traegt die Bypass-LoRA in jede Generierung ein, bevor sie prueft wird.
+
+        Warum hier: Die LoRA-Auswahl in der Oberflaeche gehoert dem
+        media_flow-Plugin (ein ``hierarchyselector`` mit dem Label
+        "Activated LoRAs") und ist fuer Plugins nicht per request_component()
+        erreichbar - der Name ``activated_loras`` existiert im Host nicht.
+        ``validate_settings()`` (wgp.py:1040) bekommt dagegen die fertigen
+        Formulardaten samt ``inputs["activated_loras"]``; das ist die einzige
+        Stelle, an der die Liste vor der Pruefung noch erweitert werden kann.
+
+        Die Wort-Multiplikatoren bleiben ausgerichtet: kommt eine LoRA dazu und
+        ist eine Multiplikator-Zeichenkette gesetzt, bekommt sie eine 1
+        angehaengt - sonst wuerden die Werte des Nutzers verrutschen.
+        """
+        module = sys.modules.get("__main__")
+        original = getattr(module, "validate_settings", None)
+        if original is None or getattr(original, "_local_enhance_wrapped", False):
+            return
+        plugin_self = self
+
+        def validate_settings_wrapper(state, model_type, single_prompt, inputs, silent=False):
+            try:
+                if isinstance(inputs, dict):
+                    alt = list(inputs.get("activated_loras") or [])
+                    neu = plugin_self._with_bypass_lora(alt, model_type)
+                    if len(neu) > len(alt):
+                        inputs["activated_loras"] = neu
+                        multi = inputs.get("loras_multipliers")
+                        if isinstance(multi, str) and multi.strip():
+                            inputs["loras_multipliers"] = multi.rstrip() + " 1"
+            except Exception:  # noqa: BLE001 - die Generierung darf nie daran scheitern
+                pass
+            return original(state, model_type, single_prompt, inputs, silent)
+
+        validate_settings_wrapper._local_enhance_wrapped = True
+        try:
+            setattr(module, "validate_settings", validate_settings_wrapper)
+            print(f"[{PlugIn_Name}] Bypass-LoRA aktiv: "
+                  f"{self._bypass_lora() or '(aus)'}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] could not hook validate_settings: {exc}")
 
     @staticmethod
     def _model_def_without_prompt_instructions(model_def):
