@@ -33,6 +33,7 @@ welches lokale Modell geladen wird.
 import contextlib
 import html
 import json
+import os
 import re
 import sys
 import time
@@ -788,6 +789,27 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return bool(typ) and any(m in typ for m in muster)
 
     @classmethod
+    def _resolve_lora_path(cls, name):
+        """LoRA-Namen zu einem Pfad machen, den der Host findet.
+
+        Der Host setzt jeden Namen an get_lora_dir(model_type) an. Enthaelt der
+        Name den Unterordner schon (``krea2/...``), entsteht
+        ``.../loras/krea2/krea2/...`` und die Pruefung meldet die Datei als
+        fehlend. Absolute Pfade nimmt get_lora_local_path() unveraendert, deshalb
+        wird hier gegen loras_root aufgeloest.
+        """
+        name = str(name or "").strip()
+        if not name or os.path.isabs(name):
+            return name
+        config = _main("server_config") or {}
+        wurzel = str(config.get("loras_root") or "").strip() if isinstance(config, dict) else ""
+        if wurzel:
+            kandidat = os.path.join(wurzel, name)
+            if os.path.isfile(kandidat):
+                return kandidat
+        return name
+
+    @classmethod
     def _with_bypass_lora(cls, aktuelle, model_type=None):
         """Die Bypass-LoRA an eine bestehende LoRA-Auswahl anhaengen.
 
@@ -802,7 +824,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         kurz = name.rsplit("/", 1)[-1].lower()
         if any(str(x).lower().endswith(kurz) or kurz in str(x).lower() for x in liste):
             return liste
-        return liste + [name]
+        return liste + [cls._resolve_lora_path(name)]
 
     @classmethod
     def _bypass_status_text(cls):
