@@ -30,6 +30,7 @@ Deepy -> LLM Engine auf ein lokales Qwen-Modell zeigen lassen). Der Wert bestimm
 welches lokale Modell geladen wird.
 """
 
+import contextlib
 import html
 import json
 import re
@@ -243,9 +244,102 @@ _UI_CSS = (
     # Modus-Dropdown sitzt. Die beiden Wort-Regler stehen im Plugin-Tab und
     # brauchen hier keine eigenen Regeln mehr.
     "#local_enhance_row + .form{flex-basis:100% !important;}"
+    # --- Karten im Plugin-Tab ---------------------------------------------
+    # Der Tab war eine Folge gleich aussehender Bloecke ohne Hierarchie. Jetzt
+    # traegt jeder Abschnitt eine eigene Karte mit Titel und optionalem Hinweis.
+    ".le-card{"
+    "border:1px solid var(--border-color-primary,#3a3a3a);"
+    "border-radius:10px;"
+    "padding:10px 12px 6px 12px;"
+    "margin:0 0 10px 0;"
+    "background:var(--background-fill-secondary,rgba(127,127,127,0.06));}"
+    ".le-card-title{"
+    "font-weight:600;font-size:0.95em;letter-spacing:0.02em;"
+    "margin:0 0 4px 0;opacity:0.92;}"
+    ".le-hint{font-size:0.85em;opacity:0.72;margin:0 0 8px 0;line-height:1.35;}"
+    ".le-row{align-items:flex-end !important;gap:8px !important;flex-wrap:wrap !important;}"
+    ".le-actions{gap:8px !important;flex-wrap:wrap !important;}"
+    ".le-actions button{min-width:170px;}"
 )
+_TEMPLATE_KEY = "local_enhance_template"
+_TEMPLATE_TEXT_KEY = "local_enhance_template_text"
+
+# Die zentrale Bypass-LoRA. Sie gehoert zu jeder eigenen LoRA dazu: WanGPs
+# Modell ist ausgerichtet, ohne diesen Bypass greift die Zensur. Das Plugin
+# traegt sie bei jedem Tab-Wechsel in WanGPs LoRA-Auswahl nach (activated_loras),
+# ohne die vom Nutzer gewaehlten LoRAs anzutasten.
+_BYPASS_LORA_KEY = "local_enhance_bypass_lora"
+_BYPASS_LORA_DEFAULT = "krea2/krea2bypass_balanced.safetensors"
+# Gilt nur fuer diese Modelle: Pruefung gegen den internen Modelltyp
+# (z. B. "krea2_turbo") als Praefix/Teilstring, mehrere durch Komma.
+# LEER heisst: immer - dann traegt das Plugin die Bypass-LoRA bei jedem Modell
+# nach, so wie es das urspruengliche Plugin getan hat.
+_BYPASS_MODELS_KEY = "local_enhance_bypass_models"
+_BYPASS_MODELS_DEFAULT = ""
+
+# Standard-Prompt des Plugins: steht im Arbeitsfeld, sobald der Tab aufgeht.
+# Ueberschreibbar in der Oberflaeche, Feld leeren = kein Standard.
+_DEFAULT_PROMPT_KEY = "local_enhance_default_prompt"
+_DEFAULT_PROMPT_TEXT = (
+    "a huge super muscular male guy with huge muscle and super fat penis "
+    "with long hairy testicles"
+)
+
+# Muessen vor den Vorlagen stehen: die Texte haengen die Saetze unten an, und
+# _apply_word_limit() ersetzt sie spaeter durch die eingestellten Min/Max-Werte.
 _WORD_KEEP_SENTENCE = "Keep within 150 words."
 _WORD_LIMIT_SENTENCE = "Do not exceed the 150 word limit!"
+
+_TEMPLATE_WANPG = "WanGP-Standard"
+_TEMPLATE_SHEET = "Character Sheet"
+_TEMPLATE_TURNAROUND = "Turnaround (4 Ansichten)"
+_TEMPLATE_CUSTOM = "Eigene Vorlage"
+_DEFAULT_TEMPLATE = _TEMPLATE_WANPG
+
+# Die Vorlagen sind bewusst auf Englisch: das lokale Qwen-Modell schreibt
+# englische Prompts, und die Wortgrenzen-Saetze am Ende werden von
+# _apply_word_limit() durch die eingestellten Min/Max-Werte ersetzt.
+_TEMPLATE_SHEET_TEXT = (
+    "Write one image prompt that describes a CHARACTER SHEET of the character.\n"
+    "Follow these rules exactly:\n"
+    "- Full body, standing, symmetric A-pose: arms relaxed and slightly away "
+    "from the body, legs about shoulder-width apart, facing straight ahead, "
+    "neutral expression, hands open.\n"
+    "- Show exactly three views side by side in one image: front view, side "
+    "view (profile) and back view.\n"
+    "- Keep proportions, hairstyle, clothing, colours and accessories identical "
+    "in all three views.\n"
+    "- Plain, evenly lit neutral background; no props, no scenery, no text, no "
+    "labels, no watermark, no frame.\n"
+    "- Nothing is cropped: head to feet visible in every view.\n"
+    "Return only the prompt text, no commentary.\n"
+    + _WORD_KEEP_SENTENCE + "\n" + _WORD_LIMIT_SENTENCE
+)
+_TEMPLATE_TURNAROUND_TEXT = (
+    "Write one image prompt that describes a TURNAROUND of the character.\n"
+    "Follow these rules exactly:\n"
+    "- Full body, standing, symmetric A-pose, neutral expression.\n"
+    "- Show exactly four views side by side in one image: front view, side view "
+    "(profile), back view and three-quarter view.\n"
+    "- Keep proportions, hairstyle, clothing, colours and accessories identical "
+    "in all four views.\n"
+    "- Plain, evenly lit neutral background; no props, no scenery, no text, no "
+    "labels, no watermark, no frame.\n"
+    "- Nothing is cropped: head to feet visible in every view.\n"
+    "Return only the prompt text, no commentary.\n"
+    + _WORD_KEEP_SENTENCE + "\n" + _WORD_LIMIT_SENTENCE
+)
+_TEMPLATE_PRESETS = {
+    _TEMPLATE_WANPG: None,
+    _TEMPLATE_SHEET: _TEMPLATE_SHEET_TEXT,
+    _TEMPLATE_TURNAROUND: _TEMPLATE_TURNAROUND_TEXT,
+    _TEMPLATE_CUSTOM: None,  # Text kommt aus dem Feld
+}
+_TEMPLATE_HELP = (
+    "Der Host bevorzugt eigene Anweisungen aus der Modelldefinition und aus "
+    "dem LTX-2-Handler gegen die des Plugins. Eine gewaehlte Vorlage schaltet "
+    "beide fuer die Dauer des Aufrufs ab - sie gilt also wirklich."
+)
 _BASE_OUTPUT_TOKENS = 512
 _MAX_OUTPUT_TOKENS = 4096
 _NO_LIMIT_OUTPUT_TOKENS = 1024
@@ -255,6 +349,64 @@ def _main(name, default=None):
     """Live-Zugriff auf Globals des Hauptmoduls (nicht die eingefrorene Kopie)."""
     module = sys.modules.get("__main__")
     return getattr(module, name, default) if module is not None else default
+
+
+class _PromptInstructionOverride:
+    """Schaltet die modell-eigenen Enhancer-Anweisungen fuer einen Aufruf ab.
+
+    Der Host loest die Anweisungen in dieser Reihenfolge auf
+    (wgp.py:6460-6481, resolve_prompt_enhancer_settings):
+
+      1. ``model_handler.get_custom_prompt_enhancer_instructions()``  - gewinnt
+      2. ``model_def["..._prompt_enhancer_instructions..."]``         - gewinnt
+      3. die vom Plugin uebergebenen Anweisungen                      - verliert
+
+    Ohne diesen Eingriff wuerde eine Vorlage des Plugins gegen 1. und 2.
+    verlieren. Quelle 2 erledigt der Aufrufer, indem er eine Kopie der
+    Modelldefinition ohne die Schluessel uebergibt; Quelle 1 wird hier
+    umgebogen: ``get_model_handler`` liefert fuer die Dauer des Aufrufs einen
+    Proxy, dessen ``get_custom_prompt_enhancer_instructions`` nichts liefert.
+
+    Heute bringt nur LTX-2 diese Methode mit (models/ltx2/), der Eingriff ist
+    also klein - aber die Vorlage muss auch dort gelten.
+    """
+
+    class _Proxy:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            if name == "get_custom_prompt_enhancer_instructions":
+                return lambda *args, **kwargs: (None, None)
+            return getattr(self._real, name)
+
+    def __enter__(self):
+        module = sys.modules.get("__main__")
+        self._module = module
+        self._original = getattr(module, "get_model_handler", None) if module else None
+        self._active = False
+        if self._original is None:
+            return self
+        proxy_type = _PromptInstructionOverride._Proxy
+        original = self._original
+
+        def ersatz(model_type, *args, **kwargs):
+            return proxy_type(original(model_type, *args, **kwargs))
+
+        try:
+            setattr(module, "get_model_handler", ersatz)
+            self._active = True
+        except Exception:  # noqa: BLE001 - ohne Eingriff gilt Quelle 1
+            self._active = False
+        return self
+
+    def __exit__(self, *exc_info):
+        if getattr(self, "_active", False) and getattr(self, "_module", None) is not None:
+            try:
+                setattr(self._module, "get_model_handler", self._original)
+            except Exception:  # noqa: BLE001
+                pass
+        return False
 
 
 class LocalEnhancePlugin(WAN2GPPlugin):
@@ -276,6 +428,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self.request_component("state")
         self.request_component("refresh_form_trigger")
         self.request_component("prompt")
+        # WanGP liest die angehakten LoRAs aus dieser Komponente
+        # (wgp.py:1183, inputs["activated_loras"]). Das Plugin traegt dort die
+        # Bypass-LoRA nach. Heisst die Komponente anders, bleibt das Attribut
+        # None und das Plugin sagt es beim Aufbau - dann laeuft alles andere
+        # weiter, nur die Automatik fehlt.
+        self.request_component("activated_loras")
         # Der eingebaute "Enhance Prompt"-Knopf wird ausgeblendet: er verbessert
         # ueber dieselbe Remote-Engine wie der OpenCode-Knopf und waere damit
         # ein Doppel. An seiner Stelle steht nur noch die Beschriftung.
@@ -511,6 +669,171 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if min_words > 0 and max_words > 0 and min_words > max_words:
             min_words, max_words = max_words, min_words
         return min_words, max_words
+
+    # ---------------------------------------------------------------- Vorlagen
+
+    @classmethod
+    def _template_choice(cls, value=None):
+        """Gewaehlte Vorlage; unbekannte Werte fallen auf den Standard zurueck."""
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_TEMPLATE_KEY, _DEFAULT_TEMPLATE)
+        value = str(value or "").strip()
+        return value if value in _TEMPLATE_PRESETS else _DEFAULT_TEMPLATE
+
+    @classmethod
+    def _template_text(cls, value=None):
+        """Der frei editierbare Vorlagentext aus der Konfiguration."""
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_TEMPLATE_TEXT_KEY, "")
+        return str(value or "").strip()
+
+    @classmethod
+    def _template_instructions(cls, is_image, audio_only, min_words=None, max_words=None,
+                               with_images=False):
+        """Anweisungen fuer den Enhancer; ``None`` heisst "WanGP macht es selbst".
+
+        Die Wortgrenzen-Saetze in den Vorlagen laufen durch _apply_word_limit(),
+        damit die Min/Max-Felder auch hier wirken.
+        """
+        choice = cls._template_choice()
+        if choice == _TEMPLATE_WANPG:
+            return None
+        if choice == _TEMPLATE_TURNAROUND:
+            text = _TEMPLATE_TURNAROUND_TEXT
+        elif choice == _TEMPLATE_CUSTOM:
+            text = cls._template_text() or _TEMPLATE_SHEET_TEXT
+        else:
+            text = _TEMPLATE_SHEET_TEXT
+        minimum, maximum = cls._word_range(min_words, max_words)
+        return cls._apply_word_limit(text, minimum, maximum)
+
+    @classmethod
+    def _save_template(cls, choice, text=None):
+        """Vorlage und eigenen Text in der Live-Config merken - WanGP schreibt sie mit."""
+        config = _main("server_config")
+        if not isinstance(config, dict):
+            return
+        choice = str(choice or "").strip()
+        config[_TEMPLATE_KEY] = choice if choice in _TEMPLATE_PRESETS else _DEFAULT_TEMPLATE
+        if text is not None:
+            config[_TEMPLATE_TEXT_KEY] = str(text or "")
+
+    @classmethod
+    def _template_status_text(cls):
+        """Eine Zeile fuer die Karte: welche Vorlage gilt gerade."""
+        choice = cls._template_choice()
+        if choice == _TEMPLATE_WANPG:
+            return ("**Vorlage:** WanGP-Standard - die System-Prompts des Hosts "
+                    "bleiben unveraendert.")
+        return (f"**Vorlage aktiv:** {choice} - ueberschreibt die Anweisungen aus "
+                "Modelldefinition und LTX-2-Handler.")
+
+    @classmethod
+    def _bypass_lora(cls, value=None):
+        """Name der Bypass-LoRA aus der Konfiguration; leer = aus."""
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_BYPASS_LORA_KEY, _BYPASS_LORA_DEFAULT)
+        return str(value or "").strip()
+
+    @classmethod
+    def _bypass_models(cls, value=None):
+        """Modelltypen, fuer die die Bypass-LoRA gilt (komma-getrennt)."""
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_BYPASS_MODELS_KEY, _BYPASS_MODELS_DEFAULT)
+        return [t.strip().lower() for t in str(value or "").split(",") if t.strip()]
+
+    @classmethod
+    def _bypass_applies(cls, model_type):
+        """Gilt die Bypass-LoRA fuer dieses Modell?
+
+        Ohne Filtereintrag gilt sie **immer** - das ist der Standard und das
+        Verhalten des urspruenglichen Plugins. Ein Eintrag schraenkt ein
+        (Teilstring gegen den internen Modelltyp, z. B. ``krea2``).
+        """
+        muster = cls._bypass_models()
+        if not muster:
+            return True
+        typ = str(model_type or "").strip().lower()
+        return bool(typ) and any(m in typ for m in muster)
+
+    @classmethod
+    def _with_bypass_lora(cls, aktuelle, model_type=None):
+        """Die Bypass-LoRA an eine bestehende LoRA-Auswahl anhaengen.
+
+        Die Reihenfolge des Nutzers bleibt erhalten; die Bypass-LoRA kommt nur
+        dazu, wenn sie fehlt und das Modell sie kennt. Verglichen wird ueber den
+        Dateinamen, weil WanGP die Auswahl je nach Pfad unterschiedlich schreibt.
+        """
+        liste = [str(x) for x in (aktuelle or []) if str(x).strip()]
+        name = cls._bypass_lora()
+        if not name or not cls._bypass_applies(model_type):
+            return liste
+        kurz = name.rsplit("/", 1)[-1].lower()
+        if any(str(x).lower().endswith(kurz) or kurz in str(x).lower() for x in liste):
+            return liste
+        return liste + [name]
+
+    @classmethod
+    def _bypass_status_text(cls):
+        name = cls._bypass_lora()
+        if not name:
+            return "**Bypass-LoRA:** aus."
+        modelle = ", ".join(cls._bypass_models())
+        wo = f"nur bei: `{modelle}`" if modelle else "bei **jedem** Modell"
+        return (f"**Bypass-LoRA:** `{name}` - wird bei jedem Tab-Wechsel "
+                f"zusaetzlich eingetragen, {wo}.")
+
+    @classmethod
+    def _default_prompt(cls, value=None):
+        """Der Standard-Prompt des Plugins; leer = keiner."""
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_DEFAULT_PROMPT_KEY, _DEFAULT_PROMPT_TEXT)
+        return str(value or "").strip()
+
+    @classmethod
+    def _save_default_prompt(cls, text):
+        config = _main("server_config")
+        if isinstance(config, dict):
+            config[_DEFAULT_PROMPT_KEY] = str(text or "")
+
+    @classmethod
+    def _default_prompt_status(cls):
+        text = cls._default_prompt()
+        if not text:
+            return "**Standard-Prompt:** keiner."
+        kurz = text if len(text) <= 80 else text[:77] + "..."
+        return f"**Standard-Prompt:** {kurz}"
+
+    @classmethod
+    def _save_bypass_lora(cls, text, modelle=None):
+        config = _main("server_config")
+        if not isinstance(config, dict):
+            return
+        config[_BYPASS_LORA_KEY] = str(text or "").strip()
+        if modelle is not None:
+            config[_BYPASS_MODELS_KEY] = str(modelle or "").strip()
+
+    @staticmethod
+    def _model_def_without_prompt_instructions(model_def):
+        """Kopie der Modelldefinition ohne die eigenen Enhancer-Anweisungen.
+
+        Der Host bevorzugt sie gegen die uebergebenen (wgp.py:6476); ohne das
+        Entfernen wuerde eine Vorlage des Plugins still ignoriert.
+        """
+        if not isinstance(model_def, dict):
+            return model_def
+        muster = re.compile(r"^(text|image|video)_prompt_enhancer_instructions\d*$")
+        return {k: v for k, v in model_def.items() if not muster.match(str(k))}
 
     @staticmethod
     def _remember_word_range(min_words, max_words):
@@ -1707,26 +2030,39 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             ensure_loaded(override_profile=-1, progress=progress)
             if progress is not None:
                 progress(0, desc="Enhancing Prompt")
-            prompts = process(
-                model_type,
-                model_def,
-                mode,
-                [enhancer_input],
-                images.image_start,
-                images.image_refs,
-                is_image,
-                audio_only,
-                -1,        # seed -> zufaellig
-                # Wortgrenze steckt in den Anweisungen; das Token-Budget muss
-                # mitwachsen, sonst schneidet das Limit den Prompt ab. Mit Bildern
-                # gelten die Bild-Anweisungen (IT2x), sonst die reinen Text-T2x.
-                prompt_enhancer_instructions=self._fallback_instructions(
-                    is_image, audio_only, min_words, max_words,
-                    with_images=bool(images.labels),
-                ),
-                text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
-                enhancer_kwargs=self._enhancer_kwargs(settings, images),
+            # Vorlage schlaegt die System-Prompts des Hosts: die Modelldefinition
+            # geht ohne deren eigene Schluessel hinein, der LTX-2-Handler wird per
+            # Proxy stillgelegt. Ohne gewaehlte Vorlage bleibt alles wie vorher.
+            vorlage = self._template_instructions(
+                is_image, audio_only, min_words, max_words,
+                with_images=bool(images.labels),
             )
+            anweisungen = vorlage or self._fallback_instructions(
+                is_image, audio_only, min_words, max_words,
+                with_images=bool(images.labels),
+            )
+            modell_def = (
+                self._model_def_without_prompt_instructions(model_def)
+                if vorlage else model_def
+            )
+            with (_PromptInstructionOverride() if vorlage else contextlib.nullcontext()):
+                prompts = process(
+                    model_type,
+                    modell_def,
+                    mode,
+                    [enhancer_input],
+                    images.image_start,
+                    images.image_refs,
+                    is_image,
+                    audio_only,
+                    -1,        # seed -> zufaellig
+                    # Wortgrenze steckt in den Anweisungen; das Token-Budget muss
+                    # mitwachsen, sonst schneidet das Limit den Prompt ab. Mit Bildern
+                    # gelten die Bild-Anweisungen (IT2x), sonst die reinen Text-T2x.
+                    prompt_enhancer_instructions=anweisungen,
+                    text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
+                    enhancer_kwargs=self._enhancer_kwargs(settings, images),
+                )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             return "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
         finally:
@@ -2348,6 +2684,21 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def enhance_inline(self, state, text, *values, progress=gr.Progress()):
         """Wie enhance(), schreibt das Ergebnis aber direkt ins Prompfeld."""
         result, status = self.enhance(state, text, *values, progress=progress)
+        # --- Diagnose (vorlaeufig): Ergebnis und Status mitschreiben ---------
+        # Der Grund stand bisher nur als Toast in der Oberflaeche und war damit
+        # von aussen nicht zu sehen. Diese Zeile schreibt ihn zusaetzlich in
+        # eine Datei, damit er sich nach einem Klick auswerten laesst.
+        try:
+            with open("/home/stefan/git/Wan2GP/local/enhance-debug.log", "a",
+                      encoding="utf-8") as _dbg:
+                _dbg.write(
+                    f"enhance_inline result={'JA' if result else 'NEIN'} "
+                    f"laenge={len(str(result or ''))} "
+                    f"status={str(status)[:300]!r} "
+                    f"text_eingabe={len(str(text or ''))} Zeichen\n"
+                )
+        except Exception:
+            pass
         if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
             return gr.update()
@@ -2432,60 +2783,117 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             current_prompt = ""
 
         with gr.Column():
-            # Ganz oben im Tab stehen die beiden Wort-Regler. Sie gehoeren zu
-            # beiden Knoepfen in Zeile 1 und wandern hierher, nachdem
-            # create_inline_button() sie erzeugt und verdrahtet hat.
-            # Die Zeile wird leer geoeffnet, die Felder kommen erst NACH dem
-            # Block hinein: beim Verlassen gruppiert Gradio aufeinanderfolgende
-            # Formularfelder in einen gr.Form (BlockContext.__exit__ ->
-            # fill_expected_parents, blocks.py:456-486), der seine Kinder
-            # vertikal stapelt - die beiden Felder stuenden sonst untereinander.
-            with gr.Row() as word_row:
-                pass
-            self._attach_word_fields(word_row)
-            # Direkt unter den Wort-Reglern: die Zeile zum aktuellen Modell, der
-            # Hinweis, der eingeklappte Detailbereich mit dem Knopf und die Liste
-            # aus dem Zwischenspeicher.
-            _check_btn, current_model_out, _list_out, _status_out = (
-                self._build_model_check_section()
-            )
-            gr.HTML(
-                "<b>Enhance: OpenCode / Bonsai 27B</b><br>"
-                "Adds two buttons next to <i>Enhance Prompt</i>: "
-                "<b>OpenCode</b> enhances remotely through the configured engine, "
-                "<b>Local 27B</b> enhances on this GPU with Qwen3.8-27B. "
-                "Both write the result straight into the prompt field. "
-                "<b>Think</b> and the <b>Min words</b> / <b>Max words</b> fields "
-                "at the top of this tab apply to every button. "
-                "In the <i>Based on Text Prompt and Images</i> mode the Local 27B "
-                "button also reads the selected images with the model's vision part. "
-                "Hover the info button for details."
-            )
-            text_in = gr.Textbox(
-                label="Prompt",
-                value=current_prompt,
-                lines=5,
-                placeholder="Type a prompt, or pull one from the Media Generator ...",
-            )
-            with gr.Row():
-                enhance_btn = gr.Button("Local 27B", variant="primary")
-                copy_btn = gr.Button(
-                    "Pull prompt from Media Generator",
-                    visible=True,
+            # --- Karte 1: Vorlage ------------------------------------------------
+            with gr.Column(elem_classes=["le-card"]):
+                gr.HTML("<div class='le-card-title'>Vorlage &middot; System-Prompt des Enhancers</div>")
+                gr.HTML(f"<div class='le-hint'>{_TEMPLATE_HELP}</div>")
+                template_dd = gr.Dropdown(
+                    choices=list(_TEMPLATE_PRESETS),
+                    value=self._template_choice(),
+                    label="Vorlage",
                 )
-            text_out = gr.Textbox(label="Enhanced prompt", lines=5, interactive=True)
-            with gr.Row():
-                if refresh_trigger is not None:
-                    apply_btn = gr.Button("Send to Media Generator")
-                else:
-                    apply_btn = None
-            status = gr.Markdown()
+                template_text = gr.Textbox(
+                    label="Eigener Vorlagentext",
+                    value=self._template_text() or _TEMPLATE_SHEET_TEXT,
+                    lines=7,
+                    visible=self._template_choice() == _TEMPLATE_CUSTOM,
+                    placeholder="Nur bei 'Eigene Vorlage' sichtbar.",
+                )
+                with gr.Row(elem_classes=["le-actions"]):
+                    template_save = gr.Button("Vorlage speichern", size="sm", variant="primary")
+                    template_reset = gr.Button("Zuruecksetzen", size="sm")
+                template_status = gr.Markdown()
+
+            # --- Karte 1b: Bypass-LoRA ------------------------------------------
+            with gr.Column(elem_classes=["le-card"]):
+                gr.HTML("<div class='le-card-title'>Bypass-LoRA &middot; unzensiert</div>")
+                gr.HTML(
+                    "<div class='le-hint'>Gehoert zu jeder eigenen LoRA dazu und wird "
+                    "bei jedem Tab-Wechsel in WanGPs LoRA-Auswahl ergaenzt - deine "
+                    "Auswahl bleibt unveraendert. Feld leeren = aus.</div>"
+                )
+                bypass_field = gr.Textbox(
+                    label="LoRA",
+                    value=self._bypass_lora(),
+                    placeholder=_BYPASS_LORA_DEFAULT,
+                )
+                bypass_models_field = gr.Textbox(
+                    label="Nur fuer Modelle (komma-getrennt)",
+                    value=", ".join(self._bypass_models()),
+                    placeholder="leer = immer",
+                    info="Leer lassen laesst die LoRA bei jedem Modell mitladen.",
+                )
+                bypass_status = gr.Markdown(value=self._bypass_status_text())
+                with gr.Row(elem_classes=["le-actions"]):
+                    bypass_save = gr.Button("Speichern", size="sm", variant="primary")
+
+            # --- Karte 2: Wortgrenzen -------------------------------------------
+            with gr.Column(elem_classes=["le-card"]):
+                gr.HTML("<div class='le-card-title'>Wortgrenzen</div>")
+                gr.HTML(
+                    "<div class='le-hint'>Gelten fuer beide Knoepfe in Zeile 1. "
+                    "0 heisst: keine Grenze.</div>"
+                )
+                # Die Zeile wird leer geoeffnet, die Felder kommen erst NACH dem
+                # Block hinein: beim Verlassen gruppiert Gradio aufeinanderfolgende
+                # Formularfelder in einen gr.Form (BlockContext.__exit__ ->
+                # fill_expected_parents, blocks.py:456-486), der seine Kinder
+                # vertikal stapelt - die beiden Felder stuenden sonst untereinander.
+                with gr.Row() as word_row:
+                    pass
+                self._attach_word_fields(word_row)
+
+            # --- Karte 3: Modell-Check ------------------------------------------
+            with gr.Column(elem_classes=["le-card"]):
+                gr.HTML("<div class='le-card-title'>Modell-Check</div>")
+                # Die Zeile zum aktuellen Modell, der Hinweis, der eingeklappte
+                # Detailbereich mit dem Knopf und die Liste aus dem Zwischenspeicher.
+                _check_btn, current_model_out, _list_out, _status_out = (
+                    self._build_model_check_section()
+                )
+
+            # --- Karte 4: Prompt-Werkstatt --------------------------------------
+            with gr.Column(elem_classes=["le-card"]):
+                gr.HTML("<div class='le-card-title'>Prompt-Werkstatt</div>")
+                gr.HTML(
+                    "<div class='le-hint'>Arbeitsfeld: <b>Local 27B</b> erweitert diesen "
+                    "Text, <b>In den Media Generator schreiben</b> schiebt das Ergebnis "
+                    "ins eigentliche Prompt-Feld neben dem Enhance-Prompt-Knopf.</div>"
+                )
+                text_in = gr.Textbox(
+                    label="Prompt",
+                    value=self._default_prompt() or current_prompt,
+                    lines=5,
+                    placeholder="Type a prompt, or pull one from the Media Generator ...",
+                )
+                with gr.Row(elem_classes=["le-actions"]):
+                    enhance_btn = gr.Button("Local 27B", variant="primary")
+                    copy_btn = gr.Button("Prompt aus dem Media Generator holen")
+                    default_save = gr.Button("Als Standard-Prompt speichern", size="sm")
+                prompt_status = gr.Markdown(value=self._default_prompt_status())
+                text_out = gr.Textbox(label="Erweiterter Prompt", lines=5, interactive=True)
+                with gr.Row(elem_classes=["le-actions"]):
+                    if refresh_trigger is not None:
+                        apply_btn = gr.Button("In den Media Generator schreiben")
+                    else:
+                        apply_btn = None
+                status = gr.Markdown()
 
         # Der Tab-Wechsel setzt den Prompt UND die Zeile zum aktuellen Modell:
         # beide haengen am Live-Zustand. Die Reihenfolge muss zur Rueckgabe von
         # on_tab_select() passen; der Host verdrahtet sie als outputs
         # (shared/utils/plugins.py:1797-1804).
         self.on_tab_outputs = [text_in, current_model_out]
+        # Damit der Tab-Wechsel den Standard-Prompt nicht ueberschreibt, haelt
+        # das Plugin sein Arbeitsfeld fest.
+        self._prompt_box = text_in
+        # Dritte Ausgabe, wenn WanGP die LoRA-Auswahl herausgibt: dann traegt
+        # jeder Tab-Wechsel die Bypass-LoRA nach.
+        if getattr(self, "activated_loras", None) is not None:
+            self.on_tab_outputs.append(self.activated_loras)
+        else:
+            print(f"[{PlugIn_Name}] Komponente 'activated_loras' nicht gefunden - "
+                  "die Bypass-LoRA wird nicht automatisch eingetragen.")
 
         enhance_btn.click(
             fn=self.enhance,
@@ -2501,6 +2909,67 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 return ""
 
         copy_btn.click(fn=pull_from_form, inputs=[state], outputs=[text_in], show_progress="hidden")
+
+        # --- Standard-Prompt -------------------------------------------------
+        def standard_prompt_speichern(text):
+            self._save_default_prompt(text)
+            return self._default_prompt_status()
+
+        default_save.click(
+            fn=standard_prompt_speichern,
+            inputs=[text_in],
+            outputs=[prompt_status],
+            show_progress="hidden",
+        )
+
+        # --- Karte "Vorlage" -------------------------------------------------
+        def vorlage_wechsel(choice, text):
+            self._save_template(choice, text)
+            return (
+                gr.update(visible=(choice == _TEMPLATE_CUSTOM)),
+                self._template_status_text(),
+            )
+
+        template_dd.change(
+            fn=vorlage_wechsel,
+            inputs=[template_dd, template_text],
+            outputs=[template_text, template_status],
+            show_progress="hidden",
+        )
+
+        def vorlage_speichern(choice, text):
+            self._save_template(choice, text)
+            return self._template_status_text()
+
+        template_save.click(
+            fn=vorlage_speichern,
+            inputs=[template_dd, template_text],
+            outputs=[template_status],
+            show_progress="hidden",
+        )
+
+        def vorlage_zuruecksetzen(choice):
+            self._save_template(choice, _TEMPLATE_SHEET_TEXT)
+            return _TEMPLATE_SHEET_TEXT, self._template_status_text()
+
+        template_reset.click(
+            fn=vorlage_zuruecksetzen,
+            inputs=[template_dd],
+            outputs=[template_text, template_status],
+            show_progress="hidden",
+        )
+
+        # --- Karte "Bypass-LoRA" ---------------------------------------------
+        def bypass_speichern(text, modelle):
+            self._save_bypass_lora(text, modelle)
+            return self._bypass_status_text()
+
+        bypass_save.click(
+            fn=bypass_speichern,
+            inputs=[bypass_field, bypass_models_field],
+            outputs=[bypass_status],
+            show_progress="hidden",
+        )
 
         if apply_btn is not None:
             apply_btn.click(
@@ -2521,8 +2990,27 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         zwischengespeichert wird. Beide Rueckgaben sind gegen Fehler gesichert -
         der Tab-Wechsel darf nie werfen.
         """
-        try:
-            prompt = str(self.get_current_model_settings(state).get("prompt", "") or "")
-        except Exception:  # noqa: BLE001 - Prompt ist nur die erste Ausgabe
-            prompt = ""
-        return prompt, self._current_model_line(state)
+        # Reihenfolge: was im Arbeitsfeld steht, sonst der Standard-Prompt des
+        # Plugins, sonst erst WanGPs aktueller Prompt. Frueher stand WanGPs Wert
+        # vorn - der Tab-Wechsel hat damit den Standard-Prompt geloescht.
+        aktuell = str(getattr(getattr(self, "_prompt_box", None), "value", "") or "").strip()
+        if aktuell:
+            prompt = aktuell
+        else:
+            prompt = self._default_prompt()
+        if not prompt:
+            try:
+                prompt = str(self.get_current_model_settings(state).get("prompt", "") or "")
+            except Exception:  # noqa: BLE001 - Prompt ist nur die erste Ausgabe
+                prompt = ""
+        werte = [prompt, self._current_model_line(state)]
+        # Bypass-LoRA nachtragen: bestehende Auswahl bleibt, die zentrale kommt
+        # dazu. Ohne die Komponente bleibt es bei zwei Ausgaben.
+        if getattr(self, "activated_loras", None) is not None:
+            aktuell = list(getattr(self.activated_loras, "value", None) or [])
+            try:
+                typ = self.get_state_model_type(state)
+            except Exception:  # noqa: BLE001 - ohne Typ gilt der Filter nicht
+                typ = None
+            werte.append(gr.update(value=self._with_bypass_lora(aktuell, typ)))
+        return tuple(werte)
