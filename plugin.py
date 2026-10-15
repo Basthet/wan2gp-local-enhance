@@ -244,16 +244,18 @@ _UI_CSS = (
     # in einer zweiten.
     "#local_enhance_row{display:flex !important;flex-wrap:wrap !important;"
     "align-items:center !important;gap:6px !important;}"
+    # Reihenfolge: Kaestchen zuerst, dann die Knoepfe (order wirkt in Flex).
+    # Die Beschriftung bleibt mit order:0 oben auf ihrer eigenen Zeile.
     "#local_enhance_row .local-enhance-label{flex:0 0 100% !important;"
     "width:auto !important;}"
     "#local_enhance_row button{flex:0 0 auto !important;width:auto !important;"
-    "min-width:0 !important;}"
+    "min-width:0 !important;order:2 !important;}"
     "#local_enhance_row .cbx_centered{flex:0 0 auto !important;"
     "min-width:max-content !important;max-width:max-content !important;"
     # Gemessen: die Kaestchen-Bloecke sind 44 px hoch, die Knoepfe (size=sm)
     # 32 px. Auf Knopfhoehe gesetzt und Inhalt mittig, damit alles auf einer
     # Grundlinie liegt.
-    "height:32px !important;min-height:32px !important;"
+    "order:1 !important;height:32px !important;min-height:32px !important;"
     "align-items:center !important;"
     "padding-top:0 !important;padding-bottom:0 !important;}"
     ".wangp-prompt-enhancer-row{flex-direction:column !important;"
