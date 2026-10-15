@@ -238,11 +238,10 @@ _UI_CSS = (
     # Alles in EINER Zeile: Beschriftung, beide Knoepfe und die Kaestchen
     # nebeneinander, kompakt. Breiten kommen aus min_width/scale=0; hier wird
     # nur das Umbrechen verhindert und der Abstand gesetzt.
-    "#local_enhance_row{flex-wrap:nowrap !important;align-items:center !important;"
-    "gap:6px !important;width:100% !important;}"
+    "#local_enhance_row{flex-wrap:wrap !important;align-items:center !important;"
+    "gap:6px !important;}"
     "#local_enhance_row button{width:auto !important;min-width:0 !important;"
-    "flex:0 0 auto !important;white-space:nowrap !important;"
-    "padding:2px 8px !important;font-size:0.85em !important;}"
+    "flex:0 0 auto !important;white-space:nowrap !important;}"
     "#local_enhance_row .local-enhance-label,"
     "#local_enhance_row .cbx_centered{"
     "width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}"
