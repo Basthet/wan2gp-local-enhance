@@ -235,32 +235,24 @@ _UI_CSS = (
     # Der eingebaute Knopf verschwindet per ID; an visible=False kommt WanGPs
     # modellabhaengiges UI-Update sonst vorbei.
     "#local_enhance_builtin_btn{display:none !important;}"
-    # Zeile 1 wird nur so breit wie ihr Inhalt, damit die Modus-Zeile darunter
-    # umbrechen kann statt die Knoepfe zu quetschen.
-    # Eine saubere Spalte: Knopfreihe und Kästchen buendig untereinander,
-    # gleiche Breite, ruhige Abstaende - vorher standen schmale Knoepfe neben
-    # breiteren Kaestchen ohne gemeinsame Kante.
-    "#local_enhance_row{flex-direction:column !important;align-items:stretch !important;"
-    "gap:6px !important;}"
-    "#local_enhance_row button{width:100% !important;min-width:0 !important;"
-    "justify-content:flex-start !important;white-space:nowrap !important;}"
-    "#local_enhance_row .local-enhance-label{width:100% !important;}"
-    "#local_enhance_row .cbx_centered{width:100% !important;}"
+    # Alles in EINER Zeile: Beschriftung, beide Knoepfe und die Kaestchen
+    # nebeneinander, kompakt. Breiten kommen aus min_width/scale=0; hier wird
+    # nur das Umbrechen verhindert und der Abstand gesetzt.
+    "#local_enhance_row{flex-wrap:nowrap !important;align-items:center !important;"
+    "gap:6px !important;width:100% !important;}"
+    "#local_enhance_row button{width:auto !important;min-width:0 !important;"
+    "flex:0 0 auto !important;white-space:nowrap !important;"
+    "padding:2px 8px !important;font-size:0.85em !important;}"
     "#local_enhance_row .local-enhance-label,"
     "#local_enhance_row .cbx_centered{"
     "width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}"
     # Die Modus-Zeile: der gr.Form hinter der Knopfreihe, in dem nur noch das
-    # Modus-Dropdown sitzt. Die beiden Wort-Regler stehen im Plugin-Tab und
-    # brauchen hier keine eigenen Regeln mehr.
+    # Modus-Dropdown sitzt.
     "#local_enhance_row + .form{flex-basis:100% !important;}"
     # --- Karten im Plugin-Tab ---------------------------------------------
-    # Der Tab war eine Folge gleich aussehender Bloecke ohne Hierarchie. Jetzt
-    # traegt jeder Abschnitt eine eigene Karte mit Titel und optionalem Hinweis.
     ".le-card{"
     "border:1px solid var(--border-color-primary,#3a3a3a);"
-    "border-radius:10px;"
-    "padding:10px 12px 6px 12px;"
-    "margin:0 0 10px 0;"
+    "border-radius:10px;padding:10px 12px 6px 12px;margin:0 0 10px 0;"
     "background:var(--background-fill-secondary,rgba(127,127,127,0.06));}"
     ".le-card-title{"
     "font-weight:600;font-size:0.95em;letter-spacing:0.02em;"
