@@ -243,7 +243,7 @@ _UI_CSS = (
     # Vorher standen Beschriftung und Knoepfe in einer Zeile und die Kaestchen
     # in einer zweiten.
     "#local_enhance_row{display:flex !important;flex-wrap:wrap !important;"
-    "align-items:center !important;gap:2px !important;"
+    "align-items:center !important;gap:10px !important;row-gap:6px !important;"
     # Ohne das verteilt Gradio die Elemente: die Bloecke wachsen und zentrieren
     # ihren Inhalt, dadurch rutschten die Kaestchen nach rechts.
     "justify-content:flex-start !important;}"
@@ -254,7 +254,7 @@ _UI_CSS = (
     "#local_enhance_row > .cbx_centered,"
     "#local_enhance_row > #local_enhance_sheet_cb{"
     "width:max-content !important;min-width:0 !important;max-width:max-content !important;"
-    "margin:0 !important;padding-left:0 !important;padding-right:0 !important;}"
+    "margin:0 !important;}"
     # Reihenfolge: Kaestchen zuerst, dann die Knoepfe (order wirkt in Flex).
     # Die Beschriftung bleibt mit order:0 oben auf ihrer eigenen Zeile.
     "#local_enhance_row .local-enhance-label{flex:0 0 100% !important;"
