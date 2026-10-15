@@ -3037,14 +3037,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         zwischengespeichert wird. Beide Rueckgaben sind gegen Fehler gesichert -
         der Tab-Wechsel darf nie werfen.
         """
-        # Reihenfolge: was im Arbeitsfeld steht, sonst der Standard-Prompt des
-        # Plugins, sonst erst WanGPs aktueller Prompt. Frueher stand WanGPs Wert
-        # vorn - der Tab-Wechsel hat damit den Standard-Prompt geloescht.
-        aktuell = str(getattr(getattr(self, "_prompt_box", None), "value", "") or "").strip()
-        if aktuell:
-            prompt = aktuell
-        else:
-            prompt = self._default_prompt()
+        # Vorgabe: Beim Aktivieren des Tabs steht IMMER der Standard-Prompt im
+        # Feld. Frueher hatte der vorhandene Feldinhalt Vorrang - stand dort
+        # WanGPs Prompt, blieb der stehen. Nur ohne Standard-Prompt wird
+        # durchgereicht, was schon da war bzw. was WanGP gerade fuehrt.
+        prompt = self._default_prompt()
+        if not prompt:
+            aktuell = str(getattr(getattr(self, "_prompt_box", None), "value", "") or "").strip()
+            if aktuell:
+                prompt = aktuell
         if not prompt:
             try:
                 prompt = str(self.get_current_model_settings(state).get("prompt", "") or "")
