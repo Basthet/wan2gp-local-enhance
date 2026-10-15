@@ -272,7 +272,7 @@ _TEMPLATE_TEXT_KEY = "local_enhance_template_text"
 # traegt sie bei jedem Tab-Wechsel in WanGPs LoRA-Auswahl nach (activated_loras),
 # ohne die vom Nutzer gewaehlten LoRAs anzutasten.
 _BYPASS_LORA_KEY = "local_enhance_bypass_lora"
-_BYPASS_LORA_DEFAULT = "krea2/krea2bypass_balanced.safetensors"
+_BYPASS_LORA_DEFAULT = "krea2bypass_balanced"
 # Label der LoRA-Auswahl in der Oberflaeche (media_flow).
 _LORA_SELECTOR_LABEL = "Activated LoRAs"
 # Gilt nur fuer diese Modelle: Pruefung gegen den internen Modelltyp
@@ -808,10 +808,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return name
         config = _main("server_config") or {}
         wurzel = str(config.get("loras_root") or "").strip() if isinstance(config, dict) else ""
-        if wurzel:
-            kandidat = os.path.join(wurzel, name)
+        if not wurzel or not os.path.isdir(wurzel):
+            return name
+        # 1. Name wie angegeben (mit und ohne Endung), 2. im Baum suchen.
+        for versuch in (name, name + ".safetensors"):
+            kandidat = os.path.join(wurzel, versuch)
             if os.path.isfile(kandidat):
                 return kandidat
+        stamm = name.rsplit("/", 1)[-1]
+        if stamm.lower().endswith(".safetensors"):
+            stamm = stamm[: -len(".safetensors")]
+        for ordner, _, dateien in os.walk(wurzel):
+            for datei in dateien:
+                if datei.lower() in (stamm.lower() + ".safetensors", stamm.lower() + ".sft"):
+                    return os.path.join(ordner, datei)
         return name
 
     @classmethod
