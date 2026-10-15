@@ -752,6 +752,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             config[_TEMPLATE_TEXT_KEY] = str(text or "")
 
     @classmethod
+    def _active_template_text(cls):
+        """Der System-Prompt, der gerade gilt - zum Ansehen und Aendern."""
+        wahl = cls._template_choice()
+        if wahl == _TEMPLATE_SHEET:
+            return _TEMPLATE_SHEET_TEXT
+        if wahl == _TEMPLATE_TURNAROUND:
+            return _TEMPLATE_TURNAROUND_TEXT
+        if wahl == _TEMPLATE_CUSTOM:
+            return cls._template_text() or _TEMPLATE_SHEET_TEXT
+        return cls._fallback_instructions(True, False, 0, 150)
+
+    @classmethod
     def _template_status_text(cls):
         """Eine Zeile fuer die Karte: welche Vorlage gilt gerade."""
         choice = cls._template_choice()
@@ -2971,12 +2983,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     value=self._template_choice(),
                     label="Vorlage",
                 )
+                # Zeigt den System-Prompt, den das Plugin dem lokalen Modell
+                # vorgibt - und macht ihn aenderbar.
                 template_text = gr.Textbox(
-                    label="Eigener Vorlagentext",
-                    value=self._template_text() or _TEMPLATE_SHEET_TEXT,
-                    lines=7,
-                    visible=self._template_choice() == _TEMPLATE_CUSTOM,
-                    placeholder="Nur bei 'Eigene Vorlage' sichtbar.",
+                    label="System-Prompt (wird dem lokalen Modell vorgegeben)",
+                    value=self._active_template_text(),
+                    lines=10,
+                    visible=True,
                 )
                 with gr.Row(elem_classes=["le-actions"]):
                     template_save = gr.Button("Vorlage speichern", size="sm", variant="primary")
@@ -3105,7 +3118,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         def vorlage_wechsel(choice, text):
             self._save_template(choice, text)
             return (
-                gr.update(visible=(choice == _TEMPLATE_CUSTOM)),
+                gr.update(value=self._active_template_text()),
                 self._template_status_text(),
             )
 
@@ -3117,13 +3130,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
 
         def vorlage_speichern(choice, text):
-            self._save_template(choice, text)
-            return self._template_status_text()
+            # Der editierte Text wird zur eigenen Vorlage.
+            self._save_template(_TEMPLATE_CUSTOM, text)
+            return gr.update(value=_TEMPLATE_CUSTOM), self._template_status_text()
 
         template_save.click(
             fn=vorlage_speichern,
             inputs=[template_dd, template_text],
-            outputs=[template_status],
+            outputs=[template_dd, template_status],
             show_progress="hidden",
         )
 

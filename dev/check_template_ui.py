@@ -78,7 +78,7 @@ print("Typen:", typen)
 
 assert len(karten) == 5, f"erwartet 5 Karten, gefunden {len(karten)}"
 assert "Vorlage" in labels, "Vorlagen-Dropdown fehlt"
-assert "Eigener Vorlagentext" in labels, "Vorlagen-Textfeld fehlt"
+assert "System-Prompt (wird dem lokalen Modell vorgegeben)" in labels, "Vorlagen-Textfeld fehlt"
 assert "Prompt" in labels and "Erweiterter Prompt" in labels, "Prompt-Werkstatt fehlt"
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
 ids = [getattr(k, "elem_id", None) for k in knoten if getattr(k, "elem_id", None)]
