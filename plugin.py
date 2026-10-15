@@ -2724,6 +2724,25 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except Exception as exc:  # noqa: BLE001
             print(f"[{PlugIn_Name}] Could not unwrap the word-limit fields: {exc}")
 
+        # Die Checkbox "Specific Prompt" gruppiert Gradio ebenfalls in einen
+        # gr.Form (live gemessen: div.form, 556 px breit, praktisch leer - der
+        # graue Kasten in der Zeile). Sie wird herausgeloest und direkt in die
+        # Reihe gehaengt, damit sie dort schmal und buendig steht.
+        try:
+            for kandidat in list(getattr(button_row, "children", []) or []):
+                innen = getattr(kandidat, "children", None)
+                if not innen or not any(eintrag is sheet_check for eintrag in innen):
+                    continue
+                for eintrag in list(innen):
+                    if eintrag is sheet_check:
+                        innen.remove(eintrag)
+                        eintrag.parent = button_row
+                        button_row.children.append(eintrag)
+                if not innen and any(vorhanden is kandidat for vorhanden in button_row.children):
+                    button_row.children.remove(kandidat)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Could not unwrap the specific-prompt checkbox: {exc}")
+
         # Nach dem Auspacken haengen die Felder in keinem Container mehr. Sie
         # kommen zurueck in die Knopfreihe: _attach_word_fields() braucht einen
         # bekannten Elterncontainer, aus dem es sie entfernen kann, und bis
