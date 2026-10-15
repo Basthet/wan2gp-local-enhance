@@ -246,9 +246,16 @@ _UI_CSS = (
     "#local_enhance_row .local-enhance-label,"
     "#local_enhance_row .cbx_centered{"
     "width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}"
-    # Die Modus-Zeile: der gr.Form hinter der Knopfreihe, in dem nur noch das
-    # Modus-Dropdown sitzt.
-    "#local_enhance_row + .form{flex-basis:100% !important;}"
+    # WanGPs Zeile um den Enhance-Knopf ist eine Flex-ZEILE: ausgeblendeter
+    # Knopf, meine Reihe und der gr.Form mit dem Modus-Dropdown standen deshalb
+    # nebeneinander (zwei Spalten). Live gemessen am DOM:
+    #   div.row.wangp-prompt-enhancer-row > [button#local_enhance_builtin_btn,
+    #                                        div#local_enhance_row, div.form]
+    # Als Spalte stehen Dropdown und Knoepfe untereinander in EINER Spalte.
+    ".wangp-prompt-enhancer-row{flex-direction:column !important;"
+    "align-items:stretch !important;gap:6px !important;}"
+    ".wangp-prompt-enhancer-row > .form{width:100% !important;flex-basis:100% !important;}"
+    ".wangp-prompt-enhancer-row > .form .block{width:100% !important;}"
     # --- Karten im Plugin-Tab ---------------------------------------------
     ".le-card{"
     "border:1px solid var(--border-color-primary,#3a3a3a);"
