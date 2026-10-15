@@ -794,35 +794,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return bool(typ) and any(m in typ for m in muster)
 
     @classmethod
-    def _resolve_lora_path(cls, name):
-        """LoRA-Namen zu einem Pfad machen, den der Host findet.
+    def _lora_filename(cls, name):
+        """Nur der Dateiname der LoRA.
 
-        Der Host setzt jeden Namen an get_lora_dir(model_type) an. Enthaelt der
-        Name den Unterordner schon (``krea2/...``), entsteht
-        ``.../loras/krea2/krea2/...`` und die Pruefung meldet die Datei als
-        fehlend. Absolute Pfade nimmt get_lora_local_path() unveraendert, deshalb
-        wird hier gegen loras_root aufgeloest.
+        Der Host setzt jeden Namen an get_lora_dir(model_type) an - fuer Krea 2
+        ist das bereits .../loras/krea2. Ein Ordner im Namen erzeugte deshalb
+        ".../krea2/krea2/..." ("Loras files are missing"), ein absoluter Pfad
+        wurde in der Auswahl als Pfad angezeigt. Die Auswahlliste fuehrt
+        Dateinamen, genau wie die .lset-Presets.
         """
-        name = str(name or "").strip()
-        if not name or os.path.isabs(name):
-            return name
-        config = _main("server_config") or {}
-        wurzel = str(config.get("loras_root") or "").strip() if isinstance(config, dict) else ""
-        if not wurzel or not os.path.isdir(wurzel):
-            return name
-        # 1. Name wie angegeben (mit und ohne Endung), 2. im Baum suchen.
-        for versuch in (name, name + ".safetensors"):
-            kandidat = os.path.join(wurzel, versuch)
-            if os.path.isfile(kandidat):
-                return kandidat
-        stamm = name.rsplit("/", 1)[-1]
-        if stamm.lower().endswith(".safetensors"):
-            stamm = stamm[: -len(".safetensors")]
-        for ordner, _, dateien in os.walk(wurzel):
-            for datei in dateien:
-                if datei.lower() in (stamm.lower() + ".safetensors", stamm.lower() + ".sft"):
-                    return os.path.join(ordner, datei)
-        return name
+        datei = str(name or "").strip().rsplit("/", 1)[-1]
+        if datei and not datei.lower().endswith((".safetensors", ".sft")):
+            datei += ".safetensors"
+        return datei
 
     @classmethod
     def _with_bypass_lora(cls, aktuelle, model_type=None):
@@ -839,7 +823,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         kurz = name.rsplit("/", 1)[-1].lower()
         if any(str(x).lower().endswith(kurz) or kurz in str(x).lower() for x in liste):
             return liste
-        return liste + [cls._resolve_lora_path(name)]
+        return liste + [cls._lora_filename(name)]
 
     @classmethod
     def _bypass_status_text(cls):
