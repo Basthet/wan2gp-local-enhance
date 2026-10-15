@@ -236,7 +236,9 @@ _UI_CSS = (
     "#local_enhance_builtin_btn{display:none !important;}"
     # Zeile 1 wird nur so breit wie ihr Inhalt, damit die Modus-Zeile darunter
     # umbrechen kann statt die Knoepfe zu quetschen.
-    "#local_enhance_row{flex-wrap:wrap !important;}"
+    "#local_enhance_row{flex-wrap:wrap !important;gap:6px !important;"
+    "align-items:center !important;}"
+    "#local_enhance_row button{min-width:118px !important;white-space:nowrap !important;}"
     "#local_enhance_row .local-enhance-label,"
     "#local_enhance_row .cbx_centered{"
     "width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}"
@@ -481,6 +483,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         Ein direkter Attributzugriff genuegt: Gradio liest 'visible' erst beim
         Rendern der Config aus, und post_ui_setup laeuft vor dem Start.
         """
+        # Der Standard-Prompt gehoert ins WanGP-Promptfeld, nicht nur in den
+        # Plugin-Tab: dort schaut man hin. Der Wert steht beim Rendern der
+        # Oberflaeche fest, deshalb wirkt das Setzen hier.
+        standard = self._default_prompt()
+        prompt_komponente = components.get("prompt") if isinstance(components, dict) else None
+        if prompt_komponente is not None and standard:
+            try:
+                prompt_komponente.value = standard
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{PlugIn_Name}] Promptfeld nicht gesetzt: {exc}")
+
         builtin = components.get("prompt_enhancer_btn") if isinstance(components, dict) else None
         if builtin is not None:
             try:
