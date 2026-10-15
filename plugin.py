@@ -720,7 +720,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     @staticmethod
     def _system_prompt_path():
-        """Pfad der Textdatei mit dem System-Prompt (neben plugin.py)."""
+        """Pfad der Textdatei mit dem System-Prompt.
+
+        Vorrang hat das Quell-Repo (~/git/wan2gp-local-enhance): dort gehoert die
+        Datei hin, damit der geladene Klon sauber bleibt und WanGPs *Update*
+        nicht an lokalen Aenderungen scheitert. Ohne Quell-Repo (andere Rechner)
+        liegt sie neben plugin.py.
+        """
+        quelle = Path.home() / "git" / "wan2gp-local-enhance" / _SYSTEM_PROMPT_FILE
+        if quelle.parent.is_dir():
+            return quelle
         return Path(__file__).resolve().parent / _SYSTEM_PROMPT_FILE
 
     @classmethod

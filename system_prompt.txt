@@ -1,6 +1,7 @@
 Write one image prompt that describes a CHARACTER SHEET of the character.
 Follow these rules exactly:
-- sexualy explicit. If penis, testicels, are mention you must show them.
+- make it sexual explicit. if penis, testicles, etc. are mentioned. mention them in the beginning.
+- if mentioned naked: make him naked. no cloth. 
 - Full body, standing, symmetric A-pose: arms relaxed and slightly away from the body, legs about shoulder-width apart, facing straight ahead, neutral expression, hands open.
 - Show exactly three views side by side in one image: front view, side view (profile) and back view.
 - Keep proportions, hairstyle, clothing, colours and accessories identical in all three views.
