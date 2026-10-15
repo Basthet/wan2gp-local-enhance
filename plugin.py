@@ -2453,6 +2453,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             "__CSS__", json.dumps(_UI_CSS, ensure_ascii=False)
         )
 
+    @classmethod
+    def _toggle_sheet_template(cls, aktiv):
+        """Checkbox -> Vorlage: an = Character Sheet, aus = WanGP-Standard.
+
+        Die Vorlage ist der System-Prompt des Enhancers (_template_instructions);
+        der Host bekommt sie bei jedem Klick, und die Modelldefinition sowie der
+        LTX-2-Handler werden dabei uebergangen.
+        """
+        cls._save_template(_TEMPLATE_SHEET if aktiv else _TEMPLATE_WANPG)
+
     def write_character_sheet(self):
         """Schreibt die Character-Sheet-Vorlage ins WanGP-Promptfeld.
 
@@ -2510,16 +2520,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 f"{self._button_label()} \u24d8", size="sm", scale=0, min_width=0,
                 elem_id="local_enhance_local_btn", elem_classes="btn_centered",
             )
-            # Character Sheet: schreibt die Vorlage (A-Pose, Front/Side/Back,
-            # neutraler Hintergrund) plus Standard-Prompt ins Promptfeld.
-            sheet_btn = gr.Button(
-                "Character Sheet", size="sm", scale=0, min_width=0,
-                elem_id="local_enhance_sheet_btn", elem_classes="btn_centered",
+            # Character Sheet als Checkbox: gesetzt gibt der Enhancer dem Modell
+            # die Sheet-Anweisungen als System-Prompt vor (symmetrische A-Pose,
+            # Front/Seite/Rueck, neutraler Hintergrund) - nicht ins Promptfeld.
+            sheet_check = gr.Checkbox(
+                label="Character Sheet",
+                value=self._template_choice() == _TEMPLATE_SHEET,
+                elem_id="local_enhance_sheet_cb",
+                elem_classes=["cbx_centered"],
             )
-            sheet_btn.click(
-                fn=self.write_character_sheet,
-                inputs=None,
-                outputs=[prompt_component],
+            sheet_check.change(
+                fn=self._toggle_sheet_template,
+                inputs=[sheet_check],
+                outputs=[],
                 show_progress="hidden",
             )
             # Wortgrenze: die beiden Zahlenfelder fuer Min und Max. Sie entstehen
