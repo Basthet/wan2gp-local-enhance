@@ -249,7 +249,13 @@ _UI_CSS = (
     "#local_enhance_row button{flex:0 0 auto !important;width:auto !important;"
     "min-width:0 !important;}"
     "#local_enhance_row .cbx_centered{flex:0 0 auto !important;"
-    "min-width:max-content !important;max-width:max-content !important;}"
+    "min-width:max-content !important;max-width:max-content !important;"
+    # Gemessen: die Kaestchen-Bloecke sind 44 px hoch, die Knoepfe (size=sm)
+    # 32 px. Auf Knopfhoehe gesetzt und Inhalt mittig, damit alles auf einer
+    # Grundlinie liegt.
+    "height:32px !important;min-height:32px !important;"
+    "align-items:center !important;"
+    "padding-top:0 !important;padding-bottom:0 !important;}"
     ".wangp-prompt-enhancer-row{flex-direction:column !important;"
     "align-items:stretch !important;gap:6px !important;}"
     ".wangp-prompt-enhancer-row > .form{width:100% !important;flex-basis:100% !important;}"
