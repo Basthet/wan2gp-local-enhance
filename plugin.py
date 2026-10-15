@@ -273,12 +273,14 @@ _TEMPLATE_TEXT_KEY = "local_enhance_template_text"
 # ohne die vom Nutzer gewaehlten LoRAs anzutasten.
 _BYPASS_LORA_KEY = "local_enhance_bypass_lora"
 _BYPASS_LORA_DEFAULT = "krea2/krea2bypass_balanced.safetensors"
+# Label der LoRA-Auswahl in der Oberflaeche (media_flow).
+_LORA_SELECTOR_LABEL = "Activated LoRAs"
 # Gilt nur fuer diese Modelle: Pruefung gegen den internen Modelltyp
 # (z. B. "krea2_turbo") als Praefix/Teilstring, mehrere durch Komma.
 # LEER heisst: immer - dann traegt das Plugin die Bypass-LoRA bei jedem Modell
 # nach, so wie es das urspruengliche Plugin getan hat.
 _BYPASS_MODELS_KEY = "local_enhance_bypass_models"
-_BYPASS_MODELS_DEFAULT = ""
+_BYPASS_MODELS_DEFAULT = "krea2"
 
 # Standard-Prompt des Plugins: steht im Arbeitsfeld, sobald der Tab aufgeht.
 # Ueberschreibbar in der Oberflaeche, Feld leeren = kein Standard.
@@ -494,6 +496,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 prompt_komponente.value = standard
             except Exception as exc:  # noqa: BLE001
                 print(f"[{PlugIn_Name}] Promptfeld nicht gesetzt: {exc}")
+
+        # Bypass-LoRA sichtbar in die LoRA-Auswahl eintragen (Krea 2).
+        self._sync_lora_selector()
 
         builtin = components.get("prompt_enhancer_btn") if isinstance(components, dict) else None
         if builtin is not None:
@@ -867,6 +872,61 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         config[_BYPASS_LORA_KEY] = str(text or "").strip()
         if modelle is not None:
             config[_BYPASS_MODELS_KEY] = str(modelle or "").strip()
+
+    def _find_lora_selector(self):
+        """Die LoRA-Auswahl der laufenden App finden.
+
+        Sie gehoert dem media_flow-Plugin und ist per request_component() nicht
+        erreichbar - ihr Label entsteht erst zur Laufzeit. Ueber den Elternweg
+        kommt man aber vom eigenen Bauteil zum Blocks-Objekt und damit an den
+        vollstaendigen Katalog. Live geprueft: Ebene 0..3 bis Blocks, dort liegt
+        ``.blocks`` als dict aller Komponenten.
+        """
+        knoten = getattr(self, "state", None) or getattr(self, "prompt", None)
+        tiefe = 0
+        while knoten is not None and tiefe < 12:
+            katalog = getattr(knoten, "blocks", None)
+            if isinstance(katalog, dict):
+                for kandidat in katalog.values():
+                    label = str(getattr(kandidat, "label", "") or "")
+                    if label == _LORA_SELECTOR_LABEL:
+                        return kandidat
+                    if "lora" in label.lower() and "hierarchy" in type(kandidat).__name__.lower():
+                        return kandidat
+                return None
+            knoten = getattr(knoten, "parent", None)
+            tiefe += 1
+        return None
+
+    def _sync_lora_selector(self):
+        """Bypass-LoRA sichtbar in die Auswahl eintragen (nur passendes Modell).
+
+        Ohne das ist die LoRA zwar beim Generieren dabei, aber nicht angehakt.
+        Der Wert steht vor dem Rendern der Oberflaeche fest, deshalb wirkt das
+        Setzen hier.
+        """
+        auswahl = getattr(self, "_lora_selector", None) or self._find_lora_selector()
+        if auswahl is None:
+            return None
+        self._lora_selector = auswahl
+        config = _main("server_config") or {}
+        typ = config.get("last_model_type") if isinstance(config, dict) else None
+        roh = getattr(auswahl, "value", None)
+        if roh is None:
+            aktuell = []
+        elif isinstance(roh, (list, tuple)):
+            aktuell = list(roh)
+        else:
+            # Unbekanntes Format (z. B. eine Textbox): nicht anfassen.
+            return auswahl
+        neu = self._with_bypass_lora(aktuell, typ)
+        if neu != aktuell:
+            try:
+                auswahl.value = neu
+                print(f"[{PlugIn_Name}] Bypass-LoRA ausgewaehlt: {neu}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{PlugIn_Name}] LoRA-Auswahl nicht gesetzt: {exc}")
+        return auswahl
 
     def _install_lora_hook(self):
         """Traegt die Bypass-LoRA in jede Generierung ein, bevor sie prueft wird.
