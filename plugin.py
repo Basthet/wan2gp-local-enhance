@@ -273,6 +273,9 @@ _TEMPLATE_TEXT_KEY = "local_enhance_template_text"
 # ohne die vom Nutzer gewaehlten LoRAs anzutasten.
 _BYPASS_LORA_KEY = "local_enhance_bypass_lora"
 _BYPASS_LORA_DEFAULT = "krea2bypass_balanced"
+# Der System-Prompt liegt als Textdatei neben plugin.py - dort laesst
+# er sich ohne Code aendern.
+_SYSTEM_PROMPT_FILE = "system_prompt.txt"
 # Label der LoRA-Auswahl in der Oberflaeche (media_flow).
 _LORA_SELECTOR_LABEL = "Activated LoRAs"
 # Gilt nur fuer diese Modelle: Pruefung gegen den internen Modelltyp
@@ -467,7 +470,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self.request_global("get_model_def")
         self.request_global("get_model_settings")
         self.request_global("get_prompt_enhancer_choices")
-        self.add_tab(tab_id=PlugIn_Id, label=PlugIn_Name, component_constructor=self.create_ui)
+        self.add_tab(tab_id=PlugIn_Id, label="Enhance Prompt", component_constructor=self.create_ui)
         self.add_custom_js(self._info_tooltip_js())
         # Knoepfe direkt neben "Enhance Prompt". Schlaegt das fehl, wird es
         # vom PluginManager geloggt und der Tab oben funktioniert trotzdem.
@@ -711,6 +714,40 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         value = str(value or "").strip()
         return value if value in _TEMPLATE_PRESETS else _DEFAULT_TEMPLATE
 
+    @staticmethod
+    def _system_prompt_path():
+        """Pfad der Textdatei mit dem System-Prompt (neben plugin.py)."""
+        return Path(__file__).resolve().parent / _SYSTEM_PROMPT_FILE
+
+    @classmethod
+    def _specific_prompt(cls):
+        """Der System-Prompt aus der Textdatei; ohne Datei der Config-Text.
+
+        Die Datei hat Vorrang: sie ist der bequeme Weg, den Prompt zu aendern
+        (Editor statt Oberflaeche), und wird beim Speichern aus dem Tab
+        mitgeschrieben.
+        """
+        pfad = cls._system_prompt_path()
+        try:
+            if pfad.is_file():
+                inhalt = pfad.read_text(encoding="utf-8").strip()
+                if inhalt:
+                    return inhalt
+        except Exception:  # noqa: BLE001 - ohne Datei gilt der Config-Text
+            pass
+        return cls._template_text()
+
+    @classmethod
+    def _save_specific_prompt(cls, text):
+        """Den System-Prompt in die Textdatei schreiben."""
+        pfad = cls._system_prompt_path()
+        try:
+            pfad.write_text(str(text or "").strip() + "\n", encoding="utf-8")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] System-Prompt nicht gespeichert: {exc}")
+            return False
+
     @classmethod
     def _template_text(cls, value=None):
         """Der frei editierbare Vorlagentext aus der Konfiguration."""
@@ -734,7 +771,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if choice == _TEMPLATE_TURNAROUND:
             text = _TEMPLATE_TURNAROUND_TEXT
         elif choice == _TEMPLATE_CUSTOM:
-            text = cls._template_text() or _TEMPLATE_SHEET_TEXT
+            text = cls._specific_prompt() or _TEMPLATE_SHEET_TEXT
         else:
             text = _TEMPLATE_SHEET_TEXT
         minimum, maximum = cls._word_range(min_words, max_words)
@@ -760,7 +797,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if wahl == _TEMPLATE_TURNAROUND:
             return _TEMPLATE_TURNAROUND_TEXT
         if wahl == _TEMPLATE_CUSTOM:
-            return cls._template_text() or _TEMPLATE_SHEET_TEXT
+            return cls._specific_prompt() or _TEMPLATE_SHEET_TEXT
         return cls._fallback_instructions(True, False, 0, 150)
 
     @classmethod
@@ -2612,7 +2649,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             # die Sheet-Anweisungen als System-Prompt vor (symmetrische A-Pose,
             # Front/Seite/Rueck, neutraler Hintergrund) - nicht ins Promptfeld.
             sheet_check = gr.Checkbox(
-                label="Character Sheet",
+                label="Specific Prompt",
                 value=self._template_choice() == _TEMPLATE_SHEET,
                 elem_id="local_enhance_sheet_cb",
                 elem_classes=["cbx_centered"],
@@ -3132,6 +3169,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         def vorlage_speichern(choice, text):
             # Der editierte Text wird zur eigenen Vorlage.
             self._save_template(_TEMPLATE_CUSTOM, text)
+            self._save_specific_prompt(text)
             return gr.update(value=_TEMPLATE_CUSTOM), self._template_status_text()
 
         template_save.click(
