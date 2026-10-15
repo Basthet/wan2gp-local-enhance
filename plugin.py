@@ -329,6 +329,12 @@ _TEMPLATE_TURNAROUND_TEXT = (
     "Return only the prompt text, no commentary.\n"
     + _WORD_KEEP_SENTENCE + "\n" + _WORD_LIMIT_SENTENCE
 )
+_SHEET_PROMPT_SUFFIX = (
+    "full-body character sheet, symmetric A-pose with arms slightly away from "
+    "the body, front view, side view and back view side by side, consistent "
+    "proportions, hairstyle, clothing and colours in all views, plain neutral "
+    "background, even studio lighting, nothing cropped"
+)
 _TEMPLATE_PRESETS = {
     _TEMPLATE_WANPG: None,
     _TEMPLATE_SHEET: _TEMPLATE_SHEET_TEXT,
@@ -2434,6 +2440,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             "__CSS__", json.dumps(_UI_CSS, ensure_ascii=False)
         )
 
+    def write_character_sheet(self):
+        """Schreibt die Character-Sheet-Vorlage ins WanGP-Promptfeld.
+
+        Der Knopf sitzt in der Enhance-Prompt-Zeile neben den Enhancer-Knoepfen -
+        dort, wo man ihn sucht. Er setzt den Standard-Prompt als Figur plus die
+        Sheet-Anweisungen: symmetrische A-Pose, Front-/Seiten-/Rueckansicht,
+        neutraler Hintergrund, nichts abgeschnitten.
+        """
+        figur = self._default_prompt()
+        text = f"{figur}, {_SHEET_PROMPT_SUFFIX}" if figur else _SHEET_PROMPT_SUFFIX
+        return gr.update(value=text)
+
     def create_inline_button(self):
         """Zeile 1: Beschriftung, beide Knoepfe und die Think-Checkbox.
         Zeile 2: nur noch das Modus-Dropdown des Hosts.
@@ -2478,6 +2496,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             local_btn = gr.Button(
                 f"{self._button_label()} \u24d8", size="sm", scale=0, min_width=0,
                 elem_id="local_enhance_local_btn", elem_classes="btn_centered",
+            )
+            # Character Sheet: schreibt die Vorlage (A-Pose, Front/Side/Back,
+            # neutraler Hintergrund) plus Standard-Prompt ins Promptfeld.
+            sheet_btn = gr.Button(
+                "Character Sheet", size="sm", scale=0, min_width=0,
+                elem_id="local_enhance_sheet_btn", elem_classes="btn_centered",
+            )
+            sheet_btn.click(
+                fn=self.write_character_sheet,
+                inputs=None,
+                outputs=[prompt_component],
+                show_progress="hidden",
             )
             # Wortgrenze: die beiden Zahlenfelder fuer Min und Max. Sie entstehen
             # hier, weil die Klick-Verdrahtung weiter unten sie schon braucht -
