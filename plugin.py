@@ -238,19 +238,23 @@ _UI_CSS = (
     # Alles in EINER Zeile: Beschriftung, beide Knoepfe und die Kaestchen
     # nebeneinander, kompakt. Breiten kommen aus min_width/scale=0; hier wird
     # nur das Umbrechen verhindert und der Abstand gesetzt.
-    "#local_enhance_row{flex-wrap:wrap !important;align-items:center !important;"
-    "gap:6px !important;}"
-    "#local_enhance_row button{width:auto !important;min-width:0 !important;"
-    "flex:0 0 auto !important;white-space:nowrap !important;}"
-    "#local_enhance_row .local-enhance-label,"
-    "#local_enhance_row .cbx_centered{"
-    "width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}"
-    # WanGPs Zeile um den Enhance-Knopf ist eine Flex-ZEILE: ausgeblendeter
-    # Knopf, meine Reihe und der gr.Form mit dem Modus-Dropdown standen deshalb
-    # nebeneinander (zwei Spalten). Live gemessen am DOM:
-    #   div.row.wangp-prompt-enhancer-row > [button#local_enhance_builtin_btn,
-    #                                        div#local_enhance_row, div.form]
-    # Als Spalte stehen Dropdown und Knoepfe untereinander in EINER Spalte.
+    # Zwei feste Zeilen statt zufaelliger Umbrueche:
+    #   Zeile 1: Beschriftung, OpenCode, Local 27B
+    #   Zeile 2: Specific Prompt, Think
+    # Vorher rutschte "Think" allein in eine dritte Zeile und "Specific Prompt"
+    # wurde von Gradios flex-grow an den rechten Rand gedrueckt.
+    "#local_enhance_row{display:grid !important;"
+    "grid-template-columns:max-content max-content 1fr !important;"
+    "gap:6px 8px !important;align-items:center !important;}"
+    "#local_enhance_row .local-enhance-label{grid-row:1 !important;grid-column:1 !important;}"
+    "#local_enhance_row #local_enhance_remote_btn{grid-row:1 !important;grid-column:2 !important;}"
+    "#local_enhance_row #local_enhance_local_btn{grid-row:1 !important;grid-column:3 !important;"
+    "justify-self:start !important;}"
+    "#local_enhance_row #local_enhance_sheet_cb{grid-row:2 !important;"
+    "grid-column:1 / span 2 !important;justify-self:start !important;"
+    "min-width:max-content !important;}"
+    "#local_enhance_row .cbx_centered:not(#local_enhance_sheet_cb){grid-row:2 !important;"
+    "grid-column:3 !important;justify-self:start !important;min-width:max-content !important;}"
     ".wangp-prompt-enhancer-row{flex-direction:column !important;"
     "align-items:stretch !important;gap:6px !important;}"
     ".wangp-prompt-enhancer-row > .form{width:100% !important;flex-basis:100% !important;}"
