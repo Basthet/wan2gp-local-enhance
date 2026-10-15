@@ -492,3 +492,15 @@ neu starten.
   weiterhin keine Bilder; Geometrie-Felder kommen aus dem Settings-Snapshot statt
   live. Für den Standardfall (Bildmodell, Startbild/Referenzen/Control Image)
   ist die Kette vollständig.
+
+## Fortschrittsanzeige (2026-10-05)
+
+Die beiden Inline-Knoepfe liefen mit `show_progress="hidden"`, und
+`ensure_prompt_enhancer_loaded()` wurde ohne `progress=` aufgerufen. WanGP
+meldet Fortschritt aber nur MIT progress (wgp.py:3983, `if progress is not None`)
+- beim Kaltstart der 27B sah man deshalb gar nichts, der Toast kam erst am Ende.
+Jetzt: `enhance()` und `enhance_inline()` nehmen `progress=gr.Progress()`,
+`enhance_inline()` reicht es durch, der Loader bekommt es, und `local_btn` steht
+auf `show_progress="full"` (plus Status "Enhancing Prompt" vor `process()`).
+Das genaue Log bleibt das Terminal (tqdm "Qwen3.5 prompt enhancement" /
+"Generating ... Prefill/Decode"). Backup: `plugin.py.bak-20261005-progress`.
