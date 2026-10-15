@@ -238,24 +238,18 @@ _UI_CSS = (
     # Alles in EINER Zeile: Beschriftung, beide Knoepfe und die Kaestchen
     # nebeneinander, kompakt. Breiten kommen aus min_width/scale=0; hier wird
     # nur das Umbrechen verhindert und der Abstand gesetzt.
-    # Zwei feste Zeilen statt zufaelliger Umbrueche:
-    #   Zeile 1: Beschriftung, OpenCode, Local 27B
-    #   Zeile 2: Specific Prompt, Think
-    # Vorher rutschte "Think" allein in eine dritte Zeile und "Specific Prompt"
-    # wurde von Gradios flex-grow an den rechten Rand gedrueckt.
-    "#local_enhance_row{display:grid !important;"
-    "grid-template-columns:max-content max-content 1fr !important;"
-    "gap:6px 10px !important;align-items:center !important;row-gap:4px !important;}"
-    "#local_enhance_row .local-enhance-label{grid-row:1 !important;grid-column:1 !important;}"
-    "#local_enhance_row #local_enhance_remote_btn{grid-row:1 !important;grid-column:2 !important;}"
-    "#local_enhance_row #local_enhance_local_btn{grid-row:1 !important;grid-column:3 !important;"
-    "justify-self:start !important;}"
-    "#local_enhance_row #local_enhance_sheet_cb{grid-row:2 !important;"
-    "grid-column:1 !important;justify-self:start !important;"
-    "min-width:max-content !important;}"
-    # Think direkt daneben statt am Rand der dritten Spalte.
-    "#local_enhance_row .cbx_centered:not(#local_enhance_sheet_cb){grid-row:2 !important;"
-    "grid-column:2 !important;justify-self:start !important;min-width:max-content !important;}"
+    # Zeile 1: nur die Beschriftung. Zeile 2: alles andere (beide Knoepfe und
+    # beide Kaestchen) mit natuerlichem Umbruch - passt es nicht, bricht es um.
+    # Vorher standen Beschriftung und Knoepfe in einer Zeile und die Kaestchen
+    # in einer zweiten.
+    "#local_enhance_row{display:flex !important;flex-wrap:wrap !important;"
+    "align-items:center !important;gap:6px !important;}"
+    "#local_enhance_row .local-enhance-label{flex:0 0 100% !important;"
+    "width:auto !important;}"
+    "#local_enhance_row button{flex:0 0 auto !important;width:auto !important;"
+    "min-width:0 !important;}"
+    "#local_enhance_row .cbx_centered{flex:0 0 auto !important;"
+    "min-width:max-content !important;max-width:max-content !important;}"
     ".wangp-prompt-enhancer-row{flex-direction:column !important;"
     "align-items:stretch !important;gap:6px !important;}"
     ".wangp-prompt-enhancer-row > .form{width:100% !important;flex-basis:100% !important;}"
