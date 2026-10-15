@@ -237,9 +237,15 @@ _UI_CSS = (
     "#local_enhance_builtin_btn{display:none !important;}"
     # Zeile 1 wird nur so breit wie ihr Inhalt, damit die Modus-Zeile darunter
     # umbrechen kann statt die Knoepfe zu quetschen.
-    "#local_enhance_row{flex-wrap:wrap !important;gap:6px !important;"
-    "align-items:center !important;}"
-    "#local_enhance_row button{min-width:118px !important;white-space:nowrap !important;}"
+    # Eine saubere Spalte: Knopfreihe und Kästchen buendig untereinander,
+    # gleiche Breite, ruhige Abstaende - vorher standen schmale Knoepfe neben
+    # breiteren Kaestchen ohne gemeinsame Kante.
+    "#local_enhance_row{flex-direction:column !important;align-items:stretch !important;"
+    "gap:6px !important;}"
+    "#local_enhance_row button{width:100% !important;min-width:0 !important;"
+    "justify-content:flex-start !important;white-space:nowrap !important;}"
+    "#local_enhance_row .local-enhance-label{width:100% !important;}"
+    "#local_enhance_row .cbx_centered{width:100% !important;}"
     "#local_enhance_row .local-enhance-label,"
     "#local_enhance_row .cbx_centered{"
     "width:auto !important;flex:0 0 auto !important;min-width:max-content !important;}"
