@@ -132,6 +132,11 @@ neu starten.
   Ersatztext
 - `73fd23d` — Stand der Anleitung nachgezogen: Modell-Check mit Modellzeile und
   gebündelter Liste
+- `0a21eb0` — Prompt-Bibliothek: Zeile-1-Checkbox durch Dropdown ersetzt
+  (`default` + `<Ordner>/*.txt`), Tab-Karte mit Ordner-/Namensfeld und
+  Speichern, einmalige Migration (`photograf` + `sheet`), Helfer und Tests
+- `ecdd36b` — `system_prompt.txt` auf den Photographer-Prompt umgestellt
+  (Quelle für `photograf.txt` bei der Migration), separat committet
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
