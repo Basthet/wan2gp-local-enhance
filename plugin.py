@@ -345,11 +345,18 @@ _DEFAULT_PROMPT_TEXT = (
 _WORD_KEEP_SENTENCE = "Keep within 150 words."
 _WORD_LIMIT_SENTENCE = "Do not exceed the 150 word limit!"
 
-_TEMPLATE_WANPG = "WanGP-Standard"
+_TEMPLATE_WANPG = "WanGP default"
 _TEMPLATE_SHEET = "Character Sheet"
-_TEMPLATE_TURNAROUND = "Turnaround (4 Ansichten)"
-_TEMPLATE_CUSTOM = "Eigene Vorlage"
+_TEMPLATE_TURNAROUND = "Turnaround (4 views)"
+_TEMPLATE_CUSTOM = "Custom template"
 _DEFAULT_TEMPLATE = _TEMPLATE_WANPG
+# Alte deutsche Namen bleiben gueltig (Config-Bestand), werden aber nicht mehr
+# angeboten.
+_TEMPLATE_LEGACY = {
+    "WanGP-Standard": _PROMPT_DEFAULT,
+    "Turnaround (4 Ansichten)": _TEMPLATE_TURNAROUND,
+    "Eigene Vorlage": _TEMPLATE_CUSTOM,
+}
 
 # Die Vorlagen sind bewusst auf Englisch: das lokale Qwen-Modell schreibt
 # englische Prompts, und die Wortgrenzen-Saetze am Ende werden von
@@ -397,9 +404,9 @@ _TEMPLATE_PRESETS = {
     _TEMPLATE_CUSTOM: None,  # Text kommt aus dem Feld
 }
 _TEMPLATE_HELP = (
-    "Der Host bevorzugt eigene Anweisungen aus der Modelldefinition und aus "
-    "dem LTX-2-Handler gegen die des Plugins. Eine gewaehlte Vorlage schaltet "
-    "beide fuer die Dauer des Aufrufs ab - sie gilt also wirklich."
+    "The host prefers instructions from the model definition and the LTX-2 "
+    "handler over the plugin's own. A selected prompt disables both for the "
+    "duration of the call, so the choice really applies."
 )
 _BASE_OUTPUT_TOKENS = 512
 _MAX_OUTPUT_TOKENS = 4096
@@ -768,6 +775,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if value is None:
             value = config.get(_TEMPLATE_KEY, _PROMPT_DEFAULT)
         value = str(value or "").strip()
+        value = _TEMPLATE_LEGACY.get(value, value)
         if value in ("", _TEMPLATE_WANPG, _PROMPT_DEFAULT):
             return _PROMPT_DEFAULT
         if value in _TEMPLATE_PRESETS:
@@ -893,13 +901,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         """Eine Zeile fuer die Karte: welche Vorlage gilt gerade."""
         choice = cls._template_choice()
         if choice == _PROMPT_DEFAULT:
-            return ("**Prompt:** default - WanGPs normaler System-Prompt; das "
-                    "Plugin ueberschreibt nichts.")
+            return ("**Prompt:** default - WanGP's normal system prompt; the "
+                    "plugin overrides nothing.")
         if choice in (_TEMPLATE_SHEET, _TEMPLATE_TURNAROUND, _TEMPLATE_CUSTOM):
-            return (f"**Prompt aktiv:** {choice} - ueberschreibt die Anweisungen aus "
-                    "Modelldefinition und LTX-2-Handler.")
-        return (f"**Prompt aktiv:** {choice} - aus der Bibliothek "
-                f"({cls._prompt_dir()}); gilt fuer beide Knoepfe.")
+            return (f"**Prompt active:** {choice} - overrides the instructions from "
+                    "the model definition and the LTX-2 handler.")
+        return (f"**Prompt active:** {choice} - from the library "
+                f"({cls._prompt_dir()}); applies to both buttons.")
 
     # ------------------------------------------------------ Prompt-Bibliothek
 
@@ -1102,11 +1110,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def _bypass_status_text(cls):
         name = cls._bypass_lora()
         if not name:
-            return "**Bypass-LoRA:** aus."
+            return "**Bypass LoRA:** off."
         modelle = ", ".join(cls._bypass_models())
-        wo = f"nur bei: `{modelle}`" if modelle else "bei **jedem** Modell"
-        return (f"**Bypass-LoRA:** `{name}` - wird bei jedem Tab-Wechsel "
-                f"zusaetzlich eingetragen, {wo}.")
+        wo = f"only for: `{modelle}`" if modelle else "for **every** model"
+        return (f"**Bypass LoRA:** `{name}` - added on every tab switch, "
+                f"{wo}.")
 
     @classmethod
     def _default_prompt(cls, value=None):
@@ -1127,9 +1135,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def _default_prompt_status(cls):
         text = cls._default_prompt()
         if not text:
-            return "**Standard-Prompt:** keiner."
+            return "**Default prompt:** none."
         kurz = text if len(text) <= 80 else text[:77] + "..."
-        return f"**Standard-Prompt:** {kurz}"
+        return f"**Default prompt:** {kurz}"
 
     @classmethod
     def _save_bypass_lora(cls, text, modelle=None):
@@ -3272,16 +3280,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         with gr.Column():
             # --- Karte 1: Prompt-Bibliothek -------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>Prompt-Bibliothek &middot; System-Prompt des Enhancers</div>")
+                gr.HTML("<div class='le-card-title'>Prompt library &middot; enhancer system prompt</div>")
                 gr.HTML(f"<div class='le-hint'>{_TEMPLATE_HELP}</div>")
                 with gr.Row(elem_classes=["le-row"]):
                     prompt_dir_field = gr.Textbox(
-                        label="Prompt-Ordner",
+                        label="Prompt folder",
                         value=self._prompt_dir_setting(),
                         scale=3,
                     )
                     prompt_dir_save = gr.Button(
-                        "Ordner speichern", size="sm", scale=0, min_width=160,
+                        "Save folder", size="sm", scale=0, min_width=160,
                     )
                 tab_choices = self._prompt_choices()
                 tab_wahl = self._template_choice()
@@ -3295,31 +3303,31 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 # Zeigt den System-Prompt des gewaehlten Eintrags und ist die
                 # Quelle fuer "Speichern unter Name".
                 template_text = gr.Textbox(
-                    label="System-Prompt (wird dem lokalen Modell vorgegeben)",
+                    label="System prompt (sent to the local model)",
                     value=self._active_template_text(),
                     lines=10,
                     interactive=True,
                 )
                 with gr.Row(elem_classes=["le-row"]):
                     prompt_name_field = gr.Textbox(
-                        label="Name (max. 64 Zeichen)",
+                        label="Name (max. 64 chars)",
                         value="",
                         scale=3,
                         max_lines=1,
                     )
                     template_save = gr.Button(
-                        "Speichern unter Name", size="sm", variant="primary",
+                        "Save as name", size="sm", variant="primary",
                         scale=0, min_width=170,
                     )
                 template_status = gr.Markdown(value=self._template_status_text())
 
             # --- Karte 1b: Bypass-LoRA ------------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>Bypass-LoRA &middot; unzensiert</div>")
+                gr.HTML("<div class='le-card-title'>Bypass LoRA &middot; uncensored</div>")
                 gr.HTML(
-                    "<div class='le-hint'>Gehoert zu jeder eigenen LoRA dazu und wird "
-                    "bei jedem Tab-Wechsel in WanGPs LoRA-Auswahl ergaenzt - deine "
-                    "Auswahl bleibt unveraendert. Feld leeren = aus.</div>"
+                    "<div class='le-hint'>Belongs to every custom LoRA and is added "
+                    "to WanGP's LoRA selection on every tab switch - your selection "
+                    "stays unchanged. Empty field = off.</div>"
                 )
                 bypass_field = gr.Textbox(
                     label="LoRA",
@@ -3327,21 +3335,21 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     placeholder=_BYPASS_LORA_DEFAULT,
                 )
                 bypass_models_field = gr.Textbox(
-                    label="Nur fuer Modelle (komma-getrennt)",
+                    label="Only for models (comma-separated)",
                     value=", ".join(self._bypass_models()),
-                    placeholder="leer = immer",
-                    info="Leer lassen laesst die LoRA bei jedem Modell mitladen.",
+                    placeholder="empty = always",
+                    info="Leave empty to load the LoRA with every model.",
                 )
                 bypass_status = gr.Markdown(value=self._bypass_status_text())
                 with gr.Row(elem_classes=["le-actions"]):
-                    bypass_save = gr.Button("Speichern", size="sm", variant="primary")
+                    bypass_save = gr.Button("Save", size="sm", variant="primary")
 
             # --- Karte 2: Wortgrenzen -------------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>Wortgrenzen</div>")
+                gr.HTML("<div class='le-card-title'>Word limits</div>")
                 gr.HTML(
-                    "<div class='le-hint'>Gelten fuer beide Knoepfe in Zeile 1. "
-                    "0 heisst: keine Grenze.</div>"
+                    "<div class='le-hint'>Apply to both buttons in row 1. "
+                    "0 means: no limit.</div>"
                 )
                 # Die Zeile wird leer geoeffnet, die Felder kommen erst NACH dem
                 # Block hinein: beim Verlassen gruppiert Gradio aufeinanderfolgende
@@ -3354,7 +3362,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
             # --- Karte 3: Modell-Check ------------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>Modell-Check</div>")
+                gr.HTML("<div class='le-card-title'>Model check</div>")
                 # Die Zeile zum aktuellen Modell, der Hinweis, der eingeklappte
                 # Detailbereich mit dem Knopf und die Liste aus dem Zwischenspeicher.
                 _check_btn, current_model_out, _list_out, _status_out = (
@@ -3363,11 +3371,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
             # --- Karte 4: Prompt-Werkstatt --------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>Prompt-Werkstatt</div>")
+                gr.HTML("<div class='le-card-title'>Prompt workshop</div>")
                 gr.HTML(
-                    "<div class='le-hint'>Arbeitsfeld: <b>Local 27B</b> erweitert diesen "
-                    "Text, <b>In den Media Generator schreiben</b> schiebt das Ergebnis "
-                    "ins eigentliche Prompt-Feld neben dem Enhance-Prompt-Knopf.</div>"
+                    "<div class='le-hint'>Working field: <b>Local 27B</b> enhances this "
+                    "text, <b>Write to Media Generator</b> pushes the result into the "
+                    "real prompt field next to the Enhance Prompt button.</div>"
                 )
                 text_in = gr.Textbox(
                     label="Prompt",
@@ -3377,13 +3385,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 )
                 with gr.Row(elem_classes=["le-actions"]):
                     enhance_btn = gr.Button("Local 27B", variant="primary")
-                    copy_btn = gr.Button("Prompt aus dem Media Generator holen")
-                    default_save = gr.Button("Als Standard-Prompt speichern", size="sm")
+                    copy_btn = gr.Button("Pull prompt from Media Generator")
+                    default_save = gr.Button("Save as default prompt", size="sm")
                 prompt_status = gr.Markdown(value=self._default_prompt_status())
-                text_out = gr.Textbox(label="Erweiterter Prompt", lines=5, interactive=True)
+                text_out = gr.Textbox(label="Enhanced prompt", lines=5, interactive=True)
                 with gr.Row(elem_classes=["le-actions"]):
                     if refresh_trigger is not None:
-                        apply_btn = gr.Button("In den Media Generator schreiben")
+                        apply_btn = gr.Button("Write to Media Generator")
                     else:
                         apply_btn = None
                 status = gr.Markdown()
@@ -3476,17 +3484,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             name = str(name or "").strip()
             if not self._prompt_name_ok(name):
                 return _library_error(
-                    "**Nicht gespeichert:** Name ungueltig - 1 bis 64 Zeichen, "
-                    "Buchstaben/Ziffern/Leerzeichen/._- , kein fuehrender Punkt."
+                    "**Not saved:** invalid name - 1 to 64 characters, "
+                    "letters/digits/spaces/._- , no leading dot."
                 )
             vorhanden = name in self._list_prompt_names()
             if not self._write_prompt_entry(name, text):
                 return _library_error(
-                    f"**Nicht gespeichert:** `{self._prompt_dir()}` ist nicht beschreibbar."
+                    f"**Not saved:** `{self._prompt_dir()}` is not writable."
                 )
             self._save_template(name)
             status = (
-                f"**Gespeichert:** `{name}.txt`" + (" (ueberschrieben)" if vorhanden else "")
+                f"**Saved:** `{name}.txt`" + (" (overwritten)" if vorhanden else "")
                 + f" in `{self._prompt_dir()}`."
             )
             return _library_returns(name, status, clear_name=True)
@@ -3502,9 +3510,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             ok = self._save_prompt_dir(value)
             pfad = str(self._prompt_dir())
             status = (
-                f"**Ordner:** `{pfad}` - gespeichert."
+                f"**Folder:** `{pfad}` - saved."
                 if ok else
-                f"**Ordner:** `{pfad}` - konnte nicht angelegt werden."
+                f"**Folder:** `{pfad}` - could not be created."
             )
             update = _dd_update(self._template_choice())
             werte = [gr.update(value=pfad), status, update]

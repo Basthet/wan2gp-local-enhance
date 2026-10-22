@@ -437,8 +437,9 @@ neu starten.
     Zwischenspeichers, `<br>` nicht. Genau das war die Textwand.
 - Tab und Prompt-Bibliothek ohne WanGP-Start: `dev/check_template_ui.py`
   (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
-  `create_ui()` in einem `gr.Blocks` nach und prüft: 5 Karten, Ordner- und
-  Namensfeld, Prompt-Textfeld, Wortgrenzen, Modell-Check, Prompt-Werkstatt,
+  `create_ui()` in einem `gr.Blocks` nach und prüft: 5 Karten, `Prompt
+  folder` und `Name (max. 64 chars)`, Prompt-Textfeld (`System prompt (sent to
+  the local model)`), Wortgrenzen, Model check, Prompt workshop,
   keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Danach die Bibliothek:
   Namensregel (64/65 Zeichen, `..`, `/`, führender Punkt, `default`),
   Schreiben/Lesen, leere Datei wird übersprungen, `default`-Fallback, und die

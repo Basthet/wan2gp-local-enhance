@@ -83,10 +83,10 @@ print("Labels:", labels)
 print("Typen:", typen)
 
 assert len(karten) == 5, f"erwartet 5 Karten, gefunden {len(karten)}"
-assert "Prompt-Ordner" in labels, "Ordner-Feld fehlt"
-assert "Name (max. 64 Zeichen)" in labels, "Namensfeld fehlt"
-assert "System-Prompt (wird dem lokalen Modell vorgegeben)" in labels, "Prompt-Textfeld fehlt"
-assert "Prompt" in labels and "Erweiterter Prompt" in labels, "Prompt-Werkstatt fehlt"
+assert "Prompt folder" in labels, "Ordner-Feld fehlt"
+assert "Name (max. 64 chars)" in labels, "Namensfeld fehlt"
+assert "System prompt (sent to the local model)" in labels, "Prompt-Textfeld fehlt"
+assert "Prompt" in labels and "Enhanced prompt" in labels, "Prompt-Werkstatt fehlt"
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
 ids = [getattr(k, "elem_id", None) for k in knoten if getattr(k, "elem_id", None)]
 assert len(ids) == len(set(ids)), f"doppelte elem_id: {ids}"
