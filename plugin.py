@@ -290,6 +290,16 @@ _UI_CSS = (
     ".le-row{align-items:flex-end !important;gap:8px !important;flex-wrap:wrap !important;}"
     ".le-actions{gap:8px !important;flex-wrap:wrap !important;}"
     ".le-actions button{min-width:170px;}"
+    # Bibliothek: Ordnerzeile und Eintragszeile sauber ausgerichtet. Die
+    # Textfelder wachsen, die Buttons behalten ihre Breite, die Zahlenfelder
+    # stehen rechts daneben.
+    ".le-lib-row{display:flex !important;flex-wrap:wrap !important;"
+    "align-items:flex-end !important;gap:8px !important;margin:0 0 8px 0 !important;}"
+    "#local_enhance_library_row #local_enhance_prompt_dir{"
+    "flex:1 1 240px !important;min-width:180px !important;}"
+    "#local_enhance_entry_row #local_enhance_prompt_name{"
+    "flex:1 1 180px !important;min-width:140px !important;}"
+    ".le-lib-row button{flex:0 0 auto !important;}"
 )
 _TEMPLATE_KEY = "local_enhance_template"
 _TEMPLATE_TEXT_KEY = "local_enhance_template_text"
@@ -404,9 +414,8 @@ _TEMPLATE_PRESETS = {
     _TEMPLATE_CUSTOM: None,  # Text kommt aus dem Feld
 }
 _TEMPLATE_HELP = (
-    "The host prefers instructions from the model definition and the LTX-2 "
-    "handler over the plugin's own. A selected prompt disables both for the "
-    "duration of the call, so the choice really applies."
+    "A selected prompt overrides the model definition and the LTX-2 handler "
+    "for the duration of the call."
 )
 _BASE_OUTPUT_TOKENS = 512
 _MAX_OUTPUT_TOKENS = 4096
@@ -3355,46 +3364,51 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             with gr.Column(elem_classes=["le-card"]):
                 gr.HTML("<div class='le-card-title'>Prompt library &middot; enhancer system prompt</div>")
                 gr.HTML(f"<div class='le-hint'>{_TEMPLATE_HELP}</div>")
-                # Ordner, Name und Wortgrenzen in EINER Zeile: alles, was man
-                # fuer einen Lauf einstellt, steht damit beieinander. Die
-                # Wort-Regler kommen erst nach dem Block dazu (_attach_word_fields),
-                # die uebrigen Felder werden anschliessend aus den
-                # Gradio-Form-Wrappern geholt (_flatten_row).
-                with gr.Row(elem_classes=["le-row"], elem_id="local_enhance_library_row") as library_row:
+                # Zwei saubere Zeilen statt einer umbrechenden: erst der Ordner
+                # mit seinen drei Aktionen, darunter Name, Speichern und die
+                # Wortgrenzen. Die Felder wachsen, die Buttons bleiben kompakt.
+                with gr.Row(
+                    elem_classes=["le-row", "le-lib-row"],
+                    elem_id="local_enhance_library_row",
+                ) as library_row:
                     prompt_dir_field = gr.Textbox(
                         label="Prompt folder",
                         value=self._prompt_dir_setting(),
-                        scale=3,
                         max_lines=1,
+                        elem_id="local_enhance_prompt_dir",
                     )
                     prompt_dir_save = gr.Button(
-                        "Save folder", size="sm", scale=0, min_width=120,
+                        "Save folder", size="sm", scale=0, min_width=110,
                     )
                     prompt_reload = gr.Button(
-                        "Reload folder", size="sm", scale=0, min_width=130,
+                        "Reload folder", size="sm", scale=0, min_width=120,
                     )
                     prompt_import = gr.UploadButton(
                         "Import prompt...", file_types=[".txt"],
-                        size="sm", scale=0, min_width=150,
+                        size="sm", scale=0, min_width=140,
                     )
+                self._flatten_row(
+                    library_row,
+                    [prompt_dir_field, prompt_dir_save, prompt_reload, prompt_import],
+                )
+                with gr.Row(
+                    elem_classes=["le-row", "le-lib-row"],
+                    elem_id="local_enhance_entry_row",
+                ) as entry_row:
                     prompt_name_field = gr.Textbox(
                         label="Name (max. 64 chars)",
                         value="",
-                        scale=2,
                         max_lines=1,
+                        elem_id="local_enhance_prompt_name",
                     )
                     template_save = gr.Button(
                         "Save as name", size="sm", variant="primary",
-                        scale=0, min_width=150,
+                        scale=0, min_width=140,
                     )
-                self._attach_word_fields(library_row)
+                self._attach_word_fields(entry_row)
                 self._flatten_row(
-                    library_row,
+                    entry_row,
                     [
-                        prompt_dir_field,
-                        prompt_dir_save,
-                        prompt_reload,
-                        prompt_import,
                         prompt_name_field,
                         template_save,
                         self._min_words_field,
@@ -3408,15 +3422,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 template_dd = gr.Dropdown(
                     choices=tab_choices,
                     value=tab_wahl,
-                    label="Prompt",
+                    label="Edit prompt",
                 )
                 # Zeigt den System-Prompt des gewaehlten Eintrags und ist die
                 # Quelle fuer "Save as name".
                 template_text = gr.Textbox(
                     label="System prompt (sent to the local model)",
                     value=self._active_template_text(),
-                    lines=10,
+                    lines=8,
                     interactive=True,
+                    info="Edits apply only after Save as name.",
                 )
                 template_status = gr.Markdown(value=self._template_status_text())
 

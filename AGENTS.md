@@ -42,9 +42,9 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   WanGPs normaler System-Prompt, kein Override. Die Wahl landet in
   `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
   installationsweit einstellbar (Standard `~/Prompts`). Im Tab stehen
-  **Ordner, Name und Wortgrenzen in einer Zeile** samt `Save folder`,
-  `Reload folder` und `Import prompt...`; der Import übernimmt eine
-  bestehende `.txt` in den Ordner (Dateiname wird bereinigt, Kollisionen
+  **zwei ausgerichtete Zeilen**: Ordner + `Save folder` / `Reload folder` /
+  `Import prompt...`, darunter Name + `Save as name` + Min/Max; der Import
+  übernimmt eine bestehende `.txt` in den Ordner (Dateiname wird bereinigt, Kollisionen
   bekommen einen Zähler). `default` ist reserviert.
 
 Unter den beiden Feldern steht der **Modell-Check**: die englische Hinweiszeile
@@ -367,9 +367,11 @@ neu starten.
   Kollision ` 2`, ` 3` … an; leere Dateien werden abgelehnt. `Reload folder`
   liest die Liste neu, ohne etwas zu schreiben. Die Tab-Karte hat **vier**
   Karten (Bibliothek mit Wortgrenzen, Bypass-LoRA, Model check, Prompt
-  workshop). Die Bibliotheks-Zeile wird nach dem Aufbau mit `_flatten_row()`
-  aus den Gradio-`Form`-Wrappern geholt (`fill_expected_parents` würde die
-  Felder sonst vertikal stapeln).
+  workshop). Ordnerzeile und Eintragszeile werden nach dem Aufbau mit
+  `_flatten_row()` aus den Gradio-`Form`-Wrappern geholt
+  (`fill_expected_parents` würde die Felder sonst vertikal stapeln). Die
+  Textfelder wachsen per CSS (`flex:1 1 240px` bzw. `180px`), die Buttons
+  behalten ihre `min_width`; das hält beide Zeilen auf einer Grundlinie.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 0 (= keine Untergrenze), Max 150. Dazu
@@ -458,12 +460,13 @@ neu starten.
   `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten, `Prompt
   folder` und `Name (max. 64 chars)`, Prompt-Textfeld (`System prompt (sent to
   the local model)`), Wortgrenzen, Model check, Prompt workshop,
-  keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Die Bibliotheks-Zeile
+  keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Die Ordnerzeile
   (`local_enhance_library_row`) muss genau
-  `[Textbox, Button, Button, UploadButton, Textbox, Button, Number, Number]`
-  enthalten (Ordner, Save/Reload/Import, Name, Save as name, Min, Max) und
-  keinen `Form`-Wrapper; der Import muss als `upload`-Dependency verdrahtet
-  sein. Danach die Bibliothek: Namensregel (64/65 Zeichen, `..`, `/`,
+  `[Textbox, Button, Button, UploadButton]` (Ordner, Save/Reload/Import), die
+  Eintragszeile (`local_enhance_entry_row`) genau
+  `[Textbox, Button, Number, Number]` (Name, Save as name, Min, Max) enthalten
+  — beide ohne `Form`-Wrapper; der Import muss als `upload`-Dependency
+  verdrahtet sein. Danach die Bibliothek: Namensregel (64/65 Zeichen, `..`, `/`,
   führender Punkt, `default`), Schreiben/Lesen, leere Datei wird übersprungen,
   `default`-Fallback, Migration (`photograf.txt` + `sheet.txt`, Marker,
   Auswahl `photograf`) und Import (Text übernommen, Kollision bekommt

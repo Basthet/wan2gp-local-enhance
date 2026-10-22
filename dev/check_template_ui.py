@@ -90,18 +90,22 @@ assert "Prompt" in labels and "Enhanced prompt" in labels, "Prompt-Werkstatt feh
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
 ids = [getattr(k, "elem_id", None) for k in knoten if getattr(k, "elem_id", None)]
 assert len(ids) == len(set(ids)), f"doppelte elem_id: {ids}"
-# Ordner, Name und Wortgrenzen stehen in EINER Zeile - ohne gr.Form-Wrapper.
+# Ordnerzeile und Eintragszeile: ausgerichtet, ohne gr.Form-Wrapper.
 lib_row = next(
     (k for k in knoten if getattr(k, "elem_id", None) == "local_enhance_library_row"),
     None,
 )
-assert lib_row is not None, "Bibliotheks-Zeile fehlt"
+entry_row = next(
+    (k for k in knoten if getattr(k, "elem_id", None) == "local_enhance_entry_row"),
+    None,
+)
+assert lib_row is not None and entry_row is not None, "Bibliotheks-Zeilen fehlen"
 zeile = [type(k).__name__ for k in (lib_row.children or [])]
+eintrag = [type(k).__name__ for k in (entry_row.children or [])]
 print("Bibliotheks-Zeile:", zeile)
-assert zeile == [
-    "Textbox", "Button", "Button", "UploadButton", "Textbox", "Button",
-    "Number", "Number",
-], f"unerwartete Reihenfolge: {zeile}"
+print("Eintrags-Zeile:", eintrag)
+assert zeile == ["Textbox", "Button", "Button", "UploadButton"], zeile
+assert eintrag == ["Textbox", "Button", "Number", "Number"], eintrag
 # Import ist als Upload verdrahtet (der Klick schreibt eine Datei in den Ordner).
 konfiguration = demo.get_config_file()
 uploads = [
