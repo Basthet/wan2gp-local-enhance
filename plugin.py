@@ -336,9 +336,19 @@ _AUTHOR_SOURCE_KEY = "local_enhance_author_source"
 _AUTHOR_BASE_URL_KEY = "local_enhance_author_base_url"
 _AUTHOR_MODEL_KEY = "local_enhance_author_model"
 _AUTHOR_API_KEY_KEY = "local_enhance_author_api_key"
+_AUTHOR_PROVIDER_KEY = "local_enhance_author_provider"
 _AUTHOR_SOURCE_LOCAL = "Local 27B"
 _AUTHOR_SOURCE_API = "OpenAI-compatible API"
 _AUTHOR_BASE_URL_DEFAULT = "http://127.0.0.1:1234/v1"
+# Presets fuer die Autoren-API. Ollama und LM Studio bringen den
+# OpenAI-kompatiblen Endpunkt selbst mit; "Custom" laesst alles offen.
+_AUTHOR_PROVIDERS = {
+    "Ollama": "http://localhost:11434/v1",
+    "LM Studio": "http://127.0.0.1:1234/v1",
+    "OpenAI": "https://api.openai.com/v1",
+    "Custom": "",
+}
+_AUTHOR_PROVIDER_DEFAULT = "Ollama"
 _TAG_SUGGESTIONS = [
     "character sheet", "turnaround", "3d render", "portrait", "product shot",
     "environment", "cinematic still", "concept art", "illustration",
@@ -1212,7 +1222,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
 
     @classmethod
-    def _save_author_api(cls, base_url, model, api_key, source=None):
+    def _author_provider(cls, value=None):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_AUTHOR_PROVIDER_KEY, _AUTHOR_PROVIDER_DEFAULT)
+        value = str(value or "").strip()
+        return value if value in _AUTHOR_PROVIDERS else _AUTHOR_PROVIDER_DEFAULT
+
+    @classmethod
+    def _author_base_for_provider(cls, provider):
+        return _AUTHOR_PROVIDERS.get(str(provider or ""), "")
+
+    @classmethod
+    def _save_author_api(cls, base_url, model, api_key, source=None, provider=None):
         config = _main("server_config")
         if not isinstance(config, dict):
             return
@@ -1221,6 +1244,33 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         config[_AUTHOR_API_KEY_KEY] = str(api_key or "").strip()
         if source in (_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API):
             config[_AUTHOR_SOURCE_KEY] = source
+        if provider in _AUTHOR_PROVIDERS:
+            config[_AUTHOR_PROVIDER_KEY] = provider
+
+    @classmethod
+    def _list_api_models(cls, base_url, api_key=""):
+        """Modelle des OpenAI-kompatiblen Servers (GET /models)."""
+        base = str(base_url or "").strip().rstrip("/")
+        if not base:
+            return [], "Set the base URL first."
+        url = base + ("/models" if base.endswith("/v1") else "/v1/models")
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            return [], f"HTTP {exc.code}: {exc.reason}"
+        except Exception as exc:  # noqa: BLE001
+            return [], f"{type(exc).__name__}: {exc}"
+        models = []
+        if isinstance(data, dict):
+            for entry in data.get("data") or []:
+                if isinstance(entry, dict) and entry.get("id"):
+                    models.append(str(entry["id"]))
+        return sorted(set(models)), None
 
     @classmethod
     def _author_user_message(cls, guidelines, tags, text):
@@ -3744,21 +3794,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         elem_id="local_enhance_prompt_dir",
                         info="Press Enter to save the folder.",
                     )
-                    prompt_load = gr.UploadButton(
-                        "Load...", file_types=[".txt"],
-                        size="sm", scale=0, min_width=100,
-                    )
-                    prompt_folder_import = gr.UploadButton(
-                        "Import folder...", file_count="directory",
-                        size="sm", scale=0, min_width=150,
-                    )
                     prompt_reload = gr.Button(
                         "Reload", size="sm", scale=0, min_width=100,
                     )
-                self._flatten_row(
-                    library_row,
-                    [prompt_dir_field, prompt_load, prompt_folder_import, prompt_reload],
-                )
+                self._flatten_row(library_row, [prompt_dir_field, prompt_reload])
                 entry_choices = self._prompt_choices()
                 entry_wahl = self._template_choice()
                 if entry_wahl not in entry_choices:
@@ -3819,6 +3858,47 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         author_btn = gr.Button(
                             "Enhance", variant="primary", size="sm",
                         )
+                with gr.Group(
+                    visible=self._author_source() == _AUTHOR_SOURCE_API
+                ) as author_api_group:
+                    gr.HTML(
+                        "<div class='le-hint'>Connection of the API author model. "
+                        "<b>Test connection</b> loads the model list from the "
+                        "server.</div>"
+                    )
+                    with gr.Row(elem_classes=["le-row"]):
+                        author_provider = gr.Dropdown(
+                            choices=list(_AUTHOR_PROVIDERS),
+                            value=self._author_provider(),
+                            label="Provider",
+                            scale=2,
+                            min_width=150,
+                        )
+                        api_base = gr.Textbox(
+                            label="Base URL",
+                            value=self._author_api_config()[0],
+                            placeholder=_AUTHOR_BASE_URL_DEFAULT,
+                            scale=4,
+                        )
+                        api_key = gr.Textbox(
+                            label="API key (optional)",
+                            type="password",
+                            value=self._author_api_config()[2],
+                            scale=3,
+                        )
+                    with gr.Row(elem_classes=["le-row"]):
+                        api_model = gr.Dropdown(
+                            choices=[],
+                            allow_custom_value=True,
+                            label="Model",
+                            value=self._author_api_config()[1],
+                            scale=4,
+                        )
+                        api_test = gr.Button(
+                            "Test connection", size="sm",
+                            scale=0, min_width=150,
+                        )
+                    api_status = gr.Markdown()
                 tags_field = gr.Dropdown(
                     choices=_TAG_SUGGESTIONS,
                     multiselect=True,
@@ -3849,24 +3929,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     save_cancel = gr.Button(
                         "Cancel", size="sm", scale=0, min_width=90,
                     )
-                with gr.Accordion("Author API settings (OpenAI-compatible)", open=False):
-                    api_base = gr.Textbox(
-                        label="Base URL",
-                        value=self._author_api_config()[0],
-                        placeholder=_AUTHOR_BASE_URL_DEFAULT,
+                with gr.Accordion("Import prompts", open=False):
+                    gr.HTML(
+                        "<div class='le-hint'>Load one existing .txt, or copy "
+                        "every .txt from a folder into the prompt folder.</div>"
                     )
-                    api_model = gr.Textbox(
-                        label="Model",
-                        value=self._author_api_config()[1],
-                        placeholder="e.g. your local model name",
-                    )
-                    api_key = gr.Textbox(
-                        label="API key (optional)",
-                        type="password",
-                        value=self._author_api_config()[2],
-                    )
-                    api_save = gr.Button("Save API settings", size="sm")
-                    api_status = gr.Markdown()
+                    with gr.Row(elem_classes=["le-row"]):
+                        prompt_load = gr.UploadButton(
+                            "Load a .txt...", file_types=[".txt"],
+                            size="sm", scale=0, min_width=140,
+                        )
+                        prompt_folder_import = gr.UploadButton(
+                            "Import a folder...", file_count="directory",
+                            size="sm", scale=0, min_width=160,
+                        )
 
             # --- Karte 1b: Bypass-LoRA ------------------------------------------
             with gr.Column(elem_classes=["le-card"]):
@@ -4179,7 +4255,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             show_progress="hidden",
         )
 
-        def prompt_erzeugen(state_value, model_type, tags, text, source, progress=gr.Progress()):
+        def prompt_erzeugen(
+            state_value, model_type, tags, text, source, provider,
+            base, model, key, progress=gr.Progress(),
+        ):
+            source = str(source or "").strip()
+            self._save_author_api(base, model, key, source=source, provider=provider)
             result, fehler = self.author_system_prompt(
                 state_value, model_type, tags, text, source, progress=progress
             )
@@ -4189,29 +4270,59 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         author_btn.click(
             fn=prompt_erzeugen,
-            inputs=[state, prompt_model, tags_field, template_text, author_source],
+            inputs=[
+                state, prompt_model, tags_field, template_text, author_source,
+                author_provider, api_base, api_model, api_key,
+            ],
             outputs=[template_text, template_status],
             show_progress="full",
         )
 
-        def api_speichern(base, model, key, source):
-            self._save_author_api(base, model, key, source)
-            return "**API settings saved.**"
-
-        api_save.click(
-            fn=api_speichern,
-            inputs=[api_base, api_model, api_key, author_source],
-            outputs=[api_status],
-            show_progress="hidden",
-        )
-
-        def source_wechsel(source):
-            self._save_author_api(*self._author_api_config(), source=source)
+        def source_wechsel(source, provider):
+            base, model, key = self._author_api_config()
+            self._save_author_api(base, model, key, source=source, provider=provider)
+            ist_api = str(source or "").strip() == _AUTHOR_SOURCE_API
+            if ist_api and not base:
+                return gr.update(visible=True), gr.update(
+                    value=self._author_base_for_provider(provider)
+                )
+            return gr.update(visible=ist_api), gr.update()
 
         author_source.change(
             fn=source_wechsel,
-            inputs=[author_source],
-            outputs=None,
+            inputs=[author_source, author_provider],
+            outputs=[author_api_group, api_base],
+            show_progress="hidden",
+        )
+
+        def provider_wechsel(provider):
+            base = self._author_base_for_provider(provider)
+            if not base:
+                return gr.update()
+            return gr.update(value=base)
+
+        author_provider.change(
+            fn=provider_wechsel,
+            inputs=[author_provider],
+            outputs=[api_base],
+            show_progress="hidden",
+        )
+
+        def api_testen(provider, base, model, key, source):
+            models, fehler = self._list_api_models(base, key)
+            if fehler:
+                return gr.update(), f"**Connection failed:** {fehler}"
+            wert = model if model in models else (models[0] if models else model)
+            self._save_author_api(base, wert, key, source=source, provider=provider)
+            return (
+                gr.update(choices=models, value=wert),
+                f"**Connected:** {len(models)} model(s) found.",
+            )
+
+        api_test.click(
+            fn=api_testen,
+            inputs=[author_provider, api_base, api_model, api_key, author_source],
+            outputs=[api_model, api_status],
             show_progress="hidden",
         )
 

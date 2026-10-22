@@ -42,11 +42,15 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   WanGPs normaler System-Prompt, kein Override. Die Wahl landet in
   `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
   installationsweit einstellbar (Standard `~/Prompts`).
-  Die Tab-Karte **System Prompts** bündelt alles: Ordnerzeile (`Folder`,
-  `Load...`, `Import folder...`, `Reload`), Eintragszeile (`Entry`,
-  `Model`, Min/Max), `Show prompt guidelines`, Prompt-Editor mit
-  `Author model` + `Enhance`, `Tags` und `Save`. **Save** öffnet erst ein
-  Namensfeld (vorbefüllt mit dem aktuellen Eintrag); erst der zweite Klick
+  Die Tab-Karte **System Prompts** bündelt alles: `Folder` + `Reload`,
+  Eintragszeile (`Entry`, `Model`, Min/Max), `Show prompt guidelines`,
+  Prompt-Editor mit `Author model` + `Enhance`, `Tags` und `Save`.
+  Datei-Importe liegen eingeklappt unter **Import prompts** (`Load a .txt...`
+  = eine Datei, `Import a folder...` = alle `.txt` eines Ordners).
+  Wählt man `OpenAI-compatible API`, erscheint direkt unter dem Editor die
+  Verbindung: `Provider` (Ollama/LM Studio/OpenAI/Custom), `Base URL`,
+  `API key` (optional), `Model` und `Test connection`. **Save** öffnet erst
+  ein Namensfeld (vorbefüllt mit dem aktuellen Eintrag); erst der zweite Klick
   schreibt. `default` ist reserviert. Jeder Eintrag hat ein Sidecar
   `<name>.json` mit `model` (interner WanGP-Typ) und `tags`.
 
@@ -164,10 +168,12 @@ neu starten.
   `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, das
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
   `photograf`; `default` = kein Override), die Karte **System Prompts** mit
-  Ordnerzeile (`Folder` / `Load...` / `Import folder...` / `Reload`),
-  Eintragszeile (`Entry` / `Model` / Min / Max), `Show prompt guidelines`,
-  Editor mit `Author model` + `Enhance`, `Tags` und `Save` (öffnet den
-  Namensdialog) — keine `gr.Form`-Wrapper —, darunter die Zeile zum aktuellen
+  `Folder` + `Reload`, Eintragszeile (`Entry` / `Model` / Min / Max),
+  `Show prompt guidelines`, Editor mit `Author model` + `Enhance`, `Tags`
+  und `Save` (öffnet den Namensdialog) — keine `gr.Form`-Wrapper —, das
+  Accordion **Import prompts** und bei `OpenAI-compatible API` die sichtbare
+  Verbindungsgruppe (`Provider` / `Base URL` / `API key` / `Model` /
+  `Test connection`), darunter die Zeile zum aktuellen
   Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
   *Check models* füllt Status und Liste; ein alter Zwischenspeicher zeigt
   vorher den Ersatztext statt einer Textwand), und der Vision-Lauf aus
@@ -369,10 +375,10 @@ neu starten.
   gespeicherten Namen die Datei (`None`, wenn sie fehlt), `default` liefert
   `None` (= Host entscheidet). `_save_template()` prüft gegen `default` +
   `_list_prompt_names()` + Altbestand.
-  Die Karte **System Prompts** ist die einzige Pflegestelle: Ordnerzeile
-  (`Folder` — Enter speichert; `Load...` importiert eine `.txt`;
-  `Import folder...` ist ein Verzeichnis-Upload und übernimmt alle `.txt`;
-  `Reload` liest neu), Eintragszeile (`Entry`, `Model`, globale Min/Max),
+  Die Karte **System Prompts** ist die einzige Pflegestelle: `Folder` (Enter
+  speichert) + `Reload`; die Importe liegen im Accordion **Import prompts**
+  (`Load a .txt...` = eine Datei, `Import a folder...` = Verzeichnis-Upload
+  aller `.txt`); Eintragszeile (`Entry`, `Model`, globale Min/Max),
   `Show prompt guidelines`, Editor, Autor, `Tags`, `Save`.
   `_model_choices()` liest `_main("models_def")` (nur lesen), nimmt
   `name` als Label und den internen Typ als Wert, überspringt
@@ -388,7 +394,13 @@ neu starten.
   (27B, `deepy` lokal, `_PromptInstructionOverride`, Modus `T`), nur mit
   `_AUTHOR_INSTRUCTIONS` als System-Anweisung; die API nutzt
   `/v1/chat/completions` mit Base URL, Modell und optionalem Key aus
-  `local_enhance_author_*`. Das Ergebnis landet **nur im Editor**, nie
+  `local_enhance_author_*`. Bei `OpenAI-compatible API` schaltet der
+  Quellenwechsel die Gruppe **sichtbar** (`author_api_group`); `Provider`
+  setzt die Base URL vor (`Ollama` `http://localhost:11434/v1`, `LM Studio`
+  `http://127.0.0.1:1234/v1`, `OpenAI` `https://api.openai.com/v1`,
+  `Custom` leer). `Test connection` ruft `GET <base>/models` (bzw.
+  `/v1/models`) und füllt die Modellauswahl; `Enhance` speichert die
+  Verbindungsfelder vor dem Aufruf. Das Ergebnis landet **nur im Editor**, nie
   automatisch gespeichert.
   `_migrate_library()` läuft nur in `setup_ui()` (nie in dev-Skripten),
   merkt sich `local_enhance_prompt_migrated` in `server_config` und schreibt
@@ -410,7 +422,8 @@ neu starten.
   `local_enhance_prompt_dir`, `local_enhance_prompt_migrated` und
   `local_enhance_template` (Default `default`). Dazu `local_enhance_author_source`
   (`Local 27B` / `OpenAI-compatible API`), `local_enhance_author_base_url`,
-  `local_enhance_author_model` und `local_enhance_author_api_key`.
+  `local_enhance_author_model`, `local_enhance_author_api_key` und
+  `local_enhance_author_provider` (Ollama/LM Studio/OpenAI/Custom).
 - Ist Min > Max, werden beide getauscht.
 
 ## Prüfen
@@ -496,12 +509,13 @@ neu starten.
   `Author model`/`Tags`, Prompt-Textfeld, Wortgrenzen, Model check, Prompt
   workshop, keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Die Ordnerzeile
   (`local_enhance_library_row`) muss genau
-  `[Textbox, UploadButton, UploadButton, Button]` (`Folder`, `Load...`,
-  `Import folder...`, `Reload`), die Eintragszeile
+  `[Textbox, Button]` (`Folder`, `Reload`), die Eintragszeile
   (`local_enhance_entry_row`) genau
   `[Dropdown, Dropdown, Number, Number]` (`Entry`, `Model`, Min, Max)
   enthalten — beide ohne `Form`-Wrapper; **zwei** `upload`-Dependencies
-  (Load, Import folder). Danach die Bibliothek: Namensregel (64/65 Zeichen,
+  (Load/Import im Accordion) und die Labels `Provider`/`Base URL` sowie der
+  Knopf `Test connection`. Die Provider-Presets werden ohne Netz geprüft
+  (`_author_base_for_provider`). Danach die Bibliothek: Namensregel (64/65 Zeichen,
   `..`, `/`, führender Punkt, `default`), Schreiben/Lesen, leere Datei wird
   übersprungen, `default`-Fallback, Migration (`photograf.txt` + `sheet.txt`,
   Marker, Auswahl `photograf`), Import (Text übernommen, Kollision bekommt

@@ -73,6 +73,11 @@ def alle(block, out):
 alle(demo, knoten := [])
 karten = [k for k in knoten if "le-card" in (getattr(k, "elem_classes", None) or [])]
 labels = [str(getattr(k, "label", "")) for k in knoten if getattr(k, "label", None)]
+button_texte = [
+    str(getattr(k, "value", ""))
+    for k in knoten
+    if type(k).__name__ in ("Button", "UploadButton")
+]
 typen = {}
 for k in knoten:
     typen[type(k).__name__] = typen.get(type(k).__name__, 0) + 1
@@ -88,6 +93,10 @@ assert "Name (max. 64 chars)" in labels, "Namensfeld im Save-Dialog fehlt"
 assert "System prompt (sent to the local model)" in labels, "Prompt-Textfeld fehlt"
 assert "Entry" in labels and "Model" in labels, "Entry-/Modell-Auswahl fehlt"
 assert "Author model" in labels and "Tags" in labels, "Autor/Tags fehlen"
+assert "Provider" in labels, "Provider-Auswahl fehlt"
+assert "Test connection" in button_texte, "API-Test fehlt"
+assert "Reload" in button_texte, "Reload fehlt"
+assert "Load a .txt..." in labels and "Import a folder..." in labels, "Import-Aktionen fehlen"
 assert "Prompt" in labels and "Enhanced prompt" in labels, "Prompt-Werkstatt fehlt"
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
 ids = [getattr(k, "elem_id", None) for k in knoten if getattr(k, "elem_id", None)]
@@ -106,7 +115,7 @@ zeile = [type(k).__name__ for k in (lib_row.children or [])]
 eintrag = [type(k).__name__ for k in (entry_row.children or [])]
 print("Bibliotheks-Zeile:", zeile)
 print("Eintrags-Zeile:", eintrag)
-assert zeile == ["Textbox", "UploadButton", "UploadButton", "Button"], zeile
+assert zeile == ["Textbox", "Button"], zeile
 assert eintrag == ["Dropdown", "Dropdown", "Number", "Number"], eintrag
 # Load und Import folder sind als Upload verdrahtet (schreiben in den Ordner).
 konfiguration = demo.get_config_file()
@@ -224,7 +233,12 @@ assert p._author_api_config() == ("http://localhost:1234/v1", "my-model", "secre
 assert p._author_source() == plugin._AUTHOR_SOURCE_API
 p._save_author_api("", "", "", plugin._AUTHOR_SOURCE_LOCAL)
 assert p._author_source() == plugin._AUTHOR_SOURCE_LOCAL
-print("OK: Sidecar, Modellkatalog, Guidelines, Autoren-Nachricht, API-Config.")
+assert p._author_base_for_provider("Ollama") == "http://localhost:11434/v1"
+assert p._author_base_for_provider("LM Studio").endswith("/v1")
+assert p._author_base_for_provider("OpenAI").startswith("https://")
+assert p._author_base_for_provider("Custom") == ""
+assert p._author_base_for_provider("Unbekannt") == ""
+print("OK: Sidecar, Modellkatalog, Guidelines, Autoren-Nachricht, API-Config, Provider.")
 
 
 
