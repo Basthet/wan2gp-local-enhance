@@ -47,6 +47,7 @@ selbst (Farben, Abstaende) fehlt.
 """
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -69,10 +70,14 @@ except ImportError:  # pragma: no cover - andere Gradio-Fassungen
     _Form = getattr(gr, "Form", None)
 
 # _word_range() liest die Grenzen aus __main__.server_config; hier stehen
-# Beispielwerte (0 = keine Untergrenze).
+# Beispielwerte (0 = keine Untergrenze). Der Prompt-Ordner zeigt auf ein
+# temporaeres Verzeichnis, und der Migrations-Marker steht auf True: die
+# Vorschau schreibt damit nie nach ~/Prompts.
 server_config = {
     "local_enhance_min_words": int(os.environ.get("PREVIEW_MIN", 0)),
     "local_enhance_max_words": int(os.environ.get("PREVIEW_MAX", 1500)),
+    "local_enhance_prompt_dir": tempfile.mkdtemp(prefix="le-prompts-"),
+    "local_enhance_prompt_migrated": True,
 }
 
 # Katalog-Fixture fuer die Zeile zum aktuellen Modell. Sie liegt als
@@ -451,10 +456,17 @@ with gr.Blocks(title="Enhancer-Zeile") as demo:
         "image-inputs:", len(image_components),
         "-> local click-inputs:", 2 + len(controls) + len(image_components),
     )
-    # Erwartung: Zeile 1 = [HTML, Button, Button, Checkbox], die fremde
-    # Formularzeile = [Textbox(Modus), Dropdown], die Regler = [Textbox(Modus),
-    # Checkbox, Number, Number], also 6 Klick-Eingaben fuer den Remote-Knopf und
+    # Erwartung: Zeile 1 = [HTML, Button, Button, Dropdown, Checkbox]
+    # (Specific-Prompt-Dropdown + Think), die fremde Formularzeile =
+    # [Textbox(Modus), Dropdown], die Regler = [Textbox(Modus), Checkbox,
+    # Number, Number], also 6 Klick-Eingaben fuer den Remote-Knopf und
     # 6 + Anzahl der Bild-Eingaben fuer den lokalen.
+    print(
+        "Specific-Prompt-Dropdown:",
+        f"value={getattr(p._prompt_select, 'value', None)!r}",
+        f"choices={getattr(p._prompt_select, 'choices', None)!r}",
+        "(erwartet ['default'] in der leeren Fixture)",
+    )
     print(
         "=== Erwartung ===",
         f"mode-components-at-wiring={mode_components_at_wiring} (erwartet 1),",

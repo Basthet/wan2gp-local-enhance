@@ -10,6 +10,8 @@ Aufruf aus dem WanGP-Ordner:
 Erwartung: "OK" am Ende, vier Karten mit class le-card, keine Ausnahme.
 """
 import sys
+import tempfile
+from pathlib import Path
 
 sys.path.insert(0, "/home/stefan/git/wan2gp-local-enhance")
 sys.path.insert(0, "/home/stefan/git/Wan2GP")
@@ -18,12 +20,16 @@ import gradio as gr  # noqa: E402
 import plugin  # noqa: E402
 
 main = sys.modules["__main__"]
+# Eigener, leerer Prompt-Ordner: das Skript schreibt nie nach ~/Prompts.
+prompt_dir = tempfile.mkdtemp(prefix="le-prompts-")
 main.server_config = {
     "local_enhance_template": plugin._TEMPLATE_SHEET,
     "local_enhance_min_words": 0,
     "local_enhance_max_words": 1500,
     "llm_engines": {"deepy": "qwen35_4b"},
     "enhancer_enabled": 5,
+    "local_enhance_prompt_dir": prompt_dir,
+    "local_enhance_prompt_migrated": True,
 }
 main.models_def = {}
 main.get_model_handler = lambda model_type, *a, **k: None
@@ -77,13 +83,14 @@ print("Labels:", labels)
 print("Typen:", typen)
 
 assert len(karten) == 5, f"erwartet 5 Karten, gefunden {len(karten)}"
-assert "Vorlage" in labels, "Vorlagen-Dropdown fehlt"
-assert "System-Prompt (wird dem lokalen Modell vorgegeben)" in labels, "Vorlagen-Textfeld fehlt"
+assert "Prompt-Ordner" in labels, "Ordner-Feld fehlt"
+assert "Name (max. 64 Zeichen)" in labels, "Namensfeld fehlt"
+assert "System-Prompt (wird dem lokalen Modell vorgegeben)" in labels, "Prompt-Textfeld fehlt"
 assert "Prompt" in labels and "Erweiterter Prompt" in labels, "Prompt-Werkstatt fehlt"
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
 ids = [getattr(k, "elem_id", None) for k in knoten if getattr(k, "elem_id", None)]
 assert len(ids) == len(set(ids)), f"doppelte elem_id: {ids}"
-print("OK: vier Karten, Vorlage, Wortgrenzen, Modell-Check, Prompt-Werkstatt.")
+print("OK: fuenf Karten, Prompt-Bibliothek, Wortgrenzen, Modell-Check, Prompt-Werkstatt.")
 
 # --- Bypass-LoRA: Nachtragen in WanGPs LoRA-Auswahl -------------------------
 print("--- Bypass-LoRA ---")
@@ -98,3 +105,46 @@ assert auswahl and any("bypass" in str(x) for x in auswahl), f"Bypass fehlt: {au
 assert any("Bara_Style" in str(x) for x in auswahl), "eigene LoRA verloren"
 print("gemischt:", p._with_bypass_lora(["krea2/Bara_Style.safetensors", "krea2/krea2bypass_balanced.safetensors"]))
 print("OK: Bypass-LoRA wird ergaenzt, ohne die eigene Auswahl zu veraendern.")
+
+# --- Prompt-Bibliothek: Helfer ---------------------------------------------
+print("--- Prompt-Bibliothek ---")
+main.server_config["local_enhance_prompt_dir"] = tempfile.mkdtemp(prefix="le-lib-")
+main.server_config["local_enhance_template"] = "default"
+
+assert p._prompt_name_ok("Mein Prompt")
+assert p._prompt_name_ok("x" * 64) and not p._prompt_name_ok("x" * 65)
+for bad in ("", "..", "../x", ".hidden", "a/b", "a\\b", "default"):
+    assert not p._prompt_name_ok(bad), bad
+
+assert p._write_prompt_entry("Mein Prompt", "hello")
+assert p._read_prompt_entry("Mein Prompt").strip() == "hello"
+assert p._list_prompt_names() == ["Mein Prompt"]
+# Leere Datei wird uebersprungen.
+Path(p._prompt_dir(), "leer.txt").write_text("   \n", encoding="utf-8")
+assert p._list_prompt_names() == ["Mein Prompt"]
+assert p._prompt_choices() == ["default", "Mein Prompt"]
+# Gespeicherter Name gilt, Unbekanntes faellt auf default.
+assert p._template_choice("Mein Prompt") == "Mein Prompt"
+assert p._template_choice("gibt es nicht") == "default"
+p._save_template("Mein Prompt")
+assert main.server_config["local_enhance_template"] == "Mein Prompt"
+assert "hello" in p._template_instructions(True, False, 0, 150)
+p._save_template("default")
+assert p._template_instructions(True, False, 0, 150) is None
+print("OK: Bibliothek, Namensregel, leere Dateien, default-Fallback.")
+
+# --- Migration -------------------------------------------------------------
+print("--- Migration ---")
+mig = tempfile.mkdtemp(prefix="le-mig-")
+main.server_config["local_enhance_prompt_dir"] = mig
+main.server_config.pop("local_enhance_prompt_migrated", None)
+main.server_config["local_enhance_template"] = plugin._TEMPLATE_CUSTOM
+p._migrate_library()
+assert Path(mig, "photograf.txt").is_file(), "photograf.txt fehlt"
+assert Path(mig, "sheet.txt").is_file(), "sheet.txt fehlt"
+assert main.server_config["local_enhance_template"] == "photograf"
+assert main.server_config["local_enhance_prompt_migrated"] is True
+p._migrate_library()
+assert Path(mig, "photograf.txt").read_text(encoding="utf-8").strip()
+print("OK: Migration einmalig, photograf + sheet geschrieben.")
+

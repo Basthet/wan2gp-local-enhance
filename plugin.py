@@ -251,10 +251,15 @@ _UI_CSS = (
     "margin-left:0 !important;justify-content:flex-start !important;}"
     # Kaestchen-Blocks auf Inhaltsbreite und ohne Innenabstand - der grosse
     # Abstand vor "Think" kam von der Breite des Specific-Prompt-Blocks.
-    "#local_enhance_row > .cbx_centered,"
-    "#local_enhance_row > #local_enhance_sheet_cb{"
+    "#local_enhance_row > .cbx_centered{"
     "width:max-content !important;min-width:0 !important;max-width:max-content !important;"
     "margin:0 !important;}"
+    # Das Prompt-Dropdown in Zeile 1: feste, kompakte Breite (die Namen sind
+    # hoechstens 64 Zeichen lang, max-content waere zu breit) und order 1 wie
+    # die Kaestchen, damit es vor den Knoepfen steht.
+    "#local_enhance_row > #local_enhance_prompt_dd{flex:0 0 auto !important;"
+    "width:220px !important;min-width:160px !important;max-width:260px !important;"
+    "margin:0 !important;order:1 !important;}"
     # Reihenfolge: Kaestchen zuerst, dann die Knoepfe (order wirkt in Flex).
     # Die Beschriftung bleibt mit order:0 oben auf ihrer eigenen Zeile.
     "#local_enhance_row .local-enhance-label{flex:0 0 100% !important;"
@@ -288,6 +293,26 @@ _UI_CSS = (
 )
 _TEMPLATE_KEY = "local_enhance_template"
 _TEMPLATE_TEXT_KEY = "local_enhance_template_text"
+
+# --- Bibliothek der System-Prompts -------------------------------------------------
+# Ein Ordner, eine Datei pro Eintrag (<name>.txt). Der Ablageordner ist
+# installationsweit einstellbar (Standard ~/Prompts) und wird im Tab ueber ein
+# eigenes Speichern-Feld gesetzt. Die Auswahl in Zeile 1 zeigt genau diese
+# Eintraege plus "default" - default heisst: der ganz normale System-Prompt von
+# WanGP, also kein Override durch das Plugin.
+_PROMPT_DIR_KEY = "local_enhance_prompt_dir"
+_PROMPT_DIR_DEFAULT = "~/Prompts"
+_PROMPT_DEFAULT = "default"
+# Max. 64 Zeichen fuer den sprechenden Namen eines Eintrags (Dateiname ohne Endung).
+_PROMPT_NAME_MAX = 64
+# Einmalige Migration beim ersten Start: der bisherige Ein-Prompt-Ordner (Textdatei
+# bzw. Config-Key) wird als Datei angelegt, die Auswahl bleibt beim alten Verhalten
+# (photograf = der aktuelle Live-Text). Der Key ist der Merker, dass sie gelaufen ist.
+_MIGRATE_KEY = "local_enhance_prompt_migrated"
+# Die beiden bekannten Texte heissen nach der Migration so:
+# photograf = der jetzige Live-Prompt, sheet = der Text der Character-Sheet-Vorlage.
+_MIGRATE_PHOTOGRAPH = "photograf"
+_MIGRATE_SHEET = "sheet"
 
 # Die zentrale Bypass-LoRA. Sie gehoert zu jeder eigenen LoRA dazu: WanGPs
 # Modell ist ausgerichtet, ohne diesen Bypass greift die Zensur. Das Plugin
@@ -461,6 +486,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     # ------------------------------------------------------------------ Setup
 
     def setup_ui(self):
+        # Einmalige Migration: bisheriger Live-Prompt + Sheet-Vorlage werden zu
+        # Dateien im Speicherordner. Nur hier (Host-Start) - dev-Skripte bauen
+        # die UI ohne setup_ui() nach und schreiben deshalb nie.
+        self._migrate_library()
         self.request_component("state")
         self.request_component("refresh_form_trigger")
         self.request_component("prompt")
@@ -728,13 +757,25 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
     @classmethod
     def _template_choice(cls, value=None):
-        """Gewaehlte Vorlage; unbekannte Werte fallen auf den Standard zurueck."""
+        """Gewaehlter Prompt: "default" oder ein Name aus der Bibliothek.
+
+        Altbestand bleibt gueltig: die fruheren Presets (Character Sheet,
+        Turnaround, Eigene Vorlage) werden weiter erkannt, "WanGP-Standard"
+        heisst jetzt "default". Unbekannte Werte fallen auf "default" zurueck.
+        """
         config = _main("server_config") or {}
         config = config if isinstance(config, dict) else {}
         if value is None:
-            value = config.get(_TEMPLATE_KEY, _DEFAULT_TEMPLATE)
+            value = config.get(_TEMPLATE_KEY, _PROMPT_DEFAULT)
         value = str(value or "").strip()
-        return value if value in _TEMPLATE_PRESETS else _DEFAULT_TEMPLATE
+        if value in ("", _TEMPLATE_WANPG, _PROMPT_DEFAULT):
+            return _PROMPT_DEFAULT
+        if value in _TEMPLATE_PRESETS:
+            # Character Sheet / Turnaround / Eigene Vorlage (Altbestand)
+            return value
+        if value in cls._list_prompt_names():
+            return value
+        return _PROMPT_DEFAULT
 
     @staticmethod
     def _system_prompt_path():
@@ -797,14 +838,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         damit die Min/Max-Felder auch hier wirken.
         """
         choice = cls._template_choice()
-        if choice == _TEMPLATE_WANPG:
+        if choice in (_PROMPT_DEFAULT, _TEMPLATE_WANPG):
             return None
         if choice == _TEMPLATE_TURNAROUND:
             text = _TEMPLATE_TURNAROUND_TEXT
         elif choice == _TEMPLATE_CUSTOM:
             text = cls._specific_prompt() or _TEMPLATE_SHEET_TEXT
-        else:
+        elif choice == _TEMPLATE_SHEET:
             text = _TEMPLATE_SHEET_TEXT
+        else:
+            # Gespeicherter Eintrag. Ist die Datei inzwischen weg, gilt kein
+            # Override - der Host macht es dann selbst.
+            text = cls._read_prompt_entry(choice)
+            if text is None:
+                return None
         minimum, maximum = cls._word_range(min_words, max_words)
         return cls._apply_word_limit(text, minimum, maximum)
 
@@ -815,7 +862,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if not isinstance(config, dict):
             return
         choice = str(choice or "").strip()
-        config[_TEMPLATE_KEY] = choice if choice in _TEMPLATE_PRESETS else _DEFAULT_TEMPLATE
+        gueltig = (
+            choice == _PROMPT_DEFAULT
+            or choice in _TEMPLATE_PRESETS
+            or choice in cls._list_prompt_names()
+        )
+        if choice == _TEMPLATE_WANPG:
+            choice = _PROMPT_DEFAULT
+        config[_TEMPLATE_KEY] = choice if gueltig else _PROMPT_DEFAULT
         if text is not None:
             config[_TEMPLATE_TEXT_KEY] = str(text or "")
 
@@ -829,17 +883,156 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return _TEMPLATE_TURNAROUND_TEXT
         if wahl == _TEMPLATE_CUSTOM:
             return cls._specific_prompt() or _TEMPLATE_SHEET_TEXT
+        eintrag = cls._read_prompt_entry(wahl)
+        if eintrag is not None:
+            return eintrag
         return cls._fallback_instructions(True, False, 0, 150)
 
     @classmethod
     def _template_status_text(cls):
         """Eine Zeile fuer die Karte: welche Vorlage gilt gerade."""
         choice = cls._template_choice()
-        if choice == _TEMPLATE_WANPG:
-            return ("**Vorlage:** WanGP-Standard - die System-Prompts des Hosts "
-                    "bleiben unveraendert.")
-        return (f"**Vorlage aktiv:** {choice} - ueberschreibt die Anweisungen aus "
-                "Modelldefinition und LTX-2-Handler.")
+        if choice == _PROMPT_DEFAULT:
+            return ("**Prompt:** default - WanGPs normaler System-Prompt; das "
+                    "Plugin ueberschreibt nichts.")
+        if choice in (_TEMPLATE_SHEET, _TEMPLATE_TURNAROUND, _TEMPLATE_CUSTOM):
+            return (f"**Prompt aktiv:** {choice} - ueberschreibt die Anweisungen aus "
+                    "Modelldefinition und LTX-2-Handler.")
+        return (f"**Prompt aktiv:** {choice} - aus der Bibliothek "
+                f"({cls._prompt_dir()}); gilt fuer beide Knoepfe.")
+
+    # ------------------------------------------------------ Prompt-Bibliothek
+
+    @classmethod
+    def _prompt_dir_setting(cls, value=None):
+        """Der eingestellte Ordner als Rohwert (noch nicht expandiert)."""
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_PROMPT_DIR_KEY, _PROMPT_DIR_DEFAULT)
+        return str(value or "").strip() or _PROMPT_DIR_DEFAULT
+
+    @classmethod
+    def _prompt_dir(cls):
+        """Der Bibliotheksordner als Pfad; ~ wird aufgeloest, nie ein Fehler."""
+        try:
+            return Path(os.path.expanduser(cls._prompt_dir_setting()))
+        except Exception:  # noqa: BLE001 - unbrauchbarer Wert -> Standard
+            return Path(os.path.expanduser(_PROMPT_DIR_DEFAULT))
+
+    @classmethod
+    def _save_prompt_dir(cls, value):
+        """Ordner merken (expandiert) und anlegen. True bei Erfolg."""
+        roh = str(value or "").strip()
+        try:
+            pfad = Path(os.path.expanduser(roh or _PROMPT_DIR_DEFAULT))
+        except Exception:  # noqa: BLE001
+            return False
+        try:
+            pfad.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Prompt-Ordner nicht angelegt: {exc}")
+            return False
+        config = _main("server_config")
+        if isinstance(config, dict):
+            config[_PROMPT_DIR_KEY] = str(pfad)
+        return True
+
+    @classmethod
+    def _prompt_name_ok(cls, name):
+        """Name eines Eintrags: max. 64 Zeichen, dateiname-sicher."""
+        name = str(name or "").strip()
+        if not name or len(name) > _PROMPT_NAME_MAX:
+            return False
+        if name.lower() == _PROMPT_DEFAULT:
+            return False          # "default" ist der Reservename
+        if ".." in name:
+            return False
+        return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]*", name) is not None
+
+    @classmethod
+    def _list_prompt_names(cls):
+        """Namen der nicht-leeren Eintraege, alphabetisch; Fehler -> []."""
+        ordner = cls._prompt_dir()
+        namen = []
+        try:
+            kandidaten = sorted(ordner.glob("*.txt"), key=lambda p: p.name.lower())
+        except Exception:  # noqa: BLE001
+            return []
+        for pfad in kandidaten:
+            name = pfad.stem
+            if not cls._prompt_name_ok(name):
+                continue
+            try:
+                if pfad.is_file() and pfad.read_text(encoding="utf-8").strip():
+                    namen.append(name)
+            except Exception:  # noqa: BLE001 - kaputte Datei ueberspringen
+                continue
+        return namen
+
+    @classmethod
+    def _prompt_choices(cls):
+        """Auswahl fuer die Dropdowns: default zuerst, dann die Bibliothek."""
+        return [_PROMPT_DEFAULT] + cls._list_prompt_names()
+
+    @classmethod
+    def _read_prompt_entry(cls, name):
+        """Text eines Eintrags; None bei unbekanntem Namen/leerer Datei."""
+        name = str(name or "").strip()
+        if not cls._prompt_name_ok(name):
+            return None
+        try:
+            pfad = cls._prompt_dir() / f"{name}.txt"
+            if pfad.is_file():
+                inhalt = pfad.read_text(encoding="utf-8")
+                return inhalt if inhalt.strip() else None
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    @classmethod
+    def _write_prompt_entry(cls, name, text):
+        """Eintrag schreiben (<name>.txt). False bei ungueltigem Namen/Fehler."""
+        name = str(name or "").strip()
+        if not cls._prompt_name_ok(name):
+            return False
+        ordner = cls._prompt_dir()
+        try:
+            ordner.mkdir(parents=True, exist_ok=True)
+            (ordner / f"{name}.txt").write_text(
+                str(text or "").rstrip() + "\n", encoding="utf-8"
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Prompt nicht gespeichert: {exc}")
+            return False
+
+    @classmethod
+    def _migrate_library(cls):
+        """Einmalige Migration beim ersten Host-Start.
+
+        Schreibt photograf.txt (der bisher gueltige Live-Text) und sheet.txt
+        (die Character-Sheet-Vorlage) in den Speicherordner und stellt die
+        Auswahl auf photograf. Der Marker _MIGRATE_KEY verhindert den zweiten
+        Lauf; dev-Skripte rufen die Funktion nie auf.
+        """
+        config = _main("server_config")
+        if not isinstance(config, dict) or config.get(_MIGRATE_KEY):
+            return
+        config[_MIGRATE_KEY] = True
+        try:
+            cls._prompt_dir().mkdir(parents=True, exist_ok=True)
+        except Exception:  # noqa: BLE001 - ohne Ordner bleibt es beim Altbestand
+            return
+        ordner = cls._prompt_dir()
+        if not (ordner / f"{_MIGRATE_PHOTOGRAPH}.txt").is_file():
+            text = cls._specific_prompt() or cls._fallback_instructions(True, False, 0, 150)
+            cls._write_prompt_entry(_MIGRATE_PHOTOGRAPH, text)
+        if not (ordner / f"{_MIGRATE_SHEET}.txt").is_file():
+            cls._write_prompt_entry(_MIGRATE_SHEET, _TEMPLATE_SHEET_TEXT)
+        wahl = str(config.get(_TEMPLATE_KEY, "") or "").strip()
+        if wahl not in cls._list_prompt_names():
+            config[_TEMPLATE_KEY] = _MIGRATE_PHOTOGRAPH
 
     @classmethod
     def _bypass_lora(cls, value=None):
@@ -2610,14 +2803,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
 
     @classmethod
-    def _toggle_sheet_template(cls, aktiv):
-        """Checkbox -> Vorlage: an = Character Sheet, aus = WanGP-Standard.
+    def _select_template(cls, choice):
+        """Dropdown in Zeile 1 -> Auswahl merken.
 
-        Die Vorlage ist der System-Prompt des Enhancers (_template_instructions);
-        der Host bekommt sie bei jedem Klick, und die Modelldefinition sowie der
-        LTX-2-Handler werden dabei uebergangen.
+        Der Prompt ist der System-Prompt des Enhancers (_template_instructions);
+        der Host bekommt ihn bei jedem Klick, und die Modelldefinition sowie der
+        LTX-2-Handler werden dabei uebergangen. "default" bedeutet: kein
+        Override, WanGP entscheidet.
         """
-        cls._save_template(_TEMPLATE_SHEET if aktiv else _TEMPLATE_WANPG)
+        cls._save_template(choice)
 
     def write_character_sheet(self):
         """Schreibt die Character-Sheet-Vorlage ins WanGP-Promptfeld.
@@ -2676,18 +2870,26 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 f"{self._button_label()} \u24d8", size="sm", scale=0, min_width=0,
                 elem_id="local_enhance_local_btn", elem_classes="btn_centered",
             )
-            # Character Sheet als Checkbox: gesetzt gibt der Enhancer dem Modell
-            # die Sheet-Anweisungen als System-Prompt vor (symmetrische A-Pose,
-            # Front/Seite/Rueck, neutraler Hintergrund) - nicht ins Promptfeld.
-            sheet_check = gr.Checkbox(
+            # Prompt-Bibliothek als Dropdown: "default" = WanGPs normaler
+            # System-Prompt, die gespeicherten Namen kommen aus <Ordner>/*.txt.
+            # Ein Altbestand (Character Sheet/Turnaround/Eigene Vorlage) wird
+            # nur angezeigt, wenn er in den Choices vorkommt - sonst default.
+            prompt_choices = self._prompt_choices()
+            prompt_wahl = self._template_choice()
+            if prompt_wahl not in prompt_choices:
+                prompt_wahl = _PROMPT_DEFAULT
+            prompt_select = gr.Dropdown(
+                choices=prompt_choices,
+                value=prompt_wahl,
                 label="Specific Prompt",
-                value=self._template_choice() == _TEMPLATE_SHEET,
-                elem_id="local_enhance_sheet_cb",
-                elem_classes=["cbx_centered"],
+                show_label=True,
+                elem_id="local_enhance_prompt_dd",
+                scale=0,
+                min_width=160,
             )
-            sheet_check.change(
-                fn=self._toggle_sheet_template,
-                inputs=[sheet_check],
+            prompt_select.change(
+                fn=self._select_template,
+                inputs=[prompt_select],
                 outputs=[],
                 show_progress="hidden",
             )
@@ -2742,24 +2944,24 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except Exception as exc:  # noqa: BLE001
             print(f"[{PlugIn_Name}] Could not unwrap the word-limit fields: {exc}")
 
-        # Die Checkbox "Specific Prompt" gruppiert Gradio ebenfalls in einen
-        # gr.Form (live gemessen: div.form, 556 px breit, praktisch leer - der
-        # graue Kasten in der Zeile). Sie wird herausgeloest und direkt in die
-        # Reihe gehaengt, damit sie dort schmal und buendig steht.
+        # Das Dropdown "Specific Prompt" gruppiert Gradio ebenfalls in einen
+        # gr.Form (es ist ein Formularfeld). Es wird herausgeloest und direkt in
+        # die Reihe gehaengt, damit die CSS-Regel greift und es dort schmal und
+        # buendig steht.
         try:
             for kandidat in list(getattr(button_row, "children", []) or []):
                 innen = getattr(kandidat, "children", None)
-                if not innen or not any(eintrag is sheet_check for eintrag in innen):
+                if not innen or not any(eintrag is prompt_select for eintrag in innen):
                     continue
                 for eintrag in list(innen):
-                    if eintrag is sheet_check:
+                    if eintrag is prompt_select:
                         innen.remove(eintrag)
                         eintrag.parent = button_row
                         button_row.children.append(eintrag)
                 if not innen and any(vorhanden is kandidat for vorhanden in button_row.children):
                     button_row.children.remove(kandidat)
         except Exception as exc:  # noqa: BLE001
-            print(f"[{PlugIn_Name}] Could not unwrap the specific-prompt checkbox: {exc}")
+            print(f"[{PlugIn_Name}] Could not unwrap the specific-prompt dropdown: {exc}")
 
         # Nach dem Auspacken haengen die Felder in keinem Container mehr. Sie
         # kommen zurueck in die Knopfreihe: _attach_word_fields() braucht einen
@@ -2883,7 +3085,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 (
                     candidate
                     for candidate in (getattr(parent, "children", []) or [])
-                    if getattr(candidate, "children", None)
+                    # Die eigene Knopfreihe enthaelt jetzt selbst ein Dropdown
+                    # (Specific Prompt) - sie darf nicht als Container des
+                    # Modus-Dropdowns gelten.
+                    if candidate is not button_row
+                    and getattr(candidate, "children", None)
                     and any(isinstance(child, gr.Dropdown) for child in candidate.children)
                 ),
                 None,
@@ -2913,6 +3119,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self._think_checkbox = think_checkbox
         self._min_words_field = min_field
         self._max_words_field = max_field
+        # Fuer den Tab: die Auswahl in Zeile 1 wird von den Speicher-Handlern
+        # per gr.update nachgezogen.
+        self._prompt_select = prompt_select
 
         # Alle Regler gelten fuer BEIDE Knoepfe: die Checkbox schaltet lokal das
         # Denken und remote den Reasoning-Level, Min/Max die Wortgrenze. Fehlt
@@ -3061,27 +3270,48 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             current_prompt = ""
 
         with gr.Column():
-            # --- Karte 1: Vorlage ------------------------------------------------
+            # --- Karte 1: Prompt-Bibliothek -------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>Vorlage &middot; System-Prompt des Enhancers</div>")
+                gr.HTML("<div class='le-card-title'>Prompt-Bibliothek &middot; System-Prompt des Enhancers</div>")
                 gr.HTML(f"<div class='le-hint'>{_TEMPLATE_HELP}</div>")
+                with gr.Row(elem_classes=["le-row"]):
+                    prompt_dir_field = gr.Textbox(
+                        label="Prompt-Ordner",
+                        value=self._prompt_dir_setting(),
+                        scale=3,
+                    )
+                    prompt_dir_save = gr.Button(
+                        "Ordner speichern", size="sm", scale=0, min_width=160,
+                    )
+                tab_choices = self._prompt_choices()
+                tab_wahl = self._template_choice()
+                if tab_wahl not in tab_choices:
+                    tab_wahl = _PROMPT_DEFAULT
                 template_dd = gr.Dropdown(
-                    choices=list(_TEMPLATE_PRESETS),
-                    value=self._template_choice(),
-                    label="Vorlage",
+                    choices=tab_choices,
+                    value=tab_wahl,
+                    label="Prompt",
                 )
-                # Zeigt den System-Prompt, den das Plugin dem lokalen Modell
-                # vorgibt - und macht ihn aenderbar.
+                # Zeigt den System-Prompt des gewaehlten Eintrags und ist die
+                # Quelle fuer "Speichern unter Name".
                 template_text = gr.Textbox(
                     label="System-Prompt (wird dem lokalen Modell vorgegeben)",
                     value=self._active_template_text(),
                     lines=10,
-                    visible=True,
+                    interactive=True,
                 )
-                with gr.Row(elem_classes=["le-actions"]):
-                    template_save = gr.Button("Vorlage speichern", size="sm", variant="primary")
-                    template_reset = gr.Button("Zuruecksetzen", size="sm")
-                template_status = gr.Markdown()
+                with gr.Row(elem_classes=["le-row"]):
+                    prompt_name_field = gr.Textbox(
+                        label="Name (max. 64 Zeichen)",
+                        value="",
+                        scale=3,
+                        max_lines=1,
+                    )
+                    template_save = gr.Button(
+                        "Speichern unter Name", size="sm", variant="primary",
+                        scale=0, min_width=170,
+                    )
+                template_status = gr.Markdown(value=self._template_status_text())
 
             # --- Karte 1b: Bypass-LoRA ------------------------------------------
             with gr.Column(elem_classes=["le-card"]):
@@ -3201,42 +3431,94 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             show_progress="hidden",
         )
 
-        # --- Karte "Vorlage" -------------------------------------------------
-        def vorlage_wechsel(choice, text):
-            self._save_template(choice, text)
-            return (
+        # --- Karte "Prompt-Bibliothek" --------------------------------------
+        prompt_select = getattr(self, "_prompt_select", None)
+
+        def _dd_update(choice=None):
+            choices = self._prompt_choices()
+            if choice not in choices:
+                choice = _PROMPT_DEFAULT
+            return gr.update(choices=choices, value=choice)
+
+        def _library_returns(choice, status, clear_name=False):
+            werte = [
                 gr.update(value=self._active_template_text()),
-                self._template_status_text(),
-            )
+                status,
+                _dd_update(choice),
+                gr.update(value="") if clear_name else gr.update(),
+            ]
+            if prompt_select is not None:
+                werte.append(_dd_update(choice))
+            return tuple(werte)
+
+        def _library_error(text):
+            werte = [gr.update(), text, gr.update(), gr.update()]
+            if prompt_select is not None:
+                werte.append(gr.update())
+            return tuple(werte)
+
+        library_outputs = [template_text, template_status, template_dd, prompt_name_field]
+        if prompt_select is not None:
+            library_outputs.append(prompt_select)
+
+        def vorlage_wechsel(choice):
+            self._save_template(choice)
+            return _library_returns(choice, self._template_status_text())
 
         template_dd.change(
             fn=vorlage_wechsel,
-            inputs=[template_dd, template_text],
-            outputs=[template_text, template_status],
+            inputs=[template_dd],
+            outputs=library_outputs,
             show_progress="hidden",
         )
 
-        def vorlage_speichern(choice, text):
-            # Der editierte Text wird zur eigenen Vorlage.
-            self._save_template(_TEMPLATE_CUSTOM, text)
-            self._save_specific_prompt(text)
-            return gr.update(value=_TEMPLATE_CUSTOM), self._template_status_text()
+        def vorlage_speichern(name, text):
+            name = str(name or "").strip()
+            if not self._prompt_name_ok(name):
+                return _library_error(
+                    "**Nicht gespeichert:** Name ungueltig - 1 bis 64 Zeichen, "
+                    "Buchstaben/Ziffern/Leerzeichen/._- , kein fuehrender Punkt."
+                )
+            vorhanden = name in self._list_prompt_names()
+            if not self._write_prompt_entry(name, text):
+                return _library_error(
+                    f"**Nicht gespeichert:** `{self._prompt_dir()}` ist nicht beschreibbar."
+                )
+            self._save_template(name)
+            status = (
+                f"**Gespeichert:** `{name}.txt`" + (" (ueberschrieben)" if vorhanden else "")
+                + f" in `{self._prompt_dir()}`."
+            )
+            return _library_returns(name, status, clear_name=True)
 
         template_save.click(
             fn=vorlage_speichern,
-            inputs=[template_dd, template_text],
-            outputs=[template_dd, template_status],
+            inputs=[prompt_name_field, template_text],
+            outputs=library_outputs,
             show_progress="hidden",
         )
 
-        def vorlage_zuruecksetzen(choice):
-            self._save_template(choice, _TEMPLATE_SHEET_TEXT)
-            return _TEMPLATE_SHEET_TEXT, self._template_status_text()
+        def ordner_speichern(value):
+            ok = self._save_prompt_dir(value)
+            pfad = str(self._prompt_dir())
+            status = (
+                f"**Ordner:** `{pfad}` - gespeichert."
+                if ok else
+                f"**Ordner:** `{pfad}` - konnte nicht angelegt werden."
+            )
+            update = _dd_update(self._template_choice())
+            werte = [gr.update(value=pfad), status, update]
+            if prompt_select is not None:
+                werte.append(update)
+            return tuple(werte)
 
-        template_reset.click(
-            fn=vorlage_zuruecksetzen,
-            inputs=[template_dd],
-            outputs=[template_text, template_status],
+        dir_outputs = [prompt_dir_field, template_status, template_dd]
+        if prompt_select is not None:
+            dir_outputs.append(prompt_select)
+        prompt_dir_save.click(
+            fn=ordner_speichern,
+            inputs=[prompt_dir_field],
+            outputs=dir_outputs,
             show_progress="hidden",
         )
 

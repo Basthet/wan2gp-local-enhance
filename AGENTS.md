@@ -37,6 +37,12 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   (0 = keine Grenze). Aufgelöst wird das in `_read_controls()`; ein
   Preset-Dropdown gibt es nicht mehr. Das Token-Budget wächst mit
   (`_output_token_budget`), sonst schneidet das 512-Token-Limit den Prompt ab.
+- **Specific Prompt** — das Dropdown in Zeile 1 (früher die Checkbox). Es zeigt
+  `default` plus die Namen aus `<Prompt-Ordner>/*.txt`; `default` heißt:
+  WanGPs normaler System-Prompt, kein Override. Die Wahl landet in
+  `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
+  installationsweit einstellbar (Standard `~/Prompts`, Feld + eigener
+  Speichern-Knopf im Tab); `default` ist reserviert.
 
 Unter den beiden Feldern steht der **Modell-Check**: die englische Hinweiszeile
 (`_MODEL_CHECK_HINT`), darunter die immer sichtbare Zeile zum **aktuellen**
@@ -130,9 +136,11 @@ neu starten.
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
 - **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **6 Inputs**,
-  `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, die
-  beiden Felder **Min words** / **Max words** ganz oben im Plugin-Tab
-  nebeneinander und ohne abgeschnittene „1500", darunter die Zeile zum aktuellen
+  `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, das
+  **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
+  `photograf`; `default` = kein Override), die beiden Felder **Min words** /
+  **Max words** ganz oben im Plugin-Tab nebeneinander und ohne abgeschnittene
+  „1500", darunter die Zeile zum aktuellen
   Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
   *Check models* füllt Status und Liste; ein alter Zwischenspeicher zeigt
   vorher den Ersatztext statt einer Textwand), und der Vision-Lauf aus
@@ -199,8 +207,8 @@ neu starten.
     Wortgrenzen-Sätze, `_apply_word_limit` greift weiter.
   - Nur der lokale Pfad bekommt Bilder; der OpenCode-Knopf bleibt text-only.
 - **Startreihenfolge:** `create_inline_button` (`wgp.py:13628`) läuft **vor** den
-  Plugin-Tabs (`wgp.py:13976`). Deshalb sitzen Knöpfe und Think-Checkbox in
-  Zeile 1, während die Wort-Regler und der Tab-Knopf erst in `create_ui()`
+  Plugin-Tabs (`wgp.py:13976`). Deshalb sitzen Knöpfe, Specific-Prompt-Dropdown
+  und Think-Checkbox in Zeile 1, während die Wort-Regler und der Tab-Knopf erst in `create_ui()`
   dazukommen: `_attach_word_fields()` holt die beiden Felder in den Tab, der
   Tab-Knopf wird dort mitverdrahtet.
 - **`insert_after`** verschiebt nur das **zuletzt erzeugte** Kind
@@ -217,13 +225,17 @@ neu starten.
   - Gradio setzt `width:100%` **und** ein Inline-`min-width` (Default 160px, aus
     `min_width`) auf die Kinder. Breiten deshalb per CSS mit `!important`
     vorgeben, wo eine feste Breite nötig ist — das schlägt auch das
-    Inline-Style. Betroffen sind nur noch Reihe und Think-Checkbox
-    (`.local-enhance-label`, `.cbx_centered`). Die beiden Wort-Regler brauchen
-    keine Regel: sie bekommen ihre Breite über `min_width=_WORD_FIELD_WIDTH`
-    (120px) plus `scale=0`. `_UI_CSS` enthält damit nur noch vier Regeln: den
-    Originalknopf ausblenden, Zeile 1 umbrechen lassen, die Breiten von Label
-    und Think-Checkbox und die volle Breite der fremden Formularzeile
-    (`#local_enhance_row + .form`, inzwischen nur noch das Modus-Dropdown).
+    Inline-Style. Betroffen sind nur noch Reihe, Think-Checkbox und das
+    Specific-Prompt-Dropdown (`.local-enhance-label`, `.cbx_centered`,
+    `#local_enhance_prompt_dd`). Die beiden Wort-Regler brauchen keine Regel:
+    sie bekommen ihre Breite über `min_width=_WORD_FIELD_WIDTH` (120px) plus
+    `scale=0`. Das Dropdown bekommt eine feste Breite (220px, min 160px, max
+    260px) statt `max-content`: die Namen dürfen 64 Zeichen lang sein,
+    `max-content` würde die Zeile sprengen. `_UI_CSS` enthält damit fünf
+    Regeln: den Originalknopf ausblenden, Zeile 1 umbrechen lassen, die Breiten
+    von Label, Think-Checkbox und Dropdown und die volle Breite der fremden
+    Formularzeile (`#local_enhance_row + .form`, inzwischen nur noch das
+    Modus-Dropdown).
   - **Höhe und vertikales Padding der Eingaben bleiben Gradios Vorgabe.** Eigene
     `input{padding…; font-size…}`-Regeln machten die Felder früher niedriger als
     ihre Nachbarn (live 21px statt 33px) und rissen die gemeinsame Grundlinie
@@ -314,9 +326,32 @@ neu starten.
   nicht. Die genaue Zahl nennt die Statuszeile beim Klick selbst
   („<betroffen> von <untersucht> model definitions"). Die Liste wird
   **erzeugt**, nicht gepflegt — mit neuen Modellen wächst sie von selbst mit.
+- **Prompt-Bibliothek:** Der Ordner kommt aus `local_enhance_prompt_dir`
+  (Default `~/Prompts`, `~` wird expandiert), eine Datei pro Eintrag
+  (`<name>.txt`, UTF-8). `_prompt_name_ok()` erlaubt `[A-Za-z0-9][A-Za-z0-9
+  ._-]*`, max. 64 Zeichen, kein Pfadtrenner, kein führender Punkt, kein `..`,
+  `default` ist reserviert. `_list_prompt_names()` überspringt leere Dateien,
+  sortiert alphabetisch und liefert bei fehlendem Ordner `[]` — die Dropdowns
+  zeigen dann nur `default`. `_template_choice()` löst `default`, gespeicherte
+  Namen und die alten Presets (`Character Sheet`, `Turnaround`, `Eigene
+  Vorlage`) auf; Unbekanntes fällt auf `default`. `_template_instructions()`
+  liest bei einem gespeicherten Namen die Datei (`None`, wenn sie fehlt),
+  `default` liefert `None` (= Host entscheidet). `_save_template()` prüft
+  gegen `default` + `_list_prompt_names()` + Altbestand — sonst fiele ein
+  Bibliotheksname beim nächsten Speichern still auf `default` zurück.
+  `_migrate_library()` läuft nur in `setup_ui()` (nie in dev-Skripten), merkt
+  sich `local_enhance_prompt_migrated` in `server_config` und schreibt beim
+  ersten Host-Start `photograf.txt` (der bisherige Live-Text aus
+  `system_prompt.txt`) und `sheet.txt` (`_TEMPLATE_SHEET_TEXT`); die Auswahl
+  wird danach `photograf`, außer sie zeigt schon auf einen gespeicherten
+  Eintrag. Der Tab schreibt neue Einträge über `_write_prompt_entry()` und
+  zieht beide Dropdowns per `gr.update` nach; `system_prompt.txt` und
+  `_TEMPLATE_TEXT_KEY` werden nicht mehr beschrieben (nur noch gelesen).
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
-  Defaults: Min 0 (= keine Untergrenze), Max 150.
+  Defaults: Min 0 (= keine Untergrenze), Max 150. Dazu
+  `local_enhance_prompt_dir`, `local_enhance_prompt_migrated` und
+  `local_enhance_template` (Default `default`).
 - Ist Min > Max, werden beide getauscht.
 
 ## Prüfen
@@ -333,7 +368,8 @@ neu starten.
   WanGP-Ordner:
   `./.venv/bin/python ~/git/wan2gp-local-enhance/dev/ui_preview.py 7899`.
   Erwartung:
-  Zeile 1 = `[HTML, Button, Button, Checkbox]`,
+  Zeile 1 = `[HTML, Button, Button, Dropdown, Checkbox]` (Specific-Prompt-
+  Dropdown + Think),
   die fremde Formularzeile (der `Form`, in dem der versteckte Modus-Text liegt)
   = `[Textbox(prompt_enhancer), Dropdown]` — das Modus-Dropdown steht dort
   allein; die Think-Checkbox ist in Zeile 1 gewandert, die Wort-Regler in den
@@ -394,6 +430,16 @@ neu starten.
     rendert als **eine** Zeile (Elementhöhe 20px), mit `<br>` als drei und mit
     `<br><br>` als vier Zeilen (80px) — HTML faltet die Zeilenumbrüche des alten
     Zwischenspeichers, `<br>` nicht. Genau das war die Textwand.
+- Tab und Prompt-Bibliothek ohne WanGP-Start: `dev/check_template_ui.py`
+  (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
+  `create_ui()` in einem `gr.Blocks` nach und prüft: 5 Karten, Ordner- und
+  Namensfeld, Prompt-Textfeld, Wortgrenzen, Modell-Check, Prompt-Werkstatt,
+  keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Danach die Bibliothek:
+  Namensregel (64/65 Zeichen, `..`, `/`, führender Punkt, `default`),
+  Schreiben/Lesen, leere Datei wird übersprungen, `default`-Fallback, und die
+  Migration (`photograf.txt` + `sheet.txt`, Marker, Auswahl `photograf`).
+  Der Ordner ist ein `tempfile`-Verzeichnis; das Skript schreibt nie nach
+  `~/Prompts`. Erwartung: alle `OK:`-Zeilen, Exit 0.
 - Auflösung ohne UI (schneller Matrix-Check gegen `_read_controls`, Eingabe ist
   immer `(Think, Min, Max)`): `(False, 0, 1500)` → `(False, 0, 1500)`,
   `(True, 800, 100)` → `(True, 100, 800)` (Tausch bei Min > Max),
