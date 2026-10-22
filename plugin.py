@@ -1044,6 +1044,27 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return namen
 
     @classmethod
+    def _next_free_prompt_name(cls, base):
+        """Naechster freier Name: <base> 2, <base> 3, ...
+
+        Damit schlaegt der Save-Dialog einen neuen Eintrag vor, statt den
+        bestehenden zu ueberschreiben. Bleibt unter der Laengengrenze.
+        """
+        base = str(base or "").strip() or "prompt"
+        if not cls._prompt_name_ok(base):
+            base = "prompt"
+        namen = set(cls._list_prompt_names())
+        if base not in namen:
+            return base
+        zaehler = 2
+        while True:
+            suffix = f" {zaehler}"
+            kandidat = base[: _PROMPT_NAME_MAX - len(suffix)].rstrip() + suffix
+            if kandidat not in namen:
+                return kandidat
+            zaehler += 1
+
+    @classmethod
     def _prompt_choices(cls):
         """Auswahl fuer die Dropdowns: default zuerst, dann die Bibliothek."""
         return [_PROMPT_DEFAULT] + cls._list_prompt_names()
@@ -3927,23 +3948,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         min_width=200,
                         visible=self._author_source() == _AUTHOR_SOURCE_API,
                     )
-                    api_configure = gr.Button(
-                        "Configure...",
-                        size="sm",
-                        scale=0,
-                        min_width=130,
-                        visible=self._author_source() == _AUTHOR_SOURCE_API,
-                    )
-                    author_btn = gr.Button(
-                        "Generate",
-                        variant="primary",
-                        size="sm",
-                        scale=0,
-                        min_width=140,
-                    )
+                    with gr.Column(scale=0, min_width=150) as action_column:
+                        api_configure = gr.Button(
+                            "Configure...",
+                            size="sm",
+                            visible=self._author_source() == _AUTHOR_SOURCE_API,
+                        )
+                        author_btn = gr.Button(
+                            "Generate",
+                            variant="primary",
+                            size="sm",
+                        )
                 self._flatten_row(
-                    enhancer_row,
-                    [author_source, api_model, api_configure, author_btn],
+                    enhancer_row, [author_source, api_model, action_column]
                 )
                 with gr.Accordion("Guidelines (optional)", open=False):
                     guidelines_field = gr.Textbox(
@@ -4031,6 +4048,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         value="",
                         max_lines=1,
                         scale=4,
+                        info="A new name creates a new file - an existing name overwrites it.",
                     )
                     save_confirm = gr.Button(
                         "Save", variant="primary", size="sm",
@@ -4039,7 +4057,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     save_cancel = gr.Button(
                         "Cancel", size="sm", scale=0, min_width=90,
                     )
-                with gr.Accordion("Import prompts", open=False):
+                with gr.Accordion("Import prompts", open=True):
                     gr.HTML(
                         "<div class='le-hint'>Load one existing .txt, or copy "
                         "every .txt from a folder into the prompt folder.</div>"
@@ -4235,8 +4253,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
 
         def save_oeffnen():
+            # Nie den bestehenden Namen vorbefuellen - sonst ueberschreibt der
+            # erste Klick den Eintrag. Stattdessen den naechsten freien Namen.
             aktuell = self._template_choice()
-            name = "" if aktuell == _PROMPT_DEFAULT else aktuell
+            name = (
+                "prompt"
+                if aktuell == _PROMPT_DEFAULT
+                else self._next_free_prompt_name(aktuell)
+            )
             return gr.update(visible=True), gr.update(value=name)
 
         template_save.click(

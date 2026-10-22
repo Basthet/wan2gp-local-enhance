@@ -45,12 +45,11 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   Die Tab-Karte **System Prompts** ist eine senkrechte Abfolge:
   `Folder` + `Reload`, Werkzeugzeile (`Entry`, `Model`, Min/Max),
   `Short description of what the prompt should deliver`, eine Zeile
-  **Enhancer** (`Enhancer`, ggf. `API model` + `Configure...`), der
-  eingeklappte Bereich **Guidelines (optional)** (mit
-  `Load prompt guidelines`), der große Ergebnis-Editor, Status + `Save as...`.
-  Datei-Importe liegen eingeklappt unter **Import prompts**
-  (`Load a .txt...` = eine Datei, `Import a folder...` = alle `.txt` eines
-  Ordners).
+  **Enhancer** (`Enhancer`, ggf. `API model`, rechts `Configure...` über
+  `Generate` gestapelt), der eingeklappte Bereich **Guidelines (optional)**
+  (mit `Load prompt guidelines`), der große Ergebnis-Editor, Status +
+  `Save as...`. **Import prompts** ist aufgeklappt (`Load a .txt...` = eine
+  Datei, `Import a folder...` = alle `.txt` eines Ordners).
   Wählt man `OpenAI-compatible API`, erscheint nur `API model` + `Configure...`;
   die Verbindung (`Provider` Ollama/LM Studio/OpenAI/Custom, `Base URL`,
   `API key`, `Remember API key`, `Test connection`) öffnet der Knopf.
@@ -193,7 +192,7 @@ neu starten.
   `photograf`; `default` = kein Override), die Karte **System Prompts** mit
   `Folder` + `Reload`, Werkzeugzeile (`Entry` / `Model` / Min / Max),
   Beschreibungsfeld, Zeile **Enhancer** (`Enhancer`, `API model`,
-  `Configure...`, `Generate`), `Guidelines (optional)` (mit
+  `Configure...` über `Generate`), `Guidelines (optional)` (mit
   `Load prompt guidelines`), Ergebnis-Editor und Status + `Save as...`
   (öffnet den Namensdialog), keine `gr.Form`-Wrapper —, das Accordion
   **Import prompts** und bei `OpenAI-compatible API` die
@@ -405,10 +404,15 @@ neu starten.
   Die Karte **System Prompts** ist die einzige Pflegestelle: `Folder`
   (Enter speichert) + `Reload`, Werkzeugzeile (`Entry`, `Model`, globale
   Min/Max), Beschreibung, die Zeile **Enhancer** (`Enhancer`, ggf.
-  `API model` + `Configure...` + `Generate`), `Guidelines (optional)`
-  mit `Load prompt guidelines`, Ergebnis-Editor, Status + `Save as...`.
-  Importe im Accordion **Import prompts** (`Load a .txt...` = eine Datei,
-  `Import a folder...` = Verzeichnis-Upload aller `.txt`).
+  `API model`, rechts `Configure...` über `Generate`), `Guidelines
+  (optional)` mit `Load prompt guidelines`, Ergebnis-Editor, Status +
+  `Save as...`. Importe im aufgeklappten Accordion **Import prompts**
+  (`Load a .txt...` = eine Datei, `Import a folder...` = Verzeichnis-Upload
+  aller `.txt`).
+  `Save as...` füllt **nie** den bestehenden Namen ein, sondern
+  `_next_free_prompt_name()` (`Charactersheet 2`, `… 3`, …) - der alte
+  Eintrag bleibt also unberührt, ein neuer Stand wird zur neuen Datei. Wer
+  denselben Namen eintippt, überschreibt bewusst.
   `Load prompt guidelines` füllt das Feld aus `_model_guidelines()`; ein
   nicht-leeres Feld **gewinnt** gegen die WanGP-Anweisungen
   (`author_system_prompt(..., guidelines=...)`), leer = WanGP. Ein
@@ -563,7 +567,8 @@ neu starten.
   Knopf `Test connection`. Die Provider-Presets werden ohne Netz geprüft
   (`_author_base_for_provider`). Danach die Bibliothek: Namensregel (64/65 Zeichen,
   `..`, `/`, führender Punkt, `default`), Schreiben/Lesen, leere Datei wird
-  übersprungen, `default`-Fallback, Migration (`photograf.txt` + `sheet.txt`,
+  übersprungen, `default`-Fallback, `_next_free_prompt_name()`
+  (`X` -> `X 2` -> `X 3`, Länge <= 64), Migration (`photograf.txt` + `sheet.txt`,
   Marker, Auswahl `photograf`), Import (Text übernommen, Kollision bekommt
   Zähler, leere Datei abgelehnt) sowie Sidecar/Modell/Guidelines:
   `_write_prompt_meta`/`_read_prompt_meta` (leer löscht), Modellkatalog ohne

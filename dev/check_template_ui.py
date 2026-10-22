@@ -175,7 +175,14 @@ assert main.server_config["local_enhance_template"] == "Mein Prompt"
 assert "hello" in p._template_instructions(True, False, 0, 150)
 p._save_template("default")
 assert p._template_instructions(True, False, 0, 150) is None
-print("OK: Bibliothek, Namensregel, leere Dateien, default-Fallback.")
+# Save-Dialog: bestehender Name wird nie vorbefuellt, sondern der naechste
+# freie vorgeschlagen - der alte Eintrag bleibt unberuehrt.
+assert p._next_free_prompt_name("Mein Prompt") == "Mein Prompt 2"
+p._write_prompt_entry("Mein Prompt 2", "second")
+assert p._next_free_prompt_name("Mein Prompt") == "Mein Prompt 3"
+assert p._next_free_prompt_name("Neu") == "Neu"
+assert len(p._next_free_prompt_name("x" * 64)) <= 64
+print("OK: Bibliothek, Namensregel, leere Dateien, default-Fallback, freier Name.")
 
 # --- Migration -------------------------------------------------------------
 print("--- Migration ---")
