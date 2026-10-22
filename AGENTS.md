@@ -161,6 +161,9 @@ neu starten.
   Reload, Entry + Model + Min/Max, `Show prompt guidelines`, Editor mit
   `Author model` + `Enhance`, Tags, Save-Dialog; Sidecar `<name>.json` mit
   Modell + Tags; Autor lokal (27B) oder OpenAI-kompatible API
+- `16d0890` — Importe ins Accordion (**Import prompts**), API-Verbindung
+  sichtbar bei `OpenAI-compatible API`: Provider-Presets (Ollama/LM Studio/
+  OpenAI/Custom), Base URL, Key, Model, `Test connection` (`GET /models`)
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
