@@ -183,6 +183,10 @@ neu starten.
   Beschreibung, `AI to generate` entfernt; Label
   `Short description of what the prompt should deliver`; Defaults 100/350
   plus einmalige Migration von 0/150
+- `00de323` — `Configure...` über `Generate` gestapelt (150px-Spalte),
+  **Import prompts** aufgeklappt, `Save as...` schlägt
+  `_next_free_prompt_name()` vor (`Charactersheet 2`) statt den bestehenden
+  Eintrag zu überschreiben
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
