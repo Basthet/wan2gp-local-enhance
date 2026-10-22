@@ -137,6 +137,9 @@ neu starten.
   Speichern, einmalige Migration (`photograf` + `sheet`), Helfer und Tests
 - `ecdd36b` — `system_prompt.txt` auf den Photographer-Prompt umgestellt
   (Quelle für `photograf.txt` bei der Migration), separat committet
+- `3086f83` — UI-Texte der Bibliothek und der übrigen Karten auf Englisch
+  (wie der Rest von WanGP); alte deutsche Preset-Namen bleiben als
+  Config-Aliase lesbar
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
