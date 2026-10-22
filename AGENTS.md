@@ -143,6 +143,9 @@ neu starten.
 - `3086f83` — UI-Texte der Bibliothek und der übrigen Karten auf Englisch
   (wie der Rest von WanGP); alte deutsche Preset-Namen bleiben als
   Config-Aliase lesbar
+- `bb23c0b` — Bibliotheks-Zeile kompakt: Ordner, Name und Wortgrenzen in einer
+  Reihe, dazu `Reload folder` und `Import prompt...` (bestehende `.txt`
+  landet im Ordner); `_flatten_row` löst die Gradio-Form-Wrapper
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
