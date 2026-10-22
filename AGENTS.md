@@ -153,7 +153,7 @@ neu starten.
   Zeilen (Ordner + Save/Reload/Import, darunter Name + Save as name + Min/Max),
   Textfelder wachsen per CSS, Dropdown heisst `Edit prompt`, Hinweis
   „Edits apply only after Save as name."
-- `…` — **System Prompts** neu: Karte mit Folder / Load / Import folder /
+- `17a0b20` — **System Prompts** neu: Karte mit Folder / Load / Import folder /
   Reload, Entry + Model + Min/Max, `Show prompt guidelines`, Editor mit
   `Author model` + `Enhance`, Tags, Save-Dialog; Sidecar `<name>.json` mit
   Modell + Tags; Autor lokal (27B) oder OpenAI-kompatible API
