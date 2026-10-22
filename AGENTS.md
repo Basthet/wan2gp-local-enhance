@@ -43,11 +43,12 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
   installationsweit einstellbar (Standard `~/Prompts`).
   Die Tab-Karte beginnt mit zwei Sätzen, was das Plugin tut (keine
-  `System Prompts`-Überschrift). Darunter eine Zeile: `Folder`-Feld, Icon-Knopf `↻` (Reload), `Save`;
-  Werkzeugzeile (`Entry`, `Model`, Min/Max),
-  `A brief description of the intent`, eine Zeile
-  **Enhancer** (`Enhancer`, ggf. `API model`, rechts `Configure` über
-  `Generate` gestapelt), der eingeklappte Bereich **Guidelines (optional)**
+  `System Prompts`-Überschrift, rechts Build-Stempel). Reihenfolge:
+  `Saved prompt` + `Folder` + `↻` + `Save`; `System prompt (result,
+  editable)`; `A brief description of the intent`; Abschnitt „In case you
+  want to empower another AI model to enhance the system prompt:" mit
+  `Model`/Min/Max, dann **Enhancer** (`Enhancer`, ggf. `API model`, rechts
+  `Configure` über `Generate`), **Guidelines (optional)**
   (mit `Load prompt guidelines`), der große Ergebnis-Editor, Status +
   `Save as`. **Import prompts** ist aufgeklappt (`Load .txt` = eine
   Datei, `Import folder` = alle `.txt` eines Ordners).
@@ -406,11 +407,12 @@ neu starten.
   gespeicherten Namen die Datei (`None`, wenn sie fehlt), `default` liefert
   `None` (= Host entscheidet). `_save_template()` prüft gegen `default` +
   `_list_prompt_names()` + Altbestand.
-  Die Karte ist die einzige Pflegestelle: Zeile `Folder` + `↻` + `Save`
-  (Enter speichert ebenfalls),
-  Werkzeugzeile (`Entry`, `Model`, globale Min/Max), Beschreibung, die Zeile
-  **Enhancer** (`Enhancer`, ggf. `API model`, rechts `Configure` über
-  `Generate`), `Guidelines (optional)` mit `Load prompt guidelines`,
+  Die Karte ist die einzige Pflegestelle: `Saved prompt` + `Folder` + `↻` +
+  `Save` (Enter speichert ebenfalls), `System prompt (result, editable)`,
+  `A brief description of the intent`, Abschnitt „In case you want to empower
+  another AI model…" mit `Model`/Min/Max und **Enhancer** (`Enhancer`, ggf.
+  `API model`, rechts `Configure` über `Generate`), `Guidelines (optional)`
+  mit `Load prompt guidelines`,
   Ergebnis-Editor, Status + `Save as`. Importe im aufgeklappten Accordion
   **Import prompts** (`Load .txt` = eine Datei, `Import folder` =
   Verzeichnis-Upload aller `.txt`).
@@ -557,16 +559,16 @@ neu starten.
 - Tab und System Prompts ohne WanGP-Start: `dev/check_template_ui.py`
   (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
   `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten,
-  `Name (max. 64 chars)` (Save-Dialog), `Entry`/`Model`,
+  `Name (max. 64 chars)` (Save-Dialog), `Saved prompt`/`Model`,
   `Enhancer`, `A brief description of the intent`,
   `Guidelines (optional)`, `API model`, `Remember API key`,
   Prompt-Textfeld, Wortgrenzen, Model check, Prompt workshop, keine doppelte
   `elem_id`, Bypass-LoRA-Nachtrag, `Load prompt guidelines` und `Generate`
   als Knöpfe. Die Ordnerzeile
   (`local_enhance_library_row`) muss genau
-  `[Textbox, Button, Button]` (`Folder`, `↻`, `Save`), die Eintragszeile
-  (`local_enhance_entry_row`) genau
-  `[Dropdown, Dropdown, Number, Number]` (`Entry`, `Model`, Min, Max)
+  `[Dropdown, Textbox, Button, Button]` (`Saved prompt`, `Folder`, `↻`,
+  `Save`), die Eintragszeile (`local_enhance_entry_row`) genau
+  `[Dropdown, Number, Number]` (`Model`, Min, Max)
   enthalten — beide ohne `Form`-Wrapper; **zwei** `upload`-Dependencies
   (Load/Import im Accordion) und die Labels `Provider`/`Base URL` sowie der
   Knopf `Test connection`. Die Provider-Presets werden ohne Netz geprüft
