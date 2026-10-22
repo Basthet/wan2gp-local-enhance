@@ -298,11 +298,14 @@ _UI_CSS = (
     ".le-lib-row{display:flex !important;flex-wrap:wrap !important;"
     "align-items:flex-end !important;gap:8px !important;margin:0 0 8px 0 !important;}"
     ".le-prompt-row{align-items:flex-start !important;margin:0 0 8px 0 !important;}"
-    ".le-author-card{border:1px solid var(--border-color-primary,#3a3a3a);"
-    "border-radius:10px;padding:8px 10px;"
-    "background:var(--background-fill-secondary,rgba(127,127,127,0.06));}"
-    ".le-subtitle{font-weight:600;font-size:0.9em;letter-spacing:0.02em;"
-    "margin:0 0 6px 0;opacity:0.92;}"
+    # Gradio legt um aufeinanderfolgende Formularfelder einen eigenen Kasten.
+    # In den Karten waere das eine Schachtel in der Schachtel - hier flach.
+    ".le-card .form{border:none !important;background:transparent !important;"
+    "padding:0 !important;gap:6px !important;}"
+    ".le-right{justify-content:flex-end !important;}"
+    ".le-save-row{align-items:center !important;margin-top:4px !important;}"
+    ".le-subtitle{font-weight:600;font-size:0.88em;letter-spacing:0.02em;"
+    "margin:0 0 4px 0;opacity:0.9;}"
     "#local_enhance_library_row #local_enhance_prompt_dir{"
     "flex:1 1 240px !important;min-width:180px !important;}"
     "#local_enhance_entry_row #local_enhance_prompt_name{"
@@ -3810,25 +3813,25 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             with gr.Column(elem_classes=["le-card"]):
                 gr.HTML("<div class='le-card-title'>System Prompts</div>")
                 gr.HTML(
-                    "<div class='le-hint'>One entry per prompt. Target model and "
-                    "description are stored next to the .txt in a .json "
-                    "sidecar.</div>"
+                    "<div class='le-hint'>One .txt per prompt - model and "
+                    "description live in a .json sidecar.</div>"
                 )
-                with gr.Row(
-                    elem_classes=["le-row", "le-lib-row"],
-                    elem_id="local_enhance_library_row",
-                ) as library_row:
-                    prompt_dir_field = gr.Textbox(
-                        label="Folder",
-                        value=self._prompt_dir_setting(),
-                        max_lines=1,
-                        elem_id="local_enhance_prompt_dir",
-                        info="Press Enter to save the folder.",
-                    )
-                    prompt_reload = gr.Button(
-                        "Reload", size="sm", scale=0, min_width=100,
-                    )
-                self._flatten_row(library_row, [prompt_dir_field, prompt_reload])
+                with gr.Accordion("Prompt folder", open=False):
+                    with gr.Row(
+                        elem_classes=["le-row", "le-lib-row"],
+                        elem_id="local_enhance_library_row",
+                    ) as library_row:
+                        prompt_dir_field = gr.Textbox(
+                            label="Folder",
+                            value=self._prompt_dir_setting(),
+                            max_lines=1,
+                            elem_id="local_enhance_prompt_dir",
+                            info="Press Enter to save.",
+                        )
+                        prompt_reload = gr.Button(
+                            "Reload", size="sm", scale=0, min_width=100,
+                        )
+                    self._flatten_row(library_row, [prompt_dir_field, prompt_reload])
                 entry_choices = self._prompt_choices()
                 entry_wahl = self._template_choice()
                 if entry_wahl not in entry_choices:
@@ -3872,8 +3875,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         self._max_words_field,
                     ],
                 )
-                # Zwei Spalten: links Beschreibung + Guidelines, rechts die
-                # Autor-Quelle. Alles, was den Prompt erzeugt, steht zusammen.
+                # Beschreibung links, Autor rechts. Die Guidelines liegen
+                # eingeklappt darunter - sie sind die Ausnahme, nicht der Alltag.
                 with gr.Row(elem_classes=["le-row", "le-prompt-row"]):
                     with gr.Column(scale=7, min_width=320):
                         description_field = gr.Textbox(
@@ -3884,33 +3887,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                                 "e.g. character sheet, turnaround, 3d render, "
                                 "product shot ..."
                             ),
-                            info=(
-                                "Describe the result you want. The author model "
-                                "turns this into a system prompt."
-                            ),
                         )
-                        with gr.Row(elem_classes=["le-row"]):
-                            guidelines_field = gr.Textbox(
-                                label="Prompt guidelines (optional)",
-                                value="",
-                                lines=4,
-                                info=(
-                                    "Empty = use the guidelines WanGP ships "
-                                    "for the selected model."
-                                ),
-                                scale=8,
-                            )
-                            guidelines_load = gr.Button(
-                                "Load prompt guidelines",
-                                size="sm",
-                                scale=0,
-                                min_width=180,
-                            )
-                    with gr.Column(
-                        scale=4,
-                        min_width=280,
-                        elem_classes=["le-author-card"],
-                    ):
+                    with gr.Column(scale=4, min_width=260):
                         gr.HTML("<div class='le-subtitle'>AI to generate</div>")
                         author_source = gr.Dropdown(
                             choices=[_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API],
@@ -3931,6 +3909,23 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         )
                         author_btn = gr.Button(
                             "Generate", variant="primary", size="sm",
+                        )
+                with gr.Accordion("Guidelines (optional)", open=False):
+                    guidelines_field = gr.Textbox(
+                        value="",
+                        show_label=False,
+                        lines=5,
+                        placeholder=(
+                            "Empty = use the guidelines WanGP ships for the "
+                            "selected model."
+                        ),
+                    )
+                    with gr.Row(elem_classes=["le-row", "le-right"]):
+                        guidelines_load = gr.Button(
+                            "Load prompt guidelines",
+                            size="sm",
+                            scale=0,
+                            min_width=180,
                         )
 
                 with gr.Group(visible=False) as author_api_group:
@@ -3981,24 +3976,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 template_text = gr.Textbox(
                     label="System prompt (result, editable)",
                     value=self._active_template_text(),
-                    lines=8,
+                    lines=12,
                     interactive=True,
-                    info="Generated text lands here. Edit it before saving if needed.",
                 )
 
-                # 4) Speichern mit erklaerendem Text.
-                with gr.Row(elem_classes=["le-row"]):
+                # 4) Status links, Speichern rechts.
+                with gr.Row(elem_classes=["le-row", "le-save-row"]):
+                    with gr.Column(scale=8, min_width=200):
+                        template_status = gr.Markdown(
+                            value=self._template_status_text()
+                        )
                     template_save = gr.Button(
                         "Save as...", variant="primary", size="sm",
-                        scale=0, min_width=130,
+                        scale=0, min_width=150,
                     )
-                    gr.HTML(
-                        "<div class='le-hint' style='margin:0'>Writes the text "
-                        "above as &lt;name&gt;.txt plus a .json sidecar.</div>"
-                    )
-                template_status = gr.Markdown(
-                    value=self._template_status_text()
-                )
                 with gr.Row(elem_classes=["le-row"], visible=False) as save_name_row:
                     save_name = gr.Textbox(
                         label="Name (max. 64 chars)",
