@@ -82,7 +82,7 @@ print("Karten (le-card):", len(karten))
 print("Labels:", labels)
 print("Typen:", typen)
 
-assert len(karten) == 5, f"erwartet 5 Karten, gefunden {len(karten)}"
+assert len(karten) == 4, f"erwartet 4 Karten, gefunden {len(karten)}"
 assert "Prompt folder" in labels, "Ordner-Feld fehlt"
 assert "Name (max. 64 chars)" in labels, "Namensfeld fehlt"
 assert "System prompt (sent to the local model)" in labels, "Prompt-Textfeld fehlt"
@@ -90,7 +90,30 @@ assert "Prompt" in labels and "Enhanced prompt" in labels, "Prompt-Werkstatt feh
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
 ids = [getattr(k, "elem_id", None) for k in knoten if getattr(k, "elem_id", None)]
 assert len(ids) == len(set(ids)), f"doppelte elem_id: {ids}"
-print("OK: fuenf Karten, Prompt-Bibliothek, Wortgrenzen, Modell-Check, Prompt-Werkstatt.")
+# Ordner, Name und Wortgrenzen stehen in EINER Zeile - ohne gr.Form-Wrapper.
+lib_row = next(
+    (k for k in knoten if getattr(k, "elem_id", None) == "local_enhance_library_row"),
+    None,
+)
+assert lib_row is not None, "Bibliotheks-Zeile fehlt"
+zeile = [type(k).__name__ for k in (lib_row.children or [])]
+print("Bibliotheks-Zeile:", zeile)
+assert zeile == [
+    "Textbox", "Button", "Button", "UploadButton", "Textbox", "Button",
+    "Number", "Number",
+], f"unerwartete Reihenfolge: {zeile}"
+# Import ist als Upload verdrahtet (der Klick schreibt eine Datei in den Ordner).
+konfiguration = demo.get_config_file()
+uploads = [
+    dependency
+    for dependency in konfiguration.get("dependencies", [])
+    if any(
+        isinstance(target, (list, tuple)) and len(target) > 1 and target[1] == "upload"
+        for target in (dependency.get("targets") or [])
+    )
+]
+assert uploads, "Import-Upload ist nicht verdrahtet"
+print("OK: vier Karten, eine Bibliotheks-Zeile, Import verdrahtet, Modell-Check, Prompt-Werkstatt.")
 
 # --- Bypass-LoRA: Nachtragen in WanGPs LoRA-Auswahl -------------------------
 print("--- Bypass-LoRA ---")
@@ -147,4 +170,19 @@ assert main.server_config["local_enhance_prompt_migrated"] is True
 p._migrate_library()
 assert Path(mig, "photograf.txt").read_text(encoding="utf-8").strip()
 print("OK: Migration einmalig, photograf + sheet geschrieben.")
+
+# --- Import ----------------------------------------------------------------
+print("--- Import ---")
+quelle = Path(tempfile.mkdtemp(prefix="le-import-"), "My Import.txt")
+quelle.write_text("imported text", encoding="utf-8")
+name, fehler = p._import_prompt_file(quelle)
+assert fehler is None and name == "My Import", (name, fehler)
+assert p._read_prompt_entry("My Import").strip() == "imported text"
+name2, fehler2 = p._import_prompt_file(quelle)
+assert fehler2 is None and name2 == "My Import 2", (name2, fehler2)
+leer = quelle.parent / "Leer.txt"
+leer.write_text("  ", encoding="utf-8")
+assert p._import_prompt_file(leer)[0] is None, "leere Datei darf nicht importiert werden"
+print("OK: Import uebernimmt Text, Kollision bekommt Zaehler, leere Datei wird abgelehnt.")
+
 

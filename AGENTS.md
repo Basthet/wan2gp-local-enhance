@@ -41,8 +41,11 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `default` plus die Namen aus `<Prompt-Ordner>/*.txt`; `default` heißt:
   WanGPs normaler System-Prompt, kein Override. Die Wahl landet in
   `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
-  installationsweit einstellbar (Standard `~/Prompts`, Feld + eigener
-  Speichern-Knopf im Tab); `default` ist reserviert.
+  installationsweit einstellbar (Standard `~/Prompts`). Im Tab stehen
+  **Ordner, Name und Wortgrenzen in einer Zeile** samt `Save folder`,
+  `Reload folder` und `Import prompt...`; der Import übernimmt eine
+  bestehende `.txt` in den Ordner (Dateiname wird bereinigt, Kollisionen
+  bekommen einen Zähler). `default` ist reserviert.
 
 Unter den beiden Feldern steht der **Modell-Check**: die englische Hinweiszeile
 (`_MODEL_CHECK_HINT`), darunter die immer sichtbare Zeile zum **aktuellen**
@@ -146,9 +149,10 @@ neu starten.
 - **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **6 Inputs**,
   `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, das
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
-  `photograf`; `default` = kein Override), die beiden Felder **Min words** /
-  **Max words** ganz oben im Plugin-Tab nebeneinander und ohne abgeschnittene
-  „1500", darunter die Zeile zum aktuellen
+  `photograf`; `default` = kein Override), die Bibliotheks-Zeile mit
+  **Prompt folder / Save folder / Reload folder / Import prompt... / Name /**
+  **Save as name / Min words / Max words** in einer Reihe (kein `gr.Form`),
+  darunter die Zeile zum aktuellen
   Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
   *Check models* füllt Status und Liste; ein alter Zwischenspeicher zeigt
   vorher den Ersatztext statt einer Textwand), und der Vision-Lauf aus
@@ -355,6 +359,14 @@ neu starten.
   Eintrag. Der Tab schreibt neue Einträge über `_write_prompt_entry()` und
   zieht beide Dropdowns per `gr.update` nach; `system_prompt.txt` und
   `_TEMPLATE_TEXT_KEY` werden nicht mehr beschrieben (nur noch gelesen).
+  `_import_prompt_file()` übernimmt eine vorhandene Datei (UTF-8, Fallback
+  latin-1), bereinigt den Namen aus dem Dateinamen und hängt bei einer
+  Kollision ` 2`, ` 3` … an; leere Dateien werden abgelehnt. `Reload folder`
+  liest die Liste neu, ohne etwas zu schreiben. Die Tab-Karte hat **vier**
+  Karten (Bibliothek mit Wortgrenzen, Bypass-LoRA, Model check, Prompt
+  workshop). Die Bibliotheks-Zeile wird nach dem Aufbau mit `_flatten_row()`
+  aus den Gradio-`Form`-Wrappern geholt (`fill_expected_parents` würde die
+  Felder sonst vertikal stapeln).
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 0 (= keine Untergrenze), Max 150. Dazu
@@ -440,13 +452,19 @@ neu starten.
     Zwischenspeichers, `<br>` nicht. Genau das war die Textwand.
 - Tab und Prompt-Bibliothek ohne WanGP-Start: `dev/check_template_ui.py`
   (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
-  `create_ui()` in einem `gr.Blocks` nach und prüft: 5 Karten, `Prompt
+  `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten, `Prompt
   folder` und `Name (max. 64 chars)`, Prompt-Textfeld (`System prompt (sent to
   the local model)`), Wortgrenzen, Model check, Prompt workshop,
-  keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Danach die Bibliothek:
-  Namensregel (64/65 Zeichen, `..`, `/`, führender Punkt, `default`),
-  Schreiben/Lesen, leere Datei wird übersprungen, `default`-Fallback, und die
-  Migration (`photograf.txt` + `sheet.txt`, Marker, Auswahl `photograf`).
+  keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Die Bibliotheks-Zeile
+  (`local_enhance_library_row`) muss genau
+  `[Textbox, Button, Button, UploadButton, Textbox, Button, Number, Number]`
+  enthalten (Ordner, Save/Reload/Import, Name, Save as name, Min, Max) und
+  keinen `Form`-Wrapper; der Import muss als `upload`-Dependency verdrahtet
+  sein. Danach die Bibliothek: Namensregel (64/65 Zeichen, `..`, `/`,
+  führender Punkt, `default`), Schreiben/Lesen, leere Datei wird übersprungen,
+  `default`-Fallback, Migration (`photograf.txt` + `sheet.txt`, Marker,
+  Auswahl `photograf`) und Import (Text übernommen, Kollision bekommt
+  Zähler, leere Datei abgelehnt).
   Der Ordner ist ein `tempfile`-Verzeichnis; das Skript schreibt nie nach
   `~/Prompts`. Erwartung: alle `OK:`-Zeilen, Exit 0.
 - Auflösung ohne UI (schneller Matrix-Check gegen `_read_controls`, Eingabe ist

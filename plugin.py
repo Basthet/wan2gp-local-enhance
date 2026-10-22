@@ -1016,6 +1016,45 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return False
 
     @classmethod
+    def _import_prompt_file(cls, datei):
+        """Eine bestehende .txt-Datei in die Bibliothek uebernehmen.
+
+        Rueckgabe: (name, None) bei Erfolg, sonst (None, fehlertext). Der Name
+        kommt aus dem Dateinamen, wird bei Bedarf bereinigt und bekommt bei
+        Kollisionen einen Zaehler ("Name 2").
+        """
+        if not datei:
+            return None, "no file selected."
+        pfad = Path(str(datei))
+        try:
+            text = pfad.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            try:
+                text = pfad.read_text(encoding="latin-1")
+            except Exception as exc:  # noqa: BLE001
+                return None, str(exc)
+        except Exception as exc:  # noqa: BLE001
+            return None, str(exc)
+        if not text.strip():
+            return None, "the file is empty."
+        name = pfad.stem.strip()
+        if not cls._prompt_name_ok(name):
+            name = re.sub(r"[^A-Za-z0-9 ._-]", "-", name).strip(" .-")
+            name = name[: _PROMPT_NAME_MAX].strip()
+        if not name or not cls._prompt_name_ok(name):
+            name = "imported prompt"
+        vorhanden = {eintrag.lower() for eintrag in cls._list_prompt_names()}
+        basis = name
+        zaehler = 2
+        while name.lower() in vorhanden:
+            suffix = f" {zaehler}"
+            name = (basis[: _PROMPT_NAME_MAX - len(suffix)] + suffix).strip()
+            zaehler += 1
+        if not cls._write_prompt_entry(name, text):
+            return None, f"`{cls._prompt_dir()}` is not writable."
+        return name, None
+
+    @classmethod
     def _migrate_library(cls):
         """Einmalige Migration beim ersten Host-Start.
 
@@ -1411,6 +1450,40 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             except Exception as exc:  # noqa: BLE001
                 print(f"[{PlugIn_Name}] Could not attach the word-limit fields: {exc}")
         return fields
+
+    @staticmethod
+    def _flatten_row(container, ordered):
+        """Pseudo-gr.Form-Wrapper einer Row aufloesen und Reihenfolge setzen.
+
+        Gradio ersetzt beim Verlassen eines Blocks aufeinanderfolgende
+        Formularfelder durch einen gr.Form (fill_expected_parents,
+        blocks.py:456-486), der seine Kinder vertikal stapelt. In einer
+        gemischten Zeile (Textbox, Buttons, Number) zerlegt das die Optik.
+        Diese Funktion holt die Felder zurueck in die Row und stellt die
+        gewuenschte Reihenfolge her.
+        """
+        wanted = {id(item) for item in ordered}
+        try:
+            for child in list(getattr(container, "children", []) or []):
+                inner = getattr(child, "children", None)
+                if not inner or id(child) in wanted:
+                    continue
+                if not any(id(item) in wanted for item in inner):
+                    continue
+                for item in list(inner):
+                    if id(item) in wanted:
+                        inner.remove(item)
+                        item.parent = container
+                if not inner and any(existing is child for existing in container.children):
+                    container.children.remove(child)
+                    unrender = getattr(child, "unrender", None)
+                    if callable(unrender):
+                        unrender()
+            container.children = list(ordered)
+            for item in ordered:
+                item.parent = container
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Could not flatten the library row: {exc}")
 
     def _image_components(self):
         """Die aufgeloesten Bild-Komponenten in fester Reihenfolge.
@@ -3282,15 +3355,52 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             with gr.Column(elem_classes=["le-card"]):
                 gr.HTML("<div class='le-card-title'>Prompt library &middot; enhancer system prompt</div>")
                 gr.HTML(f"<div class='le-hint'>{_TEMPLATE_HELP}</div>")
-                with gr.Row(elem_classes=["le-row"]):
+                # Ordner, Name und Wortgrenzen in EINER Zeile: alles, was man
+                # fuer einen Lauf einstellt, steht damit beieinander. Die
+                # Wort-Regler kommen erst nach dem Block dazu (_attach_word_fields),
+                # die uebrigen Felder werden anschliessend aus den
+                # Gradio-Form-Wrappern geholt (_flatten_row).
+                with gr.Row(elem_classes=["le-row"], elem_id="local_enhance_library_row") as library_row:
                     prompt_dir_field = gr.Textbox(
                         label="Prompt folder",
                         value=self._prompt_dir_setting(),
                         scale=3,
+                        max_lines=1,
                     )
                     prompt_dir_save = gr.Button(
-                        "Save folder", size="sm", scale=0, min_width=160,
+                        "Save folder", size="sm", scale=0, min_width=120,
                     )
+                    prompt_reload = gr.Button(
+                        "Reload folder", size="sm", scale=0, min_width=130,
+                    )
+                    prompt_import = gr.UploadButton(
+                        "Import prompt...", file_types=[".txt"],
+                        size="sm", scale=0, min_width=150,
+                    )
+                    prompt_name_field = gr.Textbox(
+                        label="Name (max. 64 chars)",
+                        value="",
+                        scale=2,
+                        max_lines=1,
+                    )
+                    template_save = gr.Button(
+                        "Save as name", size="sm", variant="primary",
+                        scale=0, min_width=150,
+                    )
+                self._attach_word_fields(library_row)
+                self._flatten_row(
+                    library_row,
+                    [
+                        prompt_dir_field,
+                        prompt_dir_save,
+                        prompt_reload,
+                        prompt_import,
+                        prompt_name_field,
+                        template_save,
+                        self._min_words_field,
+                        self._max_words_field,
+                    ],
+                )
                 tab_choices = self._prompt_choices()
                 tab_wahl = self._template_choice()
                 if tab_wahl not in tab_choices:
@@ -3301,24 +3411,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     label="Prompt",
                 )
                 # Zeigt den System-Prompt des gewaehlten Eintrags und ist die
-                # Quelle fuer "Speichern unter Name".
+                # Quelle fuer "Save as name".
                 template_text = gr.Textbox(
                     label="System prompt (sent to the local model)",
                     value=self._active_template_text(),
                     lines=10,
                     interactive=True,
                 )
-                with gr.Row(elem_classes=["le-row"]):
-                    prompt_name_field = gr.Textbox(
-                        label="Name (max. 64 chars)",
-                        value="",
-                        scale=3,
-                        max_lines=1,
-                    )
-                    template_save = gr.Button(
-                        "Save as name", size="sm", variant="primary",
-                        scale=0, min_width=170,
-                    )
                 template_status = gr.Markdown(value=self._template_status_text())
 
             # --- Karte 1b: Bypass-LoRA ------------------------------------------
@@ -3343,22 +3442,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 bypass_status = gr.Markdown(value=self._bypass_status_text())
                 with gr.Row(elem_classes=["le-actions"]):
                     bypass_save = gr.Button("Save", size="sm", variant="primary")
-
-            # --- Karte 2: Wortgrenzen -------------------------------------------
-            with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>Word limits</div>")
-                gr.HTML(
-                    "<div class='le-hint'>Apply to both buttons in row 1. "
-                    "0 means: no limit.</div>"
-                )
-                # Die Zeile wird leer geoeffnet, die Felder kommen erst NACH dem
-                # Block hinein: beim Verlassen gruppiert Gradio aufeinanderfolgende
-                # Formularfelder in einen gr.Form (BlockContext.__exit__ ->
-                # fill_expected_parents, blocks.py:456-486), der seine Kinder
-                # vertikal stapelt - die beiden Felder stuenden sonst untereinander.
-                with gr.Row() as word_row:
-                    pass
-                self._attach_word_fields(word_row)
 
             # --- Karte 3: Modell-Check ------------------------------------------
             with gr.Column(elem_classes=["le-card"]):
@@ -3519,6 +3602,45 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             if prompt_select is not None:
                 werte.append(update)
             return tuple(werte)
+
+        def prompt_neu_laden():
+            namen = self._list_prompt_names()
+            update = _dd_update(self._template_choice())
+            werte = [
+                update,
+                f"**Folder:** `{self._prompt_dir()}` - {len(namen)} prompt(s).",
+            ]
+            if prompt_select is not None:
+                werte.append(update)
+            return tuple(werte)
+
+        reload_outputs = [template_dd, template_status]
+        if prompt_select is not None:
+            reload_outputs.append(prompt_select)
+        prompt_reload.click(
+            fn=prompt_neu_laden,
+            inputs=None,
+            outputs=reload_outputs,
+            show_progress="hidden",
+        )
+
+        def prompt_importieren(datei):
+            name, fehler = self._import_prompt_file(datei)
+            if fehler:
+                return _library_error(f"**Not imported:** {fehler}")
+            self._save_template(name)
+            return _library_returns(
+                name,
+                f"**Imported:** `{name}.txt` into `{self._prompt_dir()}`.",
+                clear_name=True,
+            )
+
+        prompt_import.upload(
+            fn=prompt_importieren,
+            inputs=[prompt_import],
+            outputs=library_outputs,
+            show_progress="hidden",
+        )
 
         dir_outputs = [prompt_dir_field, template_status, template_dd]
         if prompt_select is not None:
