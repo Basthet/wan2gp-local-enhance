@@ -83,9 +83,11 @@ print("Labels:", labels)
 print("Typen:", typen)
 
 assert len(karten) == 4, f"erwartet 4 Karten, gefunden {len(karten)}"
-assert "Prompt folder" in labels, "Ordner-Feld fehlt"
-assert "Name (max. 64 chars)" in labels, "Namensfeld fehlt"
+assert "Folder" in labels, "Ordner-Feld fehlt"
+assert "Name (max. 64 chars)" in labels, "Namensfeld im Save-Dialog fehlt"
 assert "System prompt (sent to the local model)" in labels, "Prompt-Textfeld fehlt"
+assert "Entry" in labels and "Model" in labels, "Entry-/Modell-Auswahl fehlt"
+assert "Author model" in labels and "Tags" in labels, "Autor/Tags fehlen"
 assert "Prompt" in labels and "Enhanced prompt" in labels, "Prompt-Werkstatt fehlt"
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
 ids = [getattr(k, "elem_id", None) for k in knoten if getattr(k, "elem_id", None)]
@@ -104,9 +106,9 @@ zeile = [type(k).__name__ for k in (lib_row.children or [])]
 eintrag = [type(k).__name__ for k in (entry_row.children or [])]
 print("Bibliotheks-Zeile:", zeile)
 print("Eintrags-Zeile:", eintrag)
-assert zeile == ["Textbox", "Button", "Button", "UploadButton"], zeile
-assert eintrag == ["Textbox", "Button", "Number", "Number"], eintrag
-# Import ist als Upload verdrahtet (der Klick schreibt eine Datei in den Ordner).
+assert zeile == ["Textbox", "UploadButton", "UploadButton", "Button"], zeile
+assert eintrag == ["Dropdown", "Dropdown", "Number", "Number"], eintrag
+# Load und Import folder sind als Upload verdrahtet (schreiben in den Ordner).
 konfiguration = demo.get_config_file()
 uploads = [
     dependency
@@ -116,7 +118,7 @@ uploads = [
         for target in (dependency.get("targets") or [])
     )
 ]
-assert uploads, "Import-Upload ist nicht verdrahtet"
+assert len(uploads) >= 2, f"Load/Import-Upload nicht verdrahtet: {len(uploads)}"
 print("OK: vier Karten, eine Bibliotheks-Zeile, Import verdrahtet, Modell-Check, Prompt-Werkstatt.")
 
 # --- Bypass-LoRA: Nachtragen in WanGPs LoRA-Auswahl -------------------------
@@ -188,5 +190,41 @@ leer = quelle.parent / "Leer.txt"
 leer.write_text("  ", encoding="utf-8")
 assert p._import_prompt_file(leer)[0] is None, "leere Datei darf nicht importiert werden"
 print("OK: Import uebernimmt Text, Kollision bekommt Zaehler, leere Datei wird abgelehnt.")
+
+# --- Sidecar, Modellkatalog, Guidelines ------------------------------------
+print("--- Metadaten & Modell ---")
+p._write_prompt_entry("Modelltest", "prompt text")
+p._write_prompt_meta("Modelltest", "hidream_o1_dev", ["character sheet", "bw"])
+meta = p._read_prompt_meta("Modelltest")
+assert meta["model"] == "hidream_o1_dev", meta
+assert meta["tags"] == ["character sheet", "bw"], meta
+assert Path(p._prompt_dir(), "Modelltest.json").is_file()
+p._write_prompt_meta("Modelltest", "", [])
+assert not Path(p._prompt_dir(), "Modelltest.json").is_file()
+assert p._read_prompt_meta("gibt es nicht") == {"model": "", "tags": []}
+
+main.models_def = {
+    "hidden_model": {"name": "Hidden", "visible": False},
+    "hidream_o1_dev": {
+        "name": "HiDream",
+        "image_prompt_enhancer_instructions": "GUIDE",
+    },
+}
+assert ("HiDream", "hidream_o1_dev") in p._model_choices()
+assert all(key != "hidden_model" for _, key in p._model_choices())
+assert p._model_guidelines("hidream_o1_dev") == "GUIDE"
+assert p._model_guidelines("unbekannt") == ""
+assert "Select a model" in p._guidelines_text("")
+assert "ships no own" in p._guidelines_text("unbekannt")
+msg = p._author_user_message("GUIDE", ["portrait"], "old prompt")
+assert "MODEL GUIDELINES" in msg and "portrait" in msg and "old prompt" in msg
+
+p._save_author_api("http://localhost:1234/v1", "my-model", "secret", plugin._AUTHOR_SOURCE_API)
+assert p._author_api_config() == ("http://localhost:1234/v1", "my-model", "secret")
+assert p._author_source() == plugin._AUTHOR_SOURCE_API
+p._save_author_api("", "", "", plugin._AUTHOR_SOURCE_LOCAL)
+assert p._author_source() == plugin._AUTHOR_SOURCE_LOCAL
+print("OK: Sidecar, Modellkatalog, Guidelines, Autoren-Nachricht, API-Config.")
+
 
 

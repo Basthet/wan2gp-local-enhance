@@ -37,6 +37,8 @@ import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import NamedTuple
 
@@ -295,6 +297,8 @@ _UI_CSS = (
     # stehen rechts daneben.
     ".le-lib-row{display:flex !important;flex-wrap:wrap !important;"
     "align-items:flex-end !important;gap:8px !important;margin:0 0 8px 0 !important;}"
+    ".le-prompt-row{align-items:flex-start !important;margin:0 0 8px 0 !important;}"
+    ".le-prompt-row .le-author{flex:0 0 220px !important;}"
     "#local_enhance_library_row #local_enhance_prompt_dir{"
     "flex:1 1 240px !important;min-width:180px !important;}"
     "#local_enhance_entry_row #local_enhance_prompt_name{"
@@ -323,6 +327,31 @@ _MIGRATE_KEY = "local_enhance_prompt_migrated"
 # photograf = der jetzige Live-Prompt, sheet = der Text der Character-Sheet-Vorlage.
 _MIGRATE_PHOTOGRAPH = "photograf"
 _MIGRATE_SHEET = "sheet"
+# Neben jeder <name>.txt liegt <name>.json mit dem Zielmodell und den Tags.
+# Die .txt bleibt damit ein reiner Prompt, den WanGP unveraendert lesen kann.
+_PROMPT_META_KEYS = ("model", "tags")
+# Wer den System-Prompt schreibt: das lokale 27B des Plugins oder ein
+# OpenAI-kompatibler Server (LM Studio, Ollama, llama.cpp, OpenRouter ...).
+_AUTHOR_SOURCE_KEY = "local_enhance_author_source"
+_AUTHOR_BASE_URL_KEY = "local_enhance_author_base_url"
+_AUTHOR_MODEL_KEY = "local_enhance_author_model"
+_AUTHOR_API_KEY_KEY = "local_enhance_author_api_key"
+_AUTHOR_SOURCE_LOCAL = "Local 27B"
+_AUTHOR_SOURCE_API = "OpenAI-compatible API"
+_AUTHOR_BASE_URL_DEFAULT = "http://127.0.0.1:1234/v1"
+_TAG_SUGGESTIONS = [
+    "character sheet", "turnaround", "3d render", "portrait", "product shot",
+    "environment", "cinematic still", "concept art", "illustration",
+]
+# Anweisung an das Autoren-Modell. Sie beschreibt die Aufgabe (System-Prompt
+# schreiben), nicht den Bildinhalt; die Modell-Guidelines kommen als Nutzertext.
+_AUTHOR_INSTRUCTIONS = (
+    "You write SYSTEM PROMPTS for AI media-generation models. A system prompt "
+    "tells the model HOW to improve a user's prompt. Follow the model "
+    "guidelines exactly; they win over your own preferences. Use the tags as "
+    "the intended output type. Write concise, literal English without markdown "
+    "or commentary and return ONLY the system prompt text."
+)
 
 # Die zentrale Bypass-LoRA. Sie gehoert zu jeder eigenen LoRA dazu: WanGPs
 # Modell ist ausgerichtet, ohne diesen Bypass greift die Zensur. Das Plugin
@@ -1025,6 +1054,189 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return False
 
     @classmethod
+    def _prompt_meta_path(cls, name):
+        return cls._prompt_dir() / f"{name}.json"
+
+    @classmethod
+    def _read_prompt_meta(cls, name):
+        """Zielmodell und Tags eines Eintrags; fehlende/kaputte Datei -> leer."""
+        name = str(name or "").strip()
+        leer = {"model": "", "tags": []}
+        if not cls._prompt_name_ok(name):
+            return leer
+        try:
+            pfad = cls._prompt_meta_path(name)
+            if not pfad.is_file():
+                return leer
+            data = json.loads(pfad.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - defekte Sidecar ignorieren
+            return leer
+        if not isinstance(data, dict):
+            return leer
+        model = str(data.get("model") or "").strip()
+        tags = data.get("tags")
+        if not isinstance(tags, list):
+            tags = []
+        tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+        return {"model": model, "tags": tags}
+
+    @classmethod
+    def _write_prompt_meta(cls, name, model, tags):
+        """Sidecar schreiben; leer loescht die Datei (z. B. fuer "default")."""
+        name = str(name or "").strip()
+        if not cls._prompt_name_ok(name):
+            return False
+        model = str(model or "").strip()
+        tags = [str(tag).strip() for tag in (tags or []) if str(tag).strip()]
+        pfad = cls._prompt_meta_path(name)
+        try:
+            if not model and not tags:
+                if pfad.is_file():
+                    pfad.unlink()
+                return True
+            pfad.write_text(
+                json.dumps(
+                    {"model": model, "tags": tags},
+                    ensure_ascii=False, indent=2,
+                ) + "\n",
+                encoding="utf-8",
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Prompt-Metadaten nicht gespeichert: {exc}")
+            return False
+
+    @classmethod
+    def _delete_prompt_entry(cls, name):
+        """Eintrag komplett entfernen (txt + Sidecar)."""
+        name = str(name or "").strip()
+        if not cls._prompt_name_ok(name):
+            return False
+        try:
+            for pfad in (
+                cls._prompt_dir() / f"{name}.txt",
+                cls._prompt_meta_path(name),
+            ):
+                if pfad.is_file():
+                    pfad.unlink()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{PlugIn_Name}] Prompt nicht geloescht: {exc}")
+            return False
+
+    @classmethod
+    def _model_catalog(cls):
+        """Alle sichtbaren Modelle als (Anzeigename, interner Typ)."""
+        models = _main("models_def")
+        if not isinstance(models, dict):
+            return []
+        eintraege = []
+        for typ, definition in models.items():
+            if not isinstance(definition, dict):
+                continue
+            if definition.get("visible") is False:
+                continue
+            name = str(definition.get("name") or typ)
+            eintraege.append((name, str(typ)))
+        return sorted(eintraege, key=lambda item: item[0].lower())
+
+    @classmethod
+    def _model_choices(cls):
+        return [("Any model", "")] + cls._model_catalog()
+
+    @classmethod
+    def _model_display_name(cls, model_type):
+        typ = str(model_type or "").strip()
+        for name, key in cls._model_catalog():
+            if key == typ:
+                return name
+        return typ or "Any model"
+
+    @classmethod
+    def _model_guidelines(cls, model_type):
+        """Die modell-eigenen Prompt-Anweisungen aus der WanGP-Definition."""
+        typ = str(model_type or "").strip()
+        models = _main("models_def")
+        definition = models.get(typ) if isinstance(models, dict) else None
+        if not isinstance(definition, dict):
+            return ""
+        muster = re.compile(
+            r"^(?:text|image|video)_prompt_enhancer_instructions\d*$"
+        )
+        # Laengste/beste Anweisung gewinnt: erst text, dann image, dann video.
+        for prefix in ("text", "image", "video"):
+            for key, value in definition.items():
+                if not isinstance(key, str) or not muster.match(key):
+                    continue
+                if not key.startswith(prefix + "_"):
+                    continue
+                text = str(value or "").strip()
+                if text:
+                    return text
+        return ""
+
+    @classmethod
+    def _guidelines_text(cls, model_type):
+        if not model_type:
+            return (
+                "*Select a model to see its prompt guidelines. WanGP stores them "
+                "in the model definition; models without an entry ship none.*"
+            )
+        text = cls._model_guidelines(model_type)
+        if text:
+            return text
+        return (
+            f"**{cls._model_display_name(model_type)}** ships no own prompt "
+            "guidelines in WanGP. Use the tags and the general structure."
+        )
+
+    # ------------------------------------------------------- Autor der Prompts
+
+    @classmethod
+    def _author_source(cls, value=None):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_AUTHOR_SOURCE_KEY, _AUTHOR_SOURCE_LOCAL)
+        value = str(value or "").strip()
+        return value if value in (_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API) else _AUTHOR_SOURCE_LOCAL
+
+    @classmethod
+    def _author_api_config(cls):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        return (
+            str(config.get(_AUTHOR_BASE_URL_KEY, _AUTHOR_BASE_URL_DEFAULT) or "").strip(),
+            str(config.get(_AUTHOR_MODEL_KEY, "") or "").strip(),
+            str(config.get(_AUTHOR_API_KEY_KEY, "") or "").strip(),
+        )
+
+    @classmethod
+    def _save_author_api(cls, base_url, model, api_key, source=None):
+        config = _main("server_config")
+        if not isinstance(config, dict):
+            return
+        config[_AUTHOR_BASE_URL_KEY] = str(base_url or "").strip()
+        config[_AUTHOR_MODEL_KEY] = str(model or "").strip()
+        config[_AUTHOR_API_KEY_KEY] = str(api_key or "").strip()
+        if source in (_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API):
+            config[_AUTHOR_SOURCE_KEY] = source
+
+    @classmethod
+    def _author_user_message(cls, guidelines, tags, text):
+        teile = []
+        if guidelines:
+            teile.append("MODEL GUIDELINES (follow exactly):\n" + guidelines)
+        if tags:
+            teile.append("TAGS: " + ", ".join(tags))
+        text = str(text or "").strip()
+        if text:
+            teile.append("CURRENT SYSTEM PROMPT (revise):\n" + text)
+        else:
+            teile.append("Write a new system prompt for this model and these tags.")
+        return "\n\n".join(teile)
+
+    @classmethod
     def _import_prompt_file(cls, datei):
         """Eine bestehende .txt-Datei in die Bibliothek uebernehmen.
 
@@ -1061,6 +1273,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             zaehler += 1
         if not cls._write_prompt_entry(name, text):
             return None, f"`{cls._prompt_dir()}` is not writable."
+        # Ein vorhandenes Sidecar (<datei>.json) mit uebernehmen.
+        quelle_meta = pfad.with_suffix(".json")
+        if quelle_meta.is_file():
+            try:
+                daten = json.loads(quelle_meta.read_text(encoding="utf-8"))
+                if isinstance(daten, dict):
+                    cls._write_prompt_meta(
+                        name, daten.get("model"), daten.get("tags")
+                    )
+            except Exception:  # noqa: BLE001 - Sidecar ist optional
+                pass
         return name, None
 
     @classmethod
@@ -2416,6 +2639,149 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         cfg.setdefault("duration_seconds", settings.get("duration_seconds"))
         return cfg
 
+    def _author_with_api(self, user_message):
+        base, model, api_key = self._author_api_config()
+        if not base:
+            return None, "**API not configured:** set the base URL under *Author API settings*."
+        if not model:
+            return None, "**API not configured:** set the model name under *Author API settings*."
+        url = base.rstrip("/")
+        if not url.endswith("/chat/completions"):
+            url += "/chat/completions" if url.endswith("/v1") else "/v1/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _AUTHOR_INSTRUCTIONS},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": 0.4,
+        }
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", "replace")[:400]
+            except Exception:  # noqa: BLE001
+                detail = ""
+            return None, f"**API error {exc.code}:** {detail or exc.reason}"
+        except Exception as exc:  # noqa: BLE001
+            return None, f"**API request failed:** {type(exc).__name__}: {exc}"
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except Exception:  # noqa: BLE001
+            return None, "**API response has no choices[0].message.content.**"
+        text = str(content or "").strip()
+        return (text, None) if text else (None, "The API returned an empty answer.")
+
+    def _author_with_local(self, state, model_type, user_message, progress):
+        if not self._local_enhancer_ready():
+            return None, (
+                "**No local enhancer model configured.** Set *Configuration → "
+                "Prompt Enhancer / Deepy → Prompt Enhancer / Deepy LLM Engine* "
+                "to a local Qwen model first."
+            )
+        ensure_loaded = _main("ensure_prompt_enhancer_loaded")
+        process = _main("process_prompt_enhancer")
+        unload_runtime = _main("unload_prompt_enhancer_runtime")
+        wait_for_unload = _main("wait_for_model_unload")
+        if not all((ensure_loaded, process)):
+            return None, "**Internal error:** WanGP enhancer functions not found."
+        typ = str(model_type or "").strip()
+        if not typ:
+            get_state_model_type = _main("get_state_model_type")
+            try:
+                typ = get_state_model_type(state)
+            except Exception:  # noqa: BLE001
+                typ = ""
+        if not typ:
+            return None, "Pick a model first."
+        get_model_def = _main("get_model_def")
+        model_def = {}
+        if callable(get_model_def):
+            try:
+                model_def = get_model_def(typ) or {}
+            except Exception:  # noqa: BLE001
+                model_def = {}
+        if callable(wait_for_unload):
+            wait_for_unload()
+        acquire_GPU_ressources(state, PlugIn_Id, PlugIn_Name, gr=gr)
+        config = _main("server_config") or {}
+        llm_section = config.get("llm_engines")
+        previous_enhancer = config.get("enhancer_enabled")
+        previous_quant = config.get("prompt_enhancer_quantization")
+        swapped = False
+        if int(previous_enhancer or 0) != 5 or str(previous_quant or "") != "gguf_ptq1":
+            config["enhancer_enabled"] = 5
+            config["prompt_enhancer_quantization"] = "gguf_ptq1"
+            swapped = True
+            reset = _main("reset_prompt_enhancer")
+            if callable(reset):
+                reset()
+        local_engine = self._local_engine_name()
+        previous_engine = None
+        flipped = False
+        if isinstance(llm_section, dict) and llm_section.get("deepy") != local_engine:
+            previous_engine = llm_section.get("deepy")
+            llm_section["deepy"] = local_engine
+            flipped = True
+        try:
+            ensure_loaded(override_profile=-1, progress=progress)
+            if progress is not None:
+                progress(0, desc="Writing system prompt")
+            neutral = self._model_def_without_prompt_instructions(model_def)
+            with _PromptInstructionOverride():
+                prompts = process(
+                    typ,
+                    neutral,
+                    "T",
+                    [user_message],
+                    None,
+                    None,
+                    False,
+                    False,
+                    -1,
+                    prompt_enhancer_instructions=_AUTHOR_INSTRUCTIONS,
+                    text_encoder_max_tokens=2048,
+                    enhancer_kwargs={},
+                )
+        except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
+            return None, f"**Authoring failed:** `{type(exc).__name__}: {exc}`"
+        finally:
+            if flipped and isinstance(llm_section, dict):
+                llm_section["deepy"] = previous_engine
+            if swapped:
+                config["enhancer_enabled"] = previous_enhancer
+                config["prompt_enhancer_quantization"] = previous_quant
+            try:
+                if callable(unload_runtime):
+                    unload_runtime()
+                offloadobj = _main("enhancer_offloadobj")
+                if offloadobj is not None:
+                    offloadobj.unload_all()
+            except Exception:  # noqa: BLE001
+                pass
+            release_GPU_ressources(state, PlugIn_Id)
+        result = self._first_prompt(prompts)
+        return (result, None) if result else (None, "The author model returned nothing.")
+
+    def author_system_prompt(self, state, model_type, tags, text, source, progress=gr.Progress()):
+        """System-Prompt schreiben lassen - lokal oder ueber die API."""
+        guidelines = self._model_guidelines(model_type)
+        user_message = self._author_user_message(guidelines, tags, text)
+        if str(source or "").strip() == _AUTHOR_SOURCE_API:
+            return self._author_with_api(user_message)
+        return self._author_with_local(state, model_type, user_message, progress)
+
     def enhance(self, state, text, *values, progress=gr.Progress()):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
 
@@ -3360,80 +3726,147 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             current_prompt = ""
 
         with gr.Column():
-            # --- Karte 1: Prompt-Bibliothek -------------------------------------
+            # --- Karte 1: System Prompts ----------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>Prompt library &middot; enhancer system prompt</div>")
-                gr.HTML(f"<div class='le-hint'>{_TEMPLATE_HELP}</div>")
-                # Zwei saubere Zeilen statt einer umbrechenden: erst der Ordner
-                # mit seinen drei Aktionen, darunter Name, Speichern und die
-                # Wortgrenzen. Die Felder wachsen, die Buttons bleiben kompakt.
+                gr.HTML("<div class='le-card-title'>System Prompts</div>")
+                gr.HTML(
+                    "<div class='le-hint'>One entry per prompt. Target model and tags "
+                    "are stored next to the .txt in a .json sidecar.</div>"
+                )
                 with gr.Row(
                     elem_classes=["le-row", "le-lib-row"],
                     elem_id="local_enhance_library_row",
                 ) as library_row:
                     prompt_dir_field = gr.Textbox(
-                        label="Prompt folder",
+                        label="Folder",
                         value=self._prompt_dir_setting(),
                         max_lines=1,
                         elem_id="local_enhance_prompt_dir",
+                        info="Press Enter to save the folder.",
                     )
-                    prompt_dir_save = gr.Button(
-                        "Save folder", size="sm", scale=0, min_width=110,
+                    prompt_load = gr.UploadButton(
+                        "Load...", file_types=[".txt"],
+                        size="sm", scale=0, min_width=100,
+                    )
+                    prompt_folder_import = gr.UploadButton(
+                        "Import folder...", file_count="directory",
+                        size="sm", scale=0, min_width=150,
                     )
                     prompt_reload = gr.Button(
-                        "Reload folder", size="sm", scale=0, min_width=120,
-                    )
-                    prompt_import = gr.UploadButton(
-                        "Import prompt...", file_types=[".txt"],
-                        size="sm", scale=0, min_width=140,
+                        "Reload", size="sm", scale=0, min_width=100,
                     )
                 self._flatten_row(
                     library_row,
-                    [prompt_dir_field, prompt_dir_save, prompt_reload, prompt_import],
+                    [prompt_dir_field, prompt_load, prompt_folder_import, prompt_reload],
                 )
+                entry_choices = self._prompt_choices()
+                entry_wahl = self._template_choice()
+                if entry_wahl not in entry_choices:
+                    entry_wahl = _PROMPT_DEFAULT
+                model_choices = self._model_choices()
+                current_model_type = (
+                    self._resolve_current_model_type(self._state_value()) or ""
+                )
+                if current_model_type not in {value for _, value in model_choices}:
+                    current_model_type = ""
                 with gr.Row(
                     elem_classes=["le-row", "le-lib-row"],
                     elem_id="local_enhance_entry_row",
                 ) as entry_row:
-                    prompt_name_field = gr.Textbox(
-                        label="Name (max. 64 chars)",
-                        value="",
-                        max_lines=1,
-                        elem_id="local_enhance_prompt_name",
+                    template_dd = gr.Dropdown(
+                        choices=entry_choices,
+                        value=entry_wahl,
+                        label="Entry",
+                        scale=3,
+                        min_width=180,
                     )
-                    template_save = gr.Button(
-                        "Save as name", size="sm", variant="primary",
-                        scale=0, min_width=140,
+                    prompt_model = gr.Dropdown(
+                        choices=model_choices,
+                        value=current_model_type,
+                        label="Model",
+                        scale=3,
+                        min_width=200,
                     )
                 self._attach_word_fields(entry_row)
                 self._flatten_row(
                     entry_row,
                     [
-                        prompt_name_field,
-                        template_save,
+                        template_dd,
+                        prompt_model,
                         self._min_words_field,
                         self._max_words_field,
                     ],
                 )
-                tab_choices = self._prompt_choices()
-                tab_wahl = self._template_choice()
-                if tab_wahl not in tab_choices:
-                    tab_wahl = _PROMPT_DEFAULT
-                template_dd = gr.Dropdown(
-                    choices=tab_choices,
-                    value=tab_wahl,
-                    label="Edit prompt",
+                with gr.Accordion("Show prompt guidelines", open=False):
+                    guidelines_out = gr.Markdown(
+                        value=self._guidelines_text(current_model_type)
+                    )
+                with gr.Row(elem_classes=["le-row", "le-prompt-row"]):
+                    template_text = gr.Textbox(
+                        label="System prompt (sent to the local model)",
+                        value=self._active_template_text(),
+                        lines=8,
+                        interactive=True,
+                        info="Edits apply only after Save.",
+                        scale=8,
+                    )
+                    with gr.Column(scale=0, min_width=220):
+                        author_source = gr.Dropdown(
+                            choices=[_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API],
+                            value=self._author_source(),
+                            label="Author model",
+                        )
+                        author_btn = gr.Button(
+                            "Enhance", variant="primary", size="sm",
+                        )
+                tags_field = gr.Dropdown(
+                    choices=_TAG_SUGGESTIONS,
+                    multiselect=True,
+                    allow_custom_value=True,
+                    label="Tags",
+                    value=[],
+                    info="Pick a suggestion or type your own tag and press Enter.",
                 )
-                # Zeigt den System-Prompt des gewaehlten Eintrags und ist die
-                # Quelle fuer "Save as name".
-                template_text = gr.Textbox(
-                    label="System prompt (sent to the local model)",
-                    value=self._active_template_text(),
-                    lines=8,
-                    interactive=True,
-                    info="Edits apply only after Save as name.",
+                with gr.Row(elem_classes=["le-row"]):
+                    template_save = gr.Button(
+                        "Save", variant="primary", size="sm",
+                        scale=0, min_width=100,
+                    )
+                template_status = gr.Markdown(
+                    value=self._template_status_text()
                 )
-                template_status = gr.Markdown(value=self._template_status_text())
+                with gr.Row(elem_classes=["le-row"], visible=False) as save_name_row:
+                    save_name = gr.Textbox(
+                        label="Name (max. 64 chars)",
+                        value="",
+                        max_lines=1,
+                        scale=4,
+                    )
+                    save_confirm = gr.Button(
+                        "Save", variant="primary", size="sm",
+                        scale=0, min_width=90,
+                    )
+                    save_cancel = gr.Button(
+                        "Cancel", size="sm", scale=0, min_width=90,
+                    )
+                with gr.Accordion("Author API settings (OpenAI-compatible)", open=False):
+                    api_base = gr.Textbox(
+                        label="Base URL",
+                        value=self._author_api_config()[0],
+                        placeholder=_AUTHOR_BASE_URL_DEFAULT,
+                    )
+                    api_model = gr.Textbox(
+                        label="Model",
+                        value=self._author_api_config()[1],
+                        placeholder="e.g. your local model name",
+                    )
+                    api_key = gr.Textbox(
+                        label="API key (optional)",
+                        type="password",
+                        value=self._author_api_config()[2],
+                    )
+                    api_save = gr.Button("Save API settings", size="sm")
+                    api_status = gr.Markdown()
 
             # --- Karte 1b: Bypass-LoRA ------------------------------------------
             with gr.Column(elem_classes=["le-card"]):
@@ -3537,7 +3970,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             show_progress="hidden",
         )
 
-        # --- Karte "Prompt-Bibliothek" --------------------------------------
+        # --- Karte "System Prompts" ------------------------------------------
         prompt_select = getattr(self, "_prompt_select", None)
 
         def _dd_update(choice=None):
@@ -3546,61 +3979,104 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 choice = _PROMPT_DEFAULT
             return gr.update(choices=choices, value=choice)
 
-        def _library_returns(choice, status, clear_name=False):
-            werte = [
+        def _entry_values(name, status):
+            meta = (
+                self._read_prompt_meta(name)
+                if name and name != _PROMPT_DEFAULT
+                else {"model": "", "tags": []}
+            )
+            model = meta["model"]
+            return [
                 gr.update(value=self._active_template_text()),
+                gr.update(value=model),
+                gr.update(value=meta["tags"]),
+                self._guidelines_text(model),
                 status,
-                _dd_update(choice),
-                gr.update(value="") if clear_name else gr.update(),
+                _dd_update(name),
             ]
-            if prompt_select is not None:
-                werte.append(_dd_update(choice))
-            return tuple(werte)
 
-        def _library_error(text):
-            werte = [gr.update(), text, gr.update(), gr.update()]
-            if prompt_select is not None:
-                werte.append(gr.update())
-            return tuple(werte)
-
-        library_outputs = [template_text, template_status, template_dd, prompt_name_field]
+        entry_outputs = [
+            template_text, prompt_model, tags_field, guidelines_out,
+            template_status, template_dd,
+        ]
         if prompt_select is not None:
-            library_outputs.append(prompt_select)
+            entry_outputs.append(prompt_select)
 
-        def vorlage_wechsel(choice):
+        def _entry_returns(name, status):
+            werte = _entry_values(name, status)
+            if prompt_select is not None:
+                werte.append(_dd_update(name))
+            return tuple(werte)
+
+        def entry_wechsel(choice):
             self._save_template(choice)
-            return _library_returns(choice, self._template_status_text())
+            return _entry_returns(choice, self._template_status_text())
 
         template_dd.change(
-            fn=vorlage_wechsel,
+            fn=entry_wechsel,
             inputs=[template_dd],
-            outputs=library_outputs,
+            outputs=entry_outputs,
             show_progress="hidden",
         )
 
-        def vorlage_speichern(name, text):
+        def modell_wechsel(model_type):
+            return self._guidelines_text(model_type)
+
+        prompt_model.change(
+            fn=modell_wechsel,
+            inputs=[prompt_model],
+            outputs=[guidelines_out],
+            show_progress="hidden",
+        )
+
+        def save_oeffnen():
+            aktuell = self._template_choice()
+            name = "" if aktuell == _PROMPT_DEFAULT else aktuell
+            return gr.update(visible=True), gr.update(value=name)
+
+        template_save.click(
+            fn=save_oeffnen,
+            inputs=None,
+            outputs=[save_name_row, save_name],
+            show_progress="hidden",
+        )
+
+        save_cancel.click(
+            fn=lambda: gr.update(visible=False),
+            inputs=None,
+            outputs=[save_name_row],
+            show_progress="hidden",
+        )
+
+        save_outputs = [save_name_row] + entry_outputs
+
+        def save_bestaetigen(name, text, model, tags):
             name = str(name or "").strip()
             if not self._prompt_name_ok(name):
-                return _library_error(
+                return (gr.update(visible=True),) + _entry_returns(
+                    self._template_choice(),
                     "**Not saved:** invalid name - 1 to 64 characters, "
-                    "letters/digits/spaces/._- , no leading dot."
+                    "letters/digits/spaces/._- , no leading dot.",
                 )
             vorhanden = name in self._list_prompt_names()
             if not self._write_prompt_entry(name, text):
-                return _library_error(
-                    f"**Not saved:** `{self._prompt_dir()}` is not writable."
+                return (gr.update(visible=True),) + _entry_returns(
+                    self._template_choice(),
+                    f"**Not saved:** `{self._prompt_dir()}` is not writable.",
                 )
+            self._write_prompt_meta(name, model, tags)
             self._save_template(name)
             status = (
-                f"**Saved:** `{name}.txt`" + (" (overwritten)" if vorhanden else "")
+                f"**Saved:** `{name}.txt`"
+                + (" (overwritten)" if vorhanden else "")
                 + f" in `{self._prompt_dir()}`."
             )
-            return _library_returns(name, status, clear_name=True)
+            return (gr.update(visible=False),) + _entry_returns(name, status)
 
-        template_save.click(
-            fn=vorlage_speichern,
-            inputs=[prompt_name_field, template_text],
-            outputs=library_outputs,
+        save_confirm.click(
+            fn=save_bestaetigen,
+            inputs=[save_name, template_text, prompt_model, tags_field],
+            outputs=save_outputs,
             show_progress="hidden",
         )
 
@@ -3618,7 +4094,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 werte.append(update)
             return tuple(werte)
 
-        def prompt_neu_laden():
+        dir_outputs = [prompt_dir_field, template_status, template_dd]
+        if prompt_select is not None:
+            dir_outputs.append(prompt_select)
+        prompt_dir_field.submit(
+            fn=ordner_speichern,
+            inputs=[prompt_dir_field],
+            outputs=dir_outputs,
+            show_progress="hidden",
+        )
+
+        def prompt_neu_laden(value):
+            self._save_prompt_dir(value)
             namen = self._list_prompt_names()
             update = _dd_update(self._template_choice())
             werte = [
@@ -3634,7 +4121,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             reload_outputs.append(prompt_select)
         prompt_reload.click(
             fn=prompt_neu_laden,
-            inputs=None,
+            inputs=[prompt_dir_field],
             outputs=reload_outputs,
             show_progress="hidden",
         )
@@ -3642,28 +4129,89 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         def prompt_importieren(datei):
             name, fehler = self._import_prompt_file(datei)
             if fehler:
-                return _library_error(f"**Not imported:** {fehler}")
+                return _entry_returns(
+                    self._template_choice(), f"**Not imported:** {fehler}"
+                )
             self._save_template(name)
-            return _library_returns(
-                name,
-                f"**Imported:** `{name}.txt` into `{self._prompt_dir()}`.",
-                clear_name=True,
+            return _entry_returns(
+                name, f"**Imported:** `{name}.txt` into `{self._prompt_dir()}`."
             )
 
-        prompt_import.upload(
+        prompt_load.upload(
             fn=prompt_importieren,
-            inputs=[prompt_import],
-            outputs=library_outputs,
+            inputs=[prompt_load],
+            outputs=entry_outputs,
             show_progress="hidden",
         )
 
-        dir_outputs = [prompt_dir_field, template_status, template_dd]
-        if prompt_select is not None:
-            dir_outputs.append(prompt_select)
-        prompt_dir_save.click(
-            fn=ordner_speichern,
-            inputs=[prompt_dir_field],
-            outputs=dir_outputs,
+        def prompt_ordner_importieren(dateien):
+            dateien = (
+                dateien if isinstance(dateien, (list, tuple))
+                else ([dateien] if dateien else [])
+            )
+            if not dateien:
+                return _entry_returns(
+                    self._template_choice(), "**Not imported:** no files selected."
+                )
+            namen, fehler = [], 0
+            for datei in dateien:
+                name, _fehler = self._import_prompt_file(datei)
+                if name:
+                    namen.append(name)
+                else:
+                    fehler += 1
+            if not namen:
+                return _entry_returns(
+                    self._template_choice(),
+                    f"**Not imported:** {fehler} file(s) failed.",
+                )
+            name = namen[0]
+            self._save_template(name)
+            status = f"**Imported:** {len(namen)} prompt(s)."
+            if fehler:
+                status += f" {fehler} failed."
+            return _entry_returns(name, status)
+
+        prompt_folder_import.upload(
+            fn=prompt_ordner_importieren,
+            inputs=[prompt_folder_import],
+            outputs=entry_outputs,
+            show_progress="hidden",
+        )
+
+        def prompt_erzeugen(state_value, model_type, tags, text, source, progress=gr.Progress()):
+            result, fehler = self.author_system_prompt(
+                state_value, model_type, tags, text, source, progress=progress
+            )
+            if not result:
+                return gr.update(), f"**Not generated:** {fehler}"
+            return gr.update(value=result), "**Generated:** review the text, then Save."
+
+        author_btn.click(
+            fn=prompt_erzeugen,
+            inputs=[state, prompt_model, tags_field, template_text, author_source],
+            outputs=[template_text, template_status],
+            show_progress="full",
+        )
+
+        def api_speichern(base, model, key, source):
+            self._save_author_api(base, model, key, source)
+            return "**API settings saved.**"
+
+        api_save.click(
+            fn=api_speichern,
+            inputs=[api_base, api_model, api_key, author_source],
+            outputs=[api_status],
+            show_progress="hidden",
+        )
+
+        def source_wechsel(source):
+            self._save_author_api(*self._author_api_config(), source=source)
+
+        author_source.change(
+            fn=source_wechsel,
+            inputs=[author_source],
+            outputs=None,
             show_progress="hidden",
         )
 

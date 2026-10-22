@@ -41,11 +41,14 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `default` plus die Namen aus `<Prompt-Ordner>/*.txt`; `default` heißt:
   WanGPs normaler System-Prompt, kein Override. Die Wahl landet in
   `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
-  installationsweit einstellbar (Standard `~/Prompts`). Im Tab stehen
-  **zwei ausgerichtete Zeilen**: Ordner + `Save folder` / `Reload folder` /
-  `Import prompt...`, darunter Name + `Save as name` + Min/Max; der Import
-  übernimmt eine bestehende `.txt` in den Ordner (Dateiname wird bereinigt, Kollisionen
-  bekommen einen Zähler). `default` ist reserviert.
+  installationsweit einstellbar (Standard `~/Prompts`).
+  Die Tab-Karte **System Prompts** bündelt alles: Ordnerzeile (`Folder`,
+  `Load...`, `Import folder...`, `Reload`), Eintragszeile (`Entry`,
+  `Model`, Min/Max), `Show prompt guidelines`, Prompt-Editor mit
+  `Author model` + `Enhance`, `Tags` und `Save`. **Save** öffnet erst ein
+  Namensfeld (vorbefüllt mit dem aktuellen Eintrag); erst der zweite Klick
+  schreibt. `default` ist reserviert. Jeder Eintrag hat ein Sidecar
+  `<name>.json` mit `model` (interner WanGP-Typ) und `tags`.
 
 Unter den beiden Feldern steht der **Modell-Check**: die englische Hinweiszeile
 (`_MODEL_CHECK_HINT`), darunter die immer sichtbare Zeile zum **aktuellen**
@@ -150,16 +153,21 @@ neu starten.
   Zeilen (Ordner + Save/Reload/Import, darunter Name + Save as name + Min/Max),
   Textfelder wachsen per CSS, Dropdown heisst `Edit prompt`, Hinweis
   „Edits apply only after Save as name."
+- `…` — **System Prompts** neu: Karte mit Folder / Load / Import folder /
+  Reload, Entry + Model + Min/Max, `Show prompt guidelines`, Editor mit
+  `Author model` + `Enhance`, Tags, Save-Dialog; Sidecar `<name>.json` mit
+  Modell + Tags; Autor lokal (27B) oder OpenAI-kompatible API
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
 - **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **6 Inputs**,
   `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, das
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
-  `photograf`; `default` = kein Override), die Bibliothek mit zwei
-  ausgerichteten Zeilen — **Prompt folder / Save folder / Reload folder /
-  Import prompt...**, darunter **Name / Save as name / Min words / Max
-  words** (kein `gr.Form`) —, darunter die Zeile zum aktuellen
+  `photograf`; `default` = kein Override), die Karte **System Prompts** mit
+  Ordnerzeile (`Folder` / `Load...` / `Import folder...` / `Reload`),
+  Eintragszeile (`Entry` / `Model` / Min / Max), `Show prompt guidelines`,
+  Editor mit `Author model` + `Enhance`, `Tags` und `Save` (öffnet den
+  Namensdialog) — keine `gr.Form`-Wrapper —, darunter die Zeile zum aktuellen
   Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
   *Check models* füllt Status und Liste; ein alter Zwischenspeicher zeigt
   vorher den Ersatztext statt einer Textwand), und der Vision-Lauf aus
@@ -345,42 +353,64 @@ neu starten.
   nicht. Die genaue Zahl nennt die Statuszeile beim Klick selbst
   („<betroffen> von <untersucht> model definitions"). Die Liste wird
   **erzeugt**, nicht gepflegt — mit neuen Modellen wächst sie von selbst mit.
-- **Prompt-Bibliothek:** Der Ordner kommt aus `local_enhance_prompt_dir`
-  (Default `~/Prompts`, `~` wird expandiert), eine Datei pro Eintrag
-  (`<name>.txt`, UTF-8). `_prompt_name_ok()` erlaubt `[A-Za-z0-9][A-Za-z0-9
+- **System Prompts (Bibliothek):** Der Ordner kommt aus
+  `local_enhance_prompt_dir` (Default `~/Prompts`, `~` wird expandiert),
+  eine Datei pro Eintrag (`<name>.txt`, UTF-8) plus Sidecar `<name>.json`
+  mit `{"model": "<interner Typ>", "tags": [...]}`. Die `.txt` bleibt ein
+  reiner Prompt; fehlt das Sidecar, gelten Modell `""` und keine Tags.
+  `_read_prompt_meta()`/`_write_prompt_meta()` fangen kaputte Dateien ab,
+  leer = Sidecar löschen. `_prompt_name_ok()` erlaubt `[A-Za-z0-9][A-Za-z0-9
   ._-]*`, max. 64 Zeichen, kein Pfadtrenner, kein führender Punkt, kein `..`,
   `default` ist reserviert. `_list_prompt_names()` überspringt leere Dateien,
-  sortiert alphabetisch und liefert bei fehlendem Ordner `[]` — die Dropdowns
-  zeigen dann nur `default`. `_template_choice()` löst `default`, gespeicherte
-  Namen und die alten Presets (`Character Sheet`, `Turnaround`, `Eigene
-  Vorlage`) auf; Unbekanntes fällt auf `default`. `_template_instructions()`
-  liest bei einem gespeicherten Namen die Datei (`None`, wenn sie fehlt),
-  `default` liefert `None` (= Host entscheidet). `_save_template()` prüft
-  gegen `default` + `_list_prompt_names()` + Altbestand — sonst fiele ein
-  Bibliotheksname beim nächsten Speichern still auf `default` zurück.
-  `_migrate_library()` läuft nur in `setup_ui()` (nie in dev-Skripten), merkt
-  sich `local_enhance_prompt_migrated` in `server_config` und schreibt beim
-  ersten Host-Start `photograf.txt` (der bisherige Live-Text aus
+  sortiert alphabetisch; fehlender Ordner → `[]` (nur `default`).
+  `_template_choice()` löst `default`, gespeicherte Namen und die alten
+  Presets (`Character Sheet`, `Turnaround`, `Eigene Vorlage`) auf;
+  Unbekanntes fällt auf `default`. `_template_instructions()` liest bei einem
+  gespeicherten Namen die Datei (`None`, wenn sie fehlt), `default` liefert
+  `None` (= Host entscheidet). `_save_template()` prüft gegen `default` +
+  `_list_prompt_names()` + Altbestand.
+  Die Karte **System Prompts** ist die einzige Pflegestelle: Ordnerzeile
+  (`Folder` — Enter speichert; `Load...` importiert eine `.txt`;
+  `Import folder...` ist ein Verzeichnis-Upload und übernimmt alle `.txt`;
+  `Reload` liest neu), Eintragszeile (`Entry`, `Model`, globale Min/Max),
+  `Show prompt guidelines`, Editor, Autor, `Tags`, `Save`.
+  `_model_choices()` liest `_main("models_def")` (nur lesen), nimmt
+  `name` als Label und den internen Typ als Wert, überspringt
+  `visible == False`; `("Any model", "")` steht vorn. `_model_guidelines()`
+  sucht `^(text|image|video)_prompt_enhancer_instructions\d*$` (text vor image
+  vor video) und liefert den Text der Definition — keine eigenen kuratierten
+  Guidelines, keine Netzabfrage. `_guidelines_text()` erklärt den Fallback.
+  `_read_prompt_meta()` füllt beim Eintragswechsel Modell + Tags;
+  `Save` öffnet ein Namensfeld (vorbefüllt), erst `Save` im Dialog schreibt
+  `.txt` + Sidecar und aktualisiert beide Dropdowns; `Cancel` blendet es aus.
+  **Autor:** `Author model` = `Local 27B` oder `OpenAI-compatible API`
+  (`_AUTHOR_SOURCE_*`). Lokal läuft derselbe Engine-Swap wie `enhance()`
+  (27B, `deepy` lokal, `_PromptInstructionOverride`, Modus `T`), nur mit
+  `_AUTHOR_INSTRUCTIONS` als System-Anweisung; die API nutzt
+  `/v1/chat/completions` mit Base URL, Modell und optionalem Key aus
+  `local_enhance_author_*`. Das Ergebnis landet **nur im Editor**, nie
+  automatisch gespeichert.
+  `_migrate_library()` läuft nur in `setup_ui()` (nie in dev-Skripten),
+  merkt sich `local_enhance_prompt_migrated` in `server_config` und schreibt
+  beim ersten Host-Start `photograf.txt` (bisheriger Live-Text aus
   `system_prompt.txt`) und `sheet.txt` (`_TEMPLATE_SHEET_TEXT`); die Auswahl
   wird danach `photograf`, außer sie zeigt schon auf einen gespeicherten
-  Eintrag. Der Tab schreibt neue Einträge über `_write_prompt_entry()` und
-  zieht beide Dropdowns per `gr.update` nach; `system_prompt.txt` und
-  `_TEMPLATE_TEXT_KEY` werden nicht mehr beschrieben (nur noch gelesen).
-  `_import_prompt_file()` übernimmt eine vorhandene Datei (UTF-8, Fallback
-  latin-1), bereinigt den Namen aus dem Dateinamen und hängt bei einer
-  Kollision ` 2`, ` 3` … an; leere Dateien werden abgelehnt. `Reload folder`
-  liest die Liste neu, ohne etwas zu schreiben. Die Tab-Karte hat **vier**
-  Karten (Bibliothek mit Wortgrenzen, Bypass-LoRA, Model check, Prompt
-  workshop). Ordnerzeile und Eintragszeile werden nach dem Aufbau mit
+  Eintrag. `_import_prompt_file()` übernimmt UTF-8 (Fallback latin-1),
+  bereinigt den Namen, hängt bei Kollision ` 2`/` 3` an und kopiert ein
+  vorhandenes Sidecar mit; leere Dateien werden abgelehnt.
+  Die Karte hat **vier** Karten (System Prompts, Bypass-LoRA, Model check,
+  Prompt workshop). Ordner- und Eintragszeile werden nach dem Aufbau mit
   `_flatten_row()` aus den Gradio-`Form`-Wrappern geholt
   (`fill_expected_parents` würde die Felder sonst vertikal stapeln). Die
   Textfelder wachsen per CSS (`flex:1 1 240px` bzw. `180px`), die Buttons
-  behalten ihre `min_width`; das hält beide Zeilen auf einer Grundlinie.
+  behalten ihre `min_width`.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 0 (= keine Untergrenze), Max 150. Dazu
   `local_enhance_prompt_dir`, `local_enhance_prompt_migrated` und
-  `local_enhance_template` (Default `default`).
+  `local_enhance_template` (Default `default`). Dazu `local_enhance_author_source`
+  (`Local 27B` / `OpenAI-compatible API`), `local_enhance_author_base_url`,
+  `local_enhance_author_model` und `local_enhance_author_api_key`.
 - Ist Min > Max, werden beide getauscht.
 
 ## Prüfen
@@ -459,22 +489,26 @@ neu starten.
     rendert als **eine** Zeile (Elementhöhe 20px), mit `<br>` als drei und mit
     `<br><br>` als vier Zeilen (80px) — HTML faltet die Zeilenumbrüche des alten
     Zwischenspeichers, `<br>` nicht. Genau das war die Textwand.
-- Tab und Prompt-Bibliothek ohne WanGP-Start: `dev/check_template_ui.py`
+- Tab und System Prompts ohne WanGP-Start: `dev/check_template_ui.py`
   (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
-  `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten, `Prompt
-  folder` und `Name (max. 64 chars)`, Prompt-Textfeld (`System prompt (sent to
-  the local model)`), Wortgrenzen, Model check, Prompt workshop,
-  keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Die Ordnerzeile
+  `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten,
+  `Folder`, `Name (max. 64 chars)` (Save-Dialog), `Entry`/`Model`,
+  `Author model`/`Tags`, Prompt-Textfeld, Wortgrenzen, Model check, Prompt
+  workshop, keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Die Ordnerzeile
   (`local_enhance_library_row`) muss genau
-  `[Textbox, Button, Button, UploadButton]` (Ordner, Save/Reload/Import), die
-  Eintragszeile (`local_enhance_entry_row`) genau
-  `[Textbox, Button, Number, Number]` (Name, Save as name, Min, Max) enthalten
-  — beide ohne `Form`-Wrapper; der Import muss als `upload`-Dependency
-  verdrahtet sein. Danach die Bibliothek: Namensregel (64/65 Zeichen, `..`, `/`,
-  führender Punkt, `default`), Schreiben/Lesen, leere Datei wird übersprungen,
-  `default`-Fallback, Migration (`photograf.txt` + `sheet.txt`, Marker,
-  Auswahl `photograf`) und Import (Text übernommen, Kollision bekommt
-  Zähler, leere Datei abgelehnt).
+  `[Textbox, UploadButton, UploadButton, Button]` (`Folder`, `Load...`,
+  `Import folder...`, `Reload`), die Eintragszeile
+  (`local_enhance_entry_row`) genau
+  `[Dropdown, Dropdown, Number, Number]` (`Entry`, `Model`, Min, Max)
+  enthalten — beide ohne `Form`-Wrapper; **zwei** `upload`-Dependencies
+  (Load, Import folder). Danach die Bibliothek: Namensregel (64/65 Zeichen,
+  `..`, `/`, führender Punkt, `default`), Schreiben/Lesen, leere Datei wird
+  übersprungen, `default`-Fallback, Migration (`photograf.txt` + `sheet.txt`,
+  Marker, Auswahl `photograf`), Import (Text übernommen, Kollision bekommt
+  Zähler, leere Datei abgelehnt) sowie Sidecar/Modell/Guidelines:
+  `_write_prompt_meta`/`_read_prompt_meta` (leer löscht), Modellkatalog ohne
+  `visible == False`, `_model_guidelines` aus der Definition,
+  `_author_user_message` und die API-Config.
   Der Ordner ist ein `tempfile`-Verzeichnis; das Skript schreibt nie nach
   `~/Prompts`. Erwartung: alle `OK:`-Zeilen, Exit 0.
 - Auflösung ohne UI (schneller Matrix-Check gegen `_read_controls`, Eingabe ist
