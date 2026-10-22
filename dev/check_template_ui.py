@@ -90,9 +90,10 @@ print("Typen:", typen)
 assert len(karten) == 4, f"erwartet 4 Karten, gefunden {len(karten)}"
 assert "Folder" in labels, "Ordner-Feld fehlt"
 assert "Name (max. 64 chars)" in labels, "Namensfeld im Save-Dialog fehlt"
-assert "System prompt (sent to the local model)" in labels, "Prompt-Textfeld fehlt"
+assert "System prompt (result, editable)" in labels, "Prompt-Textfeld fehlt"
 assert "Entry" in labels and "Model" in labels, "Entry-/Modell-Auswahl fehlt"
-assert "Author model" in labels and "Tags" in labels, "Autor/Tags fehlen"
+assert "Author model" in labels, "Autor-Auswahl fehlt"
+assert "What should this system prompt do?" in labels, "Beschreibungsfeld fehlt"
 assert "Provider" in labels, "Provider-Auswahl fehlt"
 assert "Test connection" in button_texte, "API-Test fehlt"
 assert "Reload" in button_texte, "Reload fehlt"
@@ -203,10 +204,11 @@ print("OK: Import uebernimmt Text, Kollision bekommt Zaehler, leere Datei wird a
 # --- Sidecar, Modellkatalog, Guidelines ------------------------------------
 print("--- Metadaten & Modell ---")
 p._write_prompt_entry("Modelltest", "prompt text")
-p._write_prompt_meta("Modelltest", "hidream_o1_dev", ["character sheet", "bw"])
+p._write_prompt_meta("Modelltest", "hidream_o1_dev", "character sheet", ["bw"])
 meta = p._read_prompt_meta("Modelltest")
 assert meta["model"] == "hidream_o1_dev", meta
-assert meta["tags"] == ["character sheet", "bw"], meta
+assert meta["description"] == "character sheet", meta
+assert meta["tags"] == ["bw"], meta
 assert Path(p._prompt_dir(), "Modelltest.json").is_file()
 p._write_prompt_meta("Modelltest", "", [])
 assert not Path(p._prompt_dir(), "Modelltest.json").is_file()
@@ -225,14 +227,26 @@ assert p._model_guidelines("hidream_o1_dev") == "GUIDE"
 assert p._model_guidelines("unbekannt") == ""
 assert "Select a model" in p._guidelines_text("")
 assert "ships no own" in p._guidelines_text("unbekannt")
-msg = p._author_user_message("GUIDE", ["portrait"], "old prompt")
+msg = p._author_user_message("GUIDE", "portrait", "old prompt")
 assert "MODEL GUIDELINES" in msg and "portrait" in msg and "old prompt" in msg
+assert "WHAT THE SYSTEM PROMPT SHOULD DO" in msg
 
 p._save_author_api("http://localhost:1234/v1", "my-model", "secret", plugin._AUTHOR_SOURCE_API)
 assert p._author_api_config() == ("http://localhost:1234/v1", "my-model", "secret")
 assert p._author_source() == plugin._AUTHOR_SOURCE_API
 p._save_author_api("", "", "", plugin._AUTHOR_SOURCE_LOCAL)
 assert p._author_source() == plugin._AUTHOR_SOURCE_LOCAL
+# Ohne "Remember" bleibt der Key aus der Config und nur im Prozess.
+p._save_author_api("http://localhost:1234/v1", "m", "secret", plugin._AUTHOR_SOURCE_API)
+assert main.server_config["local_enhance_author_api_key"] == ""
+assert p._author_api_config()[2] == "secret"
+p._save_author_api(
+    "http://localhost:1234/v1", "m", "secret", plugin._AUTHOR_SOURCE_API,
+    remember=True,
+)
+assert main.server_config["local_enhance_author_api_key"] == "secret"
+p._save_author_api("", "", "", plugin._AUTHOR_SOURCE_LOCAL, remember=False)
+assert main.server_config["local_enhance_author_api_key"] == ""
 assert p._author_base_for_provider("Ollama") == "http://localhost:11434/v1"
 assert p._author_base_for_provider("LM Studio").endswith("/v1")
 assert p._author_base_for_provider("OpenAI").startswith("https://")

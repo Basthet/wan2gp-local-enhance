@@ -337,6 +337,10 @@ _AUTHOR_BASE_URL_KEY = "local_enhance_author_base_url"
 _AUTHOR_MODEL_KEY = "local_enhance_author_model"
 _AUTHOR_API_KEY_KEY = "local_enhance_author_api_key"
 _AUTHOR_PROVIDER_KEY = "local_enhance_author_provider"
+_AUTHOR_REMEMBER_KEY = "local_enhance_author_remember_key"
+# API-Keys werden standardmaessig NICHT in der Config gespeichert, sondern nur
+# im Prozess gehalten. Erst "Remember API key" schreibt sie mit.
+_AUTHOR_KEY_MEMORY = {"value": ""}
 _AUTHOR_SOURCE_LOCAL = "Local 27B"
 _AUTHOR_SOURCE_API = "OpenAI-compatible API"
 _AUTHOR_BASE_URL_DEFAULT = "http://127.0.0.1:1234/v1"
@@ -1084,29 +1088,34 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if not isinstance(data, dict):
             return leer
         model = str(data.get("model") or "").strip()
+        description = str(data.get("description") or "").strip()
         tags = data.get("tags")
         if not isinstance(tags, list):
             tags = []
         tags = [str(tag).strip() for tag in tags if str(tag).strip()]
-        return {"model": model, "tags": tags}
+        if not description and tags:
+            # Altbestand: frueher waren die Tags die Beschreibung.
+            description = ", ".join(tags)
+        return {"model": model, "description": description, "tags": tags}
 
     @classmethod
-    def _write_prompt_meta(cls, name, model, tags):
+    def _write_prompt_meta(cls, name, model, description="", tags=None):
         """Sidecar schreiben; leer loescht die Datei (z. B. fuer "default")."""
         name = str(name or "").strip()
         if not cls._prompt_name_ok(name):
             return False
         model = str(model or "").strip()
+        description = str(description or "").strip()
         tags = [str(tag).strip() for tag in (tags or []) if str(tag).strip()]
         pfad = cls._prompt_meta_path(name)
         try:
-            if not model and not tags:
+            if not model and not description and not tags:
                 if pfad.is_file():
                     pfad.unlink()
                 return True
             pfad.write_text(
                 json.dumps(
-                    {"model": model, "tags": tags},
+                    {"model": model, "description": description, "tags": tags},
                     ensure_ascii=False, indent=2,
                 ) + "\n",
                 encoding="utf-8",
@@ -1215,10 +1224,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def _author_api_config(cls):
         config = _main("server_config") or {}
         config = config if isinstance(config, dict) else {}
+        remember = bool(config.get(_AUTHOR_REMEMBER_KEY, False))
+        key = (
+            str(config.get(_AUTHOR_API_KEY_KEY, "") or "").strip()
+            if remember else _AUTHOR_KEY_MEMORY["value"]
+        )
         return (
             str(config.get(_AUTHOR_BASE_URL_KEY, _AUTHOR_BASE_URL_DEFAULT) or "").strip(),
             str(config.get(_AUTHOR_MODEL_KEY, "") or "").strip(),
-            str(config.get(_AUTHOR_API_KEY_KEY, "") or "").strip(),
+            key,
         )
 
     @classmethod
@@ -1235,13 +1249,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return _AUTHOR_PROVIDERS.get(str(provider or ""), "")
 
     @classmethod
-    def _save_author_api(cls, base_url, model, api_key, source=None, provider=None):
+    def _save_author_api(cls, base_url, model, api_key, source=None, provider=None,
+                         remember=None):
         config = _main("server_config")
         if not isinstance(config, dict):
             return
+        key = str(api_key or "").strip()
+        _AUTHOR_KEY_MEMORY["value"] = key
         config[_AUTHOR_BASE_URL_KEY] = str(base_url or "").strip()
         config[_AUTHOR_MODEL_KEY] = str(model or "").strip()
-        config[_AUTHOR_API_KEY_KEY] = str(api_key or "").strip()
+        if remember is None:
+            remember = bool(config.get(_AUTHOR_REMEMBER_KEY, False))
+        config[_AUTHOR_REMEMBER_KEY] = bool(remember)
+        # Nur mit "Remember API key" landet der Key in der Config.
+        config[_AUTHOR_API_KEY_KEY] = key if remember else ""
         if source in (_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API):
             config[_AUTHOR_SOURCE_KEY] = source
         if provider in _AUTHOR_PROVIDERS:
@@ -1273,12 +1294,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return sorted(set(models)), None
 
     @classmethod
-    def _author_user_message(cls, guidelines, tags, text):
+    def _author_user_message(cls, guidelines, description, text):
         teile = []
         if guidelines:
             teile.append("MODEL GUIDELINES (follow exactly):\n" + guidelines)
-        if tags:
-            teile.append("TAGS: " + ", ".join(tags))
+        description = str(description or "").strip()
+        if description:
+            teile.append("WHAT THE SYSTEM PROMPT SHOULD DO:\n" + description)
         text = str(text or "").strip()
         if text:
             teile.append("CURRENT SYSTEM PROMPT (revise):\n" + text)
@@ -1330,7 +1352,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 daten = json.loads(quelle_meta.read_text(encoding="utf-8"))
                 if isinstance(daten, dict):
                     cls._write_prompt_meta(
-                        name, daten.get("model"), daten.get("tags")
+                        name,
+                        daten.get("model"),
+                        daten.get("description"),
+                        daten.get("tags"),
                     )
             except Exception:  # noqa: BLE001 - Sidecar ist optional
                 pass
@@ -2824,10 +2849,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         result = self._first_prompt(prompts)
         return (result, None) if result else (None, "The author model returned nothing.")
 
-    def author_system_prompt(self, state, model_type, tags, text, source, progress=gr.Progress()):
+    def author_system_prompt(self, state, model_type, description, text, source, progress=gr.Progress()):
         """System-Prompt schreiben lassen - lokal oder ueber die API."""
         guidelines = self._model_guidelines(model_type)
-        user_message = self._author_user_message(guidelines, tags, text)
+        user_message = self._author_user_message(guidelines, description, text)
         if str(source or "").strip() == _AUTHOR_SOURCE_API:
             return self._author_with_api(user_message)
         return self._author_with_local(state, model_type, user_message, progress)
@@ -3780,8 +3805,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             with gr.Column(elem_classes=["le-card"]):
                 gr.HTML("<div class='le-card-title'>System Prompts</div>")
                 gr.HTML(
-                    "<div class='le-hint'>One entry per prompt. Target model and tags "
-                    "are stored next to the .txt in a .json sidecar.</div>"
+                    "<div class='le-hint'>One entry per prompt. Target model and "
+                    "description are stored next to the .txt in a .json "
+                    "sidecar.</div>"
                 )
                 with gr.Row(
                     elem_classes=["le-row", "le-lib-row"],
@@ -3802,6 +3828,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 entry_wahl = self._template_choice()
                 if entry_wahl not in entry_choices:
                     entry_wahl = _PROMPT_DEFAULT
+                entry_meta = (
+                    self._read_prompt_meta(entry_wahl)
+                    if entry_wahl != _PROMPT_DEFAULT
+                    else {"description": ""}
+                )
                 model_choices = self._model_choices()
                 current_model_type = (
                     self._resolve_current_model_type(self._state_value()) or ""
@@ -3840,31 +3871,54 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     guidelines_out = gr.Markdown(
                         value=self._guidelines_text(current_model_type)
                     )
+
+                # 1) Beschreibung: daraus entsteht der System-Prompt.
                 with gr.Row(elem_classes=["le-row", "le-prompt-row"]):
-                    template_text = gr.Textbox(
-                        label="System prompt (sent to the local model)",
-                        value=self._active_template_text(),
-                        lines=8,
-                        interactive=True,
-                        info="Edits apply only after Save.",
+                    description_field = gr.Textbox(
+                        label="What should this system prompt do?",
+                        value=entry_meta.get("description", ""),
+                        lines=3,
+                        placeholder=(
+                            "e.g. character sheet, turnaround, 3d render, "
+                            "product shot ..."
+                        ),
+                        info=(
+                            "Describe the result you want. The author model "
+                            "turns this into a system prompt."
+                        ),
                         scale=8,
                     )
-                    with gr.Column(scale=0, min_width=220):
+                    with gr.Column(scale=0, min_width=240):
                         author_source = gr.Dropdown(
                             choices=[_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API],
                             value=self._author_source(),
                             label="Author model",
                         )
                         author_btn = gr.Button(
-                            "Enhance", variant="primary", size="sm",
+                            "Generate", variant="primary", size="sm",
                         )
-                with gr.Group(
-                    visible=self._author_source() == _AUTHOR_SOURCE_API
-                ) as author_api_group:
+
+                # 2) API: hier nur das gewaehlte Modell; Verbindung hinter
+                #    "Configure...". So bleibt die Karte ruhig.
+                with gr.Row(
+                    elem_classes=["le-row"],
+                    visible=self._author_source() == _AUTHOR_SOURCE_API,
+                ) as author_api_row:
+                    api_model = gr.Dropdown(
+                        choices=[],
+                        allow_custom_value=True,
+                        label="API model",
+                        value=self._author_api_config()[1],
+                        scale=4,
+                    )
+                    api_configure = gr.Button(
+                        "Configure...", size="sm", scale=0, min_width=130,
+                    )
+
+                with gr.Group(visible=False) as author_api_group:
                     gr.HTML(
-                        "<div class='le-hint'>Connection of the API author model. "
-                        "<b>Test connection</b> loads the model list from the "
-                        "server.</div>"
+                        "<div class='le-hint'>Connection for the API author "
+                        "model. <b>Test connection</b> loads the model list.</div>"
                     )
                     with gr.Row(elem_classes=["le-row"]):
                         author_provider = gr.Dropdown(
@@ -3887,30 +3941,42 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             scale=3,
                         )
                     with gr.Row(elem_classes=["le-row"]):
-                        api_model = gr.Dropdown(
-                            choices=[],
-                            allow_custom_value=True,
-                            label="Model",
-                            value=self._author_api_config()[1],
-                            scale=4,
+                        api_remember = gr.Checkbox(
+                            label="Remember API key",
+                            value=bool(
+                                (_main("server_config") or {}).get(
+                                    _AUTHOR_REMEMBER_KEY, False
+                                )
+                            ),
+                            scale=0,
                         )
                         api_test = gr.Button(
                             "Test connection", size="sm",
                             scale=0, min_width=150,
                         )
+                        api_close = gr.Button(
+                            "Done", size="sm", scale=0, min_width=90,
+                        )
                     api_status = gr.Markdown()
-                tags_field = gr.Dropdown(
-                    choices=_TAG_SUGGESTIONS,
-                    multiselect=True,
-                    allow_custom_value=True,
-                    label="Tags",
-                    value=[],
-                    info="Pick a suggestion or type your own tag and press Enter.",
+
+                # 3) Ergebnis. Der Text ist editierbar, aber erst Save schreibt.
+                template_text = gr.Textbox(
+                    label="System prompt (result, editable)",
+                    value=self._active_template_text(),
+                    lines=8,
+                    interactive=True,
+                    info="Generated text lands here. Edit it before saving if needed.",
                 )
+
+                # 4) Speichern mit erklaerendem Text.
                 with gr.Row(elem_classes=["le-row"]):
                     template_save = gr.Button(
-                        "Save", variant="primary", size="sm",
-                        scale=0, min_width=100,
+                        "Save as...", variant="primary", size="sm",
+                        scale=0, min_width=130,
+                    )
+                    gr.HTML(
+                        "<div class='le-hint' style='margin:0'>Writes the text "
+                        "above as &lt;name&gt;.txt plus a .json sidecar.</div>"
                     )
                 template_status = gr.Markdown(
                     value=self._template_status_text()
@@ -4059,20 +4125,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             meta = (
                 self._read_prompt_meta(name)
                 if name and name != _PROMPT_DEFAULT
-                else {"model": "", "tags": []}
+                else {"model": "", "description": "", "tags": []}
             )
             model = meta["model"]
             return [
                 gr.update(value=self._active_template_text()),
                 gr.update(value=model),
-                gr.update(value=meta["tags"]),
+                gr.update(value=meta["description"]),
                 self._guidelines_text(model),
                 status,
                 _dd_update(name),
             ]
 
         entry_outputs = [
-            template_text, prompt_model, tags_field, guidelines_out,
+            template_text, prompt_model, description_field, guidelines_out,
             template_status, template_dd,
         ]
         if prompt_select is not None:
@@ -4126,7 +4192,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         save_outputs = [save_name_row] + entry_outputs
 
-        def save_bestaetigen(name, text, model, tags):
+        def save_bestaetigen(name, text, model, description):
             name = str(name or "").strip()
             if not self._prompt_name_ok(name):
                 return (gr.update(visible=True),) + _entry_returns(
@@ -4140,7 +4206,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     self._template_choice(),
                     f"**Not saved:** `{self._prompt_dir()}` is not writable.",
                 )
-            self._write_prompt_meta(name, model, tags)
+            self._write_prompt_meta(name, model, description)
             self._save_template(name)
             status = (
                 f"**Saved:** `{name}.txt`"
@@ -4151,7 +4217,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         save_confirm.click(
             fn=save_bestaetigen,
-            inputs=[save_name, template_text, prompt_model, tags_field],
+            inputs=[save_name, template_text, prompt_model, description_field],
             outputs=save_outputs,
             show_progress="hidden",
         )
@@ -4256,13 +4322,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
 
         def prompt_erzeugen(
-            state_value, model_type, tags, text, source, provider,
-            base, model, key, progress=gr.Progress(),
+            state_value, model_type, description, text, source, provider,
+            base, model, key, remember, progress=gr.Progress(),
         ):
             source = str(source or "").strip()
-            self._save_author_api(base, model, key, source=source, provider=provider)
+            self._save_author_api(
+                base, model, key, source=source, provider=provider,
+                remember=bool(remember),
+            )
             result, fehler = self.author_system_prompt(
-                state_value, model_type, tags, text, source, progress=progress
+                state_value, model_type, description, text, source,
+                progress=progress,
             )
             if not result:
                 return gr.update(), f"**Not generated:** {fehler}"
@@ -4271,8 +4341,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         author_btn.click(
             fn=prompt_erzeugen,
             inputs=[
-                state, prompt_model, tags_field, template_text, author_source,
-                author_provider, api_base, api_model, api_key,
+                state, prompt_model, description_field, template_text,
+                author_source, author_provider, api_base, api_model, api_key,
+                api_remember,
             ],
             outputs=[template_text, template_status],
             show_progress="full",
@@ -4283,15 +4354,35 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             self._save_author_api(base, model, key, source=source, provider=provider)
             ist_api = str(source or "").strip() == _AUTHOR_SOURCE_API
             if ist_api and not base:
-                return gr.update(visible=True), gr.update(
-                    value=self._author_base_for_provider(provider)
+                return (
+                    gr.update(visible=True),
+                    gr.update(visible=False),
+                    gr.update(value=self._author_base_for_provider(provider)),
                 )
-            return gr.update(visible=ist_api), gr.update()
+            return (
+                gr.update(visible=ist_api),
+                gr.update(visible=False),
+                gr.update(),
+            )
 
         author_source.change(
             fn=source_wechsel,
             inputs=[author_source, author_provider],
-            outputs=[author_api_group, api_base],
+            outputs=[author_api_row, author_api_group, api_base],
+            show_progress="hidden",
+        )
+
+        api_configure.click(
+            fn=lambda: gr.update(visible=True),
+            inputs=None,
+            outputs=[author_api_group],
+            show_progress="hidden",
+        )
+
+        api_close.click(
+            fn=lambda: gr.update(visible=False),
+            inputs=None,
+            outputs=[author_api_group],
             show_progress="hidden",
         )
 
@@ -4308,12 +4399,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             show_progress="hidden",
         )
 
-        def api_testen(provider, base, model, key, source):
+        def api_testen(provider, base, model, key, remember, source):
             models, fehler = self._list_api_models(base, key)
             if fehler:
                 return gr.update(), f"**Connection failed:** {fehler}"
             wert = model if model in models else (models[0] if models else model)
-            self._save_author_api(base, wert, key, source=source, provider=provider)
+            self._save_author_api(
+                base, wert, key, source=source, provider=provider,
+                remember=bool(remember),
+            )
             return (
                 gr.update(choices=models, value=wert),
                 f"**Connected:** {len(models)} model(s) found.",
@@ -4321,7 +4415,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         api_test.click(
             fn=api_testen,
-            inputs=[author_provider, api_base, api_model, api_key, author_source],
+            inputs=[
+                author_provider, api_base, api_model, api_key, api_remember,
+                author_source,
+            ],
             outputs=[api_model, api_status],
             show_progress="hidden",
         )

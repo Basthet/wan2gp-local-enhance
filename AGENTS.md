@@ -42,17 +42,20 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   WanGPs normaler System-Prompt, kein Override. Die Wahl landet in
   `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
   installationsweit einstellbar (Standard `~/Prompts`).
-  Die Tab-Karte **System Prompts** bündelt alles: `Folder` + `Reload`,
+  Die Tab-Karte **System Prompts** erzählt die Reihenfolge: `Folder` + `Reload`,
   Eintragszeile (`Entry`, `Model`, Min/Max), `Show prompt guidelines`,
-  Prompt-Editor mit `Author model` + `Enhance`, `Tags` und `Save`.
-  Datei-Importe liegen eingeklappt unter **Import prompts** (`Load a .txt...`
-  = eine Datei, `Import a folder...` = alle `.txt` eines Ordners).
-  Wählt man `OpenAI-compatible API`, erscheint direkt unter dem Editor die
-  Verbindung: `Provider` (Ollama/LM Studio/OpenAI/Custom), `Base URL`,
-  `API key` (optional), `Model` und `Test connection`. **Save** öffnet erst
-  ein Namensfeld (vorbefüllt mit dem aktuellen Eintrag); erst der zweite Klick
-  schreibt. `default` ist reserviert. Jeder Eintrag hat ein Sidecar
-  `<name>.json` mit `model` (interner WanGP-Typ) und `tags`.
+  **Beschreibung** (`What should this system prompt do?`) mit `Author model`
+  + `Generate`, Ergebnis-Editor, `Save as...`. Datei-Importe liegen
+  eingeklappt unter **Import prompts** (`Load a .txt...` = eine Datei,
+  `Import a folder...` = alle `.txt` eines Ordners).
+  Wählt man `OpenAI-compatible API`, erscheint nur `API model` + `Configure...`;
+  die Verbindung (`Provider` Ollama/LM Studio/OpenAI/Custom, `Base URL`,
+  `API key`, `Remember API key`, `Test connection`) öffnet der Knopf.
+  Der API-Key wird **nur** mit `Remember API key` in der Config gespeichert,
+  sonst nur im Prozess gehalten. `Save as...` öffnet ein Namensfeld
+  (vorbefüllt); erst der zweite Klick schreibt `.txt` + Sidecar. `default`
+  ist reserviert; das Sidecar `<name>.json` hält `model`, `description` und
+  (Altbestand) `tags`.
 
 Unter den beiden Feldern steht der **Modell-Check**: die englische Hinweiszeile
 (`_MODEL_CHECK_HINT`), darunter die immer sichtbare Zeile zum **aktuellen**
@@ -172,11 +175,12 @@ neu starten.
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
   `photograf`; `default` = kein Override), die Karte **System Prompts** mit
   `Folder` + `Reload`, Eintragszeile (`Entry` / `Model` / Min / Max),
-  `Show prompt guidelines`, Editor mit `Author model` + `Enhance`, `Tags`
-  und `Save` (öffnet den Namensdialog) — keine `gr.Form`-Wrapper —, das
-  Accordion **Import prompts** und bei `OpenAI-compatible API` die sichtbare
-  Verbindungsgruppe (`Provider` / `Base URL` / `API key` / `Model` /
-  `Test connection`), darunter die Zeile zum aktuellen
+  `Show prompt guidelines`, Beschreibungsfeld + `Author model` +
+  `Generate`, Ergebnis-Editor und `Save as...` (öffnet den Namensdialog) —
+  keine `gr.Form`-Wrapper —, das Accordion **Import prompts** und bei
+  `OpenAI-compatible API` `API model` + `Configure...` (öffnet `Provider` /
+  `Base URL` / `API key` / `Remember API key` / `Test connection`),
+  darunter die Zeile zum aktuellen
   Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
   *Check models* füllt Status und Liste; ein alter Zwischenspeicher zeigt
   vorher den Ersatztext statt einer Textwand), und der Vision-Lauf aus
@@ -365,8 +369,10 @@ neu starten.
 - **System Prompts (Bibliothek):** Der Ordner kommt aus
   `local_enhance_prompt_dir` (Default `~/Prompts`, `~` wird expandiert),
   eine Datei pro Eintrag (`<name>.txt`, UTF-8) plus Sidecar `<name>.json`
-  mit `{"model": "<interner Typ>", "tags": [...]}`. Die `.txt` bleibt ein
-  reiner Prompt; fehlt das Sidecar, gelten Modell `""` und keine Tags.
+  mit `{"model": "<interner Typ>", "description": "...", "tags": [...]}`.
+  Die `.txt` bleibt ein reiner Prompt; fehlt das Sidecar, gelten Modell `""`,
+  leere Beschreibung und keine Tags. Ein altes Sidecar mit nur `tags` wird
+  als Beschreibung gelesen (`", ".join(tags)`).
   `_read_prompt_meta()`/`_write_prompt_meta()` fangen kaputte Dateien ab,
   leer = Sidecar löschen. `_prompt_name_ok()` erlaubt `[A-Za-z0-9][A-Za-z0-9
   ._-]*`, max. 64 Zeichen, kein Pfadtrenner, kein führender Punkt, kein `..`,
@@ -382,7 +388,8 @@ neu starten.
   speichert) + `Reload`; die Importe liegen im Accordion **Import prompts**
   (`Load a .txt...` = eine Datei, `Import a folder...` = Verzeichnis-Upload
   aller `.txt`); Eintragszeile (`Entry`, `Model`, globale Min/Max),
-  `Show prompt guidelines`, Editor, Autor, `Tags`, `Save`.
+  `Show prompt guidelines`, Beschreibungsfeld + Autor + `Generate`, Editor,
+  `Save as...`.
   `_model_choices()` liest `_main("models_def")` (nur lesen), nimmt
   `name` als Label und den internen Typ als Wert, überspringt
   `visible == False`; `("Any model", "")` steht vorn. `_model_guidelines()`
@@ -392,17 +399,22 @@ neu starten.
   `_read_prompt_meta()` füllt beim Eintragswechsel Modell + Tags;
   `Save` öffnet ein Namensfeld (vorbefüllt), erst `Save` im Dialog schreibt
   `.txt` + Sidecar und aktualisiert beide Dropdowns; `Cancel` blendet es aus.
-  **Autor:** `Author model` = `Local 27B` oder `OpenAI-compatible API`
-  (`_AUTHOR_SOURCE_*`). Lokal läuft derselbe Engine-Swap wie `enhance()`
-  (27B, `deepy` lokal, `_PromptInstructionOverride`, Modus `T`), nur mit
+  **Autor:** Das Feld **What should this system prompt do?** beschreibt das
+  gewünschte Ergebnis; `Author model` = `Local 27B` oder
+  `OpenAI-compatible API`, `Generate` schreibt daraus den System-Prompt.
+  Lokal läuft derselbe Engine-Swap wie `enhance()` (27B, `deepy` lokal,
+  `_PromptInstructionOverride`, Modus `T`), nur mit
   `_AUTHOR_INSTRUCTIONS` als System-Anweisung; die API nutzt
-  `/v1/chat/completions` mit Base URL, Modell und optionalem Key aus
-  `local_enhance_author_*`. Bei `OpenAI-compatible API` schaltet der
-  Quellenwechsel die Gruppe **sichtbar** (`author_api_group`); `Provider`
-  setzt die Base URL vor (`Ollama` `http://localhost:11434/v1`, `LM Studio`
+  `/v1/chat/completions` mit Base URL, Modell und Key aus
+  `local_enhance_author_*`. Bei `OpenAI-compatible API` erscheinen
+  `API model` + `Configure...` (`author_api_row`); `Configure...` öffnet
+  `author_api_group`, `Done` schließt sie. `Provider` setzt die Base URL vor
+  (`Ollama` `http://localhost:11434/v1`, `LM Studio`
   `http://127.0.0.1:1234/v1`, `OpenAI` `https://api.openai.com/v1`,
   `Custom` leer). `Test connection` ruft `GET <base>/models` (bzw.
-  `/v1/models`) und füllt die Modellauswahl; `Enhance` speichert die
+  `/v1/models`) und füllt `API model`. **API-Key:** nur mit
+  `Remember API key` in `local_enhance_author_api_key`; ohne Haken bleibt er
+  in `_AUTHOR_KEY_MEMORY` (nur Prozess). `Generate` speichert die
   Verbindungsfelder vor dem Aufruf. Das Ergebnis landet **nur im Editor**, nie
   automatisch gespeichert.
   `_migrate_library()` läuft nur in `setup_ui()` (nie in dev-Skripten),
@@ -425,7 +437,8 @@ neu starten.
   `local_enhance_prompt_dir`, `local_enhance_prompt_migrated` und
   `local_enhance_template` (Default `default`). Dazu `local_enhance_author_source`
   (`Local 27B` / `OpenAI-compatible API`), `local_enhance_author_base_url`,
-  `local_enhance_author_model`, `local_enhance_author_api_key` und
+  `local_enhance_author_model`, `local_enhance_author_api_key` (nur mit
+  `Remember API key`), `local_enhance_author_remember_key` und
   `local_enhance_author_provider` (Ollama/LM Studio/OpenAI/Custom).
 - Ist Min > Max, werden beide getauscht.
 
@@ -509,7 +522,8 @@ neu starten.
   (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
   `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten,
   `Folder`, `Name (max. 64 chars)` (Save-Dialog), `Entry`/`Model`,
-  `Author model`/`Tags`, Prompt-Textfeld, Wortgrenzen, Model check, Prompt
+  `Author model`, `What should this system prompt do?`, `API model`,
+  `Remember API key`, Prompt-Textfeld, Wortgrenzen, Model check, Prompt
   workshop, keine doppelte `elem_id`, Bypass-LoRA-Nachtrag. Die Ordnerzeile
   (`local_enhance_library_row`) muss genau
   `[Textbox, Button]` (`Folder`, `Reload`), die Eintragszeile
