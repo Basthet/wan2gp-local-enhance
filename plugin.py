@@ -298,7 +298,11 @@ _UI_CSS = (
     ".le-lib-row{display:flex !important;flex-wrap:wrap !important;"
     "align-items:flex-end !important;gap:8px !important;margin:0 0 8px 0 !important;}"
     ".le-prompt-row{align-items:flex-start !important;margin:0 0 8px 0 !important;}"
-    ".le-prompt-row .le-author{flex:0 0 220px !important;}"
+    ".le-author-card{border:1px solid var(--border-color-primary,#3a3a3a);"
+    "border-radius:10px;padding:8px 10px;"
+    "background:var(--background-fill-secondary,rgba(127,127,127,0.06));}"
+    ".le-subtitle{font-weight:600;font-size:0.9em;letter-spacing:0.02em;"
+    "margin:0 0 6px 0;opacity:0.92;}"
     "#local_enhance_library_row #local_enhance_prompt_dir{"
     "flex:1 1 240px !important;min-width:180px !important;}"
     "#local_enhance_entry_row #local_enhance_prompt_name{"
@@ -2849,9 +2853,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         result = self._first_prompt(prompts)
         return (result, None) if result else (None, "The author model returned nothing.")
 
-    def author_system_prompt(self, state, model_type, description, text, source, progress=gr.Progress()):
+    def author_system_prompt(self, state, model_type, description, text, source,
+                             guidelines=None, progress=gr.Progress()):
         """System-Prompt schreiben lassen - lokal oder ueber die API."""
-        guidelines = self._model_guidelines(model_type)
+        guidelines = str(guidelines or "").strip() or self._model_guidelines(model_type)
         user_message = self._author_user_message(guidelines, description, text)
         if str(source or "").strip() == _AUTHOR_SOURCE_API:
             return self._author_with_api(user_message)
@@ -3867,53 +3872,66 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         self._max_words_field,
                     ],
                 )
-                with gr.Accordion("Show prompt guidelines", open=False):
-                    guidelines_out = gr.Markdown(
-                        value=self._guidelines_text(current_model_type)
-                    )
-
-                # 1) Beschreibung: daraus entsteht der System-Prompt.
+                # Zwei Spalten: links Beschreibung + Guidelines, rechts die
+                # Autor-Quelle. Alles, was den Prompt erzeugt, steht zusammen.
                 with gr.Row(elem_classes=["le-row", "le-prompt-row"]):
-                    description_field = gr.Textbox(
-                        label="What should this system prompt do?",
-                        value=entry_meta.get("description", ""),
-                        lines=3,
-                        placeholder=(
-                            "e.g. character sheet, turnaround, 3d render, "
-                            "product shot ..."
-                        ),
-                        info=(
-                            "Describe the result you want. The author model "
-                            "turns this into a system prompt."
-                        ),
-                        scale=8,
-                    )
-                    with gr.Column(scale=0, min_width=240):
+                    with gr.Column(scale=7, min_width=320):
+                        description_field = gr.Textbox(
+                            label="What should this system prompt do?",
+                            value=entry_meta.get("description", ""),
+                            lines=4,
+                            placeholder=(
+                                "e.g. character sheet, turnaround, 3d render, "
+                                "product shot ..."
+                            ),
+                            info=(
+                                "Describe the result you want. The author model "
+                                "turns this into a system prompt."
+                            ),
+                        )
+                        with gr.Row(elem_classes=["le-row"]):
+                            guidelines_field = gr.Textbox(
+                                label="Prompt guidelines (optional)",
+                                value="",
+                                lines=4,
+                                info=(
+                                    "Empty = use the guidelines WanGP ships "
+                                    "for the selected model."
+                                ),
+                                scale=8,
+                            )
+                            guidelines_load = gr.Button(
+                                "Load prompt guidelines",
+                                size="sm",
+                                scale=0,
+                                min_width=180,
+                            )
+                    with gr.Column(
+                        scale=4,
+                        min_width=280,
+                        elem_classes=["le-author-card"],
+                    ):
+                        gr.HTML("<div class='le-subtitle'>AI to generate</div>")
                         author_source = gr.Dropdown(
                             choices=[_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API],
                             value=self._author_source(),
-                            label="Author model",
+                            label="Local / provider",
+                        )
+                        api_model = gr.Dropdown(
+                            choices=[],
+                            allow_custom_value=True,
+                            label="API model",
+                            value=self._author_api_config()[1],
+                            visible=self._author_source() == _AUTHOR_SOURCE_API,
+                        )
+                        api_configure = gr.Button(
+                            "Configure...",
+                            size="sm",
+                            visible=self._author_source() == _AUTHOR_SOURCE_API,
                         )
                         author_btn = gr.Button(
                             "Generate", variant="primary", size="sm",
                         )
-
-                # 2) API: hier nur das gewaehlte Modell; Verbindung hinter
-                #    "Configure...". So bleibt die Karte ruhig.
-                with gr.Row(
-                    elem_classes=["le-row"],
-                    visible=self._author_source() == _AUTHOR_SOURCE_API,
-                ) as author_api_row:
-                    api_model = gr.Dropdown(
-                        choices=[],
-                        allow_custom_value=True,
-                        label="API model",
-                        value=self._author_api_config()[1],
-                        scale=4,
-                    )
-                    api_configure = gr.Button(
-                        "Configure...", size="sm", scale=0, min_width=130,
-                    )
 
                 with gr.Group(visible=False) as author_api_group:
                     gr.HTML(
@@ -4132,13 +4150,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 gr.update(value=self._active_template_text()),
                 gr.update(value=model),
                 gr.update(value=meta["description"]),
-                self._guidelines_text(model),
+                gr.update(value=""),
                 status,
                 _dd_update(name),
             ]
 
         entry_outputs = [
-            template_text, prompt_model, description_field, guidelines_out,
+            template_text, prompt_model, description_field, guidelines_field,
             template_status, template_dd,
         ]
         if prompt_select is not None:
@@ -4162,12 +4180,31 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
 
         def modell_wechsel(model_type):
-            return self._guidelines_text(model_type)
+            # Neue Modellwahl -> eigene Guidelines verwerfen, damit wieder die
+            # WanGP-Anweisungen des Modells gelten.
+            return gr.update(value="")
 
         prompt_model.change(
             fn=modell_wechsel,
             inputs=[prompt_model],
-            outputs=[guidelines_out],
+            outputs=[guidelines_field],
+            show_progress="hidden",
+        )
+
+        def guidelines_laden(model_type):
+            text = self._model_guidelines(model_type)
+            if not text:
+                return gr.update(
+                    value="",
+                    info=f"{self._model_display_name(model_type)} ships no own "
+                         "guidelines in WanGP - enter them manually.",
+                )
+            return gr.update(value=text)
+
+        guidelines_load.click(
+            fn=guidelines_laden,
+            inputs=[prompt_model],
+            outputs=[guidelines_field],
             show_progress="hidden",
         )
 
@@ -4322,8 +4359,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
 
         def prompt_erzeugen(
-            state_value, model_type, description, text, source, provider,
-            base, model, key, remember, progress=gr.Progress(),
+            state_value, model_type, description, text, guidelines, source,
+            provider, base, model, key, remember, progress=gr.Progress(),
         ):
             source = str(source or "").strip()
             self._save_author_api(
@@ -4332,7 +4369,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             )
             result, fehler = self.author_system_prompt(
                 state_value, model_type, description, text, source,
-                progress=progress,
+                guidelines=guidelines, progress=progress,
             )
             if not result:
                 return gr.update(), f"**Not generated:** {fehler}"
@@ -4342,8 +4379,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             fn=prompt_erzeugen,
             inputs=[
                 state, prompt_model, description_field, template_text,
-                author_source, author_provider, api_base, api_model, api_key,
-                api_remember,
+                guidelines_field, author_source, author_provider, api_base,
+                api_model, api_key, api_remember,
             ],
             outputs=[template_text, template_status],
             show_progress="full",
@@ -4356,10 +4393,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             if ist_api and not base:
                 return (
                     gr.update(visible=True),
+                    gr.update(visible=True),
                     gr.update(visible=False),
                     gr.update(value=self._author_base_for_provider(provider)),
                 )
             return (
+                gr.update(visible=ist_api),
                 gr.update(visible=ist_api),
                 gr.update(visible=False),
                 gr.update(),
@@ -4368,7 +4407,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         author_source.change(
             fn=source_wechsel,
             inputs=[author_source, author_provider],
-            outputs=[author_api_row, author_api_group, api_base],
+            outputs=[api_model, api_configure, author_api_group, api_base],
             show_progress="hidden",
         )
 
