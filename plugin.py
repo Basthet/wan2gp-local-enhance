@@ -295,6 +295,8 @@ _UI_CSS = (
     ".le-hint{font-size:0.85em;opacity:0.72;margin:0 0 8px 0;line-height:1.35;}"
     ".le-intro{font-size:0.9em;line-height:1.45;opacity:0.85;margin:0 0 10px 0;}"
     ".le-build{float:right;font-size:0.8em;opacity:0.5;margin-left:8px;}"
+    ".le-section{font-size:0.9em;font-weight:600;opacity:0.9;"
+    "margin:12px 0 4px 0;}"
     ".le-row{align-items:flex-end !important;gap:8px !important;flex-wrap:wrap !important;}"
     ".le-actions{gap:8px !important;flex-wrap:wrap !important;}"
     ".le-actions button{min-width:170px;}"
@@ -3895,36 +3897,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         with gr.Column():
             # --- Karte 1: System Prompts ----------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                # Kurze Erklaerung statt einer nichtssagenden Ueberschrift.
                 gr.HTML(
-                    "<div class='le-intro'>Adds two prompt-enhance buttons: "
-                    "<b>OpenCode</b> (remote engine) and <b>Local 27B</b>. Both "
-                    "use the system prompt selected here - one <code>.txt</code> "
-                    "per entry, plus a sidecar with target model and "
-                    "description."
+                    "<div class='le-intro'>In case <b>Enhance Prompt</b> is "
+                    "used: enter a system prompt, so the AI knows how to "
+                    "interpret your desire."
                     f"<span class='le-build'>{_UI_BUILD}</span></div>"
-                )
-                with gr.Row(
-                    elem_classes=["le-row", "le-lib-row"],
-                    elem_id="local_enhance_library_row",
-                ) as library_row:
-                    prompt_dir_field = gr.Textbox(
-                        label="Folder",
-                        value=self._prompt_dir_setting(),
-                        max_lines=1,
-                        elem_id="local_enhance_prompt_dir",
-                        scale=8,
-                    )
-                    prompt_reload = gr.Button(
-                        "↻", size="sm", scale=0, min_width=44,
-                        elem_id="local_enhance_reload_btn",
-                    )
-                    prompt_save_dir = gr.Button(
-                        "Save", size="sm", scale=0, min_width=90,
-                    )
-                self._flatten_row(
-                    library_row,
-                    [prompt_dir_field, prompt_reload, prompt_save_dir],
                 )
                 entry_choices = self._prompt_choices()
                 entry_wahl = self._template_choice()
@@ -3943,15 +3920,62 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     current_model_type = ""
                 with gr.Row(
                     elem_classes=["le-row", "le-lib-row"],
-                    elem_id="local_enhance_entry_row",
-                ) as entry_row:
+                    elem_id="local_enhance_library_row",
+                ) as library_row:
                     template_dd = gr.Dropdown(
                         choices=entry_choices,
                         value=entry_wahl,
-                        label="Entry",
+                        label="Saved prompt",
                         scale=3,
-                        min_width=180,
+                        min_width=200,
                     )
+                    prompt_dir_field = gr.Textbox(
+                        label="Folder",
+                        value=self._prompt_dir_setting(),
+                        max_lines=1,
+                        elem_id="local_enhance_prompt_dir",
+                        scale=6,
+                    )
+                    prompt_reload = gr.Button(
+                        "↻", size="sm", scale=0, min_width=44,
+                        elem_id="local_enhance_reload_btn",
+                    )
+                    prompt_save_dir = gr.Button(
+                        "Save", size="sm", scale=0, min_width=90,
+                    )
+                self._flatten_row(
+                    library_row,
+                    [
+                        template_dd,
+                        prompt_dir_field,
+                        prompt_reload,
+                        prompt_save_dir,
+                    ],
+                )
+                # Der System-Prompt ist die Hauptsache - also zuerst.
+                template_text = gr.Textbox(
+                    label="System prompt (result, editable)",
+                    value=self._active_template_text(),
+                    lines=12,
+                    interactive=True,
+                )
+                description_field = gr.Textbox(
+                    label="A brief description of the intent",
+                    value=entry_meta.get("description", ""),
+                    lines=4,
+                    placeholder=(
+                        "e.g. character sheet, turnaround, 3d render, "
+                        "product shot ..."
+                    ),
+                )
+                gr.HTML(
+                    "<div class='le-section'>In case you want to empower "
+                    "another AI model to enhance the system prompt:</div>"
+                )
+                with gr.Row(
+                    elem_classes=["le-row", "le-lib-row"],
+                    elem_id="local_enhance_entry_row",
+                ) as entry_row:
                     prompt_model = gr.Dropdown(
                         choices=model_choices,
                         value=current_model_type,
@@ -3963,23 +3987,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 self._flatten_row(
                     entry_row,
                     [
-                        template_dd,
                         prompt_model,
                         self._min_words_field,
                         self._max_words_field,
                     ],
                 )
-                description_field = gr.Textbox(
-                    label="A brief description of the intent",
-                    value=entry_meta.get("description", ""),
-                    lines=4,
-                    placeholder=(
-                        "e.g. character sheet, turnaround, 3d render, "
-                        "product shot ..."
-                    ),
-                )
-                # Enhancer-Quelle und Generate gehoeren zusammen und stehen
-                # unter der Beschreibung, nicht in einer eigenen Spalte.
                 with gr.Row(elem_classes=["le-row", "le-enhancer-row"]) as enhancer_row:
                     author_source = gr.Dropdown(
                         choices=[_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API],
@@ -4073,15 +4085,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         )
                     api_status = gr.Markdown()
 
-                # 3) Ergebnis. Der Text ist editierbar, aber erst Save schreibt.
-                template_text = gr.Textbox(
-                    label="System prompt (result, editable)",
-                    value=self._active_template_text(),
-                    lines=12,
-                    interactive=True,
-                )
-
-                # 4) Status links, Speichern rechts.
+                # 3) Status links, Speichern rechts.
                 with gr.Row(elem_classes=["le-row", "le-save-row"]):
                     with gr.Column(scale=8, min_width=200):
                         template_status = gr.Markdown(

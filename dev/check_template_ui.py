@@ -91,7 +91,7 @@ assert len(karten) == 4, f"erwartet 4 Karten, gefunden {len(karten)}"
 assert "Folder" in labels, "Ordner-Feld fehlt"
 assert "Name (max. 64 chars)" in labels, "Namensfeld im Save-Dialog fehlt"
 assert "System prompt (result, editable)" in labels, "Prompt-Textfeld fehlt"
-assert "Entry" in labels and "Model" in labels, "Entry-/Modell-Auswahl fehlt"
+assert "Saved prompt" in labels and "Model" in labels, "Prompt-/Modell-Auswahl fehlt"
 assert "Enhancer" in labels, "Enhancer-Auswahl fehlt"
 assert "A brief description of the intent" in labels, "Beschreibungsfeld fehlt"
 assert "Guidelines (optional)" in labels, "Guidelines-Accordion fehlt"
@@ -119,8 +119,8 @@ zeile = [type(k).__name__ for k in (lib_row.children or [])]
 eintrag = [type(k).__name__ for k in (entry_row.children or [])]
 print("Bibliotheks-Zeile:", zeile)
 print("Eintrags-Zeile:", eintrag)
-assert zeile == ["Textbox", "Button", "Button"], zeile
-assert eintrag == ["Dropdown", "Dropdown", "Number", "Number"], eintrag
+assert zeile == ["Dropdown", "Textbox", "Button", "Button"], zeile
+assert eintrag == ["Dropdown", "Number", "Number"], eintrag
 # Load und Import folder sind als Upload verdrahtet (schreiben in den Ordner).
 konfiguration = demo.get_config_file()
 uploads = [
