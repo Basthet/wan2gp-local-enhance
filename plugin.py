@@ -67,12 +67,13 @@ _REASONING_RANK = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "
 # WanGP schreibt die Wortgrenze fest in die Enhancer-Anweisungen
 # (shared/prompt_enhancer/prompt_enhance_utils.py:25/34/42/51/56). Das Plugin
 # ersetzt genau diese Saetze, damit Min/Max ueber Felder einstellbar werden.
-_DEFAULT_MIN_WORDS = 0
-_DEFAULT_WORD_LIMIT = 150
+_DEFAULT_MIN_WORDS = 100
+_DEFAULT_WORD_LIMIT = 350
 _WORD_LIMIT_MAX = 2000
 _MIN_WORDS_KEY = "local_enhance_min_words"
 _MAX_WORDS_KEY = "local_enhance_max_words"
 _WORD_LIMIT_KEY = "local_enhance_word_limit"   # Altbestand, Fallback fuer Max
+_WORD_DEFAULTS_KEY = "local_enhance_word_defaults_v2"
 # Sichtbare Breite der beiden Zahlenfelder im Tab. Gradio macht daraus
 # min-width: min(N px, 100%) am Block; scale=0 verhindert, dass sie ueber die
 # ganze Zeile wachsen. "1500" braucht rund 58 px - 120 px geben Luft, ohne dass
@@ -303,6 +304,7 @@ _UI_CSS = (
     ".le-card .form{border:none !important;background:transparent !important;"
     "padding:0 !important;gap:6px !important;}"
     ".le-right{justify-content:flex-end !important;}"
+    ".le-enhancer-row{align-items:flex-end !important;}"
     ".le-save-row{align-items:center !important;margin-top:4px !important;}"
     ".le-subtitle{font-weight:600;font-size:0.88em;letter-spacing:0.02em;"
     "margin:0 0 4px 0;opacity:0.9;}"
@@ -556,6 +558,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Dateien im Speicherordner. Nur hier (Host-Start) - dev-Skripte bauen
         # die UI ohne setup_ui() nach und schreiben deshalb nie.
         self._migrate_library()
+        # Einmalig die alten Wortgrenzen (0/150) auf die neuen Vorgaben heben.
+        self._migrate_word_defaults()
         self.request_component("state")
         self.request_component("refresh_form_trigger")
         self.request_component("prompt")
@@ -953,7 +957,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         eintrag = cls._read_prompt_entry(wahl)
         if eintrag is not None:
             return eintrag
-        return cls._fallback_instructions(True, False, 0, 150)
+        return cls._fallback_instructions(
+            True, False, _DEFAULT_MIN_WORDS, _DEFAULT_WORD_LIMIT
+        )
 
     @classmethod
     def _template_status_text(cls):
@@ -1387,13 +1393,36 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return
         ordner = cls._prompt_dir()
         if not (ordner / f"{_MIGRATE_PHOTOGRAPH}.txt").is_file():
-            text = cls._specific_prompt() or cls._fallback_instructions(True, False, 0, 150)
+            text = cls._specific_prompt() or cls._fallback_instructions(
+                True, False, _DEFAULT_MIN_WORDS, _DEFAULT_WORD_LIMIT
+            )
             cls._write_prompt_entry(_MIGRATE_PHOTOGRAPH, text)
         if not (ordner / f"{_MIGRATE_SHEET}.txt").is_file():
             cls._write_prompt_entry(_MIGRATE_SHEET, _TEMPLATE_SHEET_TEXT)
         wahl = str(config.get(_TEMPLATE_KEY, "") or "").strip()
         if wahl not in cls._list_prompt_names():
             config[_TEMPLATE_KEY] = _MIGRATE_PHOTOGRAPH
+
+    @classmethod
+    def _migrate_word_defaults(cls):
+        """Alte Wortgrenzen (0/150) einmalig auf 100/350 heben.
+
+        Nur exakt die alten Vorgaben werden angefasst - eigene Werte bleiben.
+        Der Marker verhindert, dass ein spaeter absichtlich gesetztes 0/150
+        beim naechsten Start wieder ueberschrieben wird.
+        """
+        config = _main("server_config")
+        if not isinstance(config, dict) or config.get(_WORD_DEFAULTS_KEY):
+            return
+        config[_WORD_DEFAULTS_KEY] = True
+        min_wert = config.get(_MIN_WORDS_KEY, _DEFAULT_MIN_WORDS)
+        max_wert = config.get(
+            _MAX_WORDS_KEY, config.get(_WORD_LIMIT_KEY, _DEFAULT_WORD_LIMIT)
+        )
+        if str(min_wert).strip() in ("", "0", "0.0"):
+            config[_MIN_WORDS_KEY] = _DEFAULT_MIN_WORDS
+        if str(max_wert).strip() in ("", "150", "150.0"):
+            config[_MAX_WORDS_KEY] = _DEFAULT_WORD_LIMIT
 
     @classmethod
     def _bypass_lora(cls, value=None):
@@ -3812,26 +3841,21 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             # --- Karte 1: System Prompts ----------------------------------------
             with gr.Column(elem_classes=["le-card"]):
                 gr.HTML("<div class='le-card-title'>System Prompts</div>")
-                gr.HTML(
-                    "<div class='le-hint'>One .txt per prompt - model and "
-                    "description live in a .json sidecar.</div>"
-                )
-                with gr.Accordion("Prompt folder", open=False):
-                    with gr.Row(
-                        elem_classes=["le-row", "le-lib-row"],
-                        elem_id="local_enhance_library_row",
-                    ) as library_row:
-                        prompt_dir_field = gr.Textbox(
-                            label="Folder",
-                            value=self._prompt_dir_setting(),
-                            max_lines=1,
-                            elem_id="local_enhance_prompt_dir",
-                            info="Press Enter to save.",
-                        )
-                        prompt_reload = gr.Button(
-                            "Reload", size="sm", scale=0, min_width=100,
-                        )
-                    self._flatten_row(library_row, [prompt_dir_field, prompt_reload])
+                with gr.Row(
+                    elem_classes=["le-row", "le-lib-row"],
+                    elem_id="local_enhance_library_row",
+                ) as library_row:
+                    prompt_dir_field = gr.Textbox(
+                        label="Folder",
+                        value=self._prompt_dir_setting(),
+                        max_lines=1,
+                        elem_id="local_enhance_prompt_dir",
+                        info="Press Enter to save.",
+                    )
+                    prompt_reload = gr.Button(
+                        "Reload", size="sm", scale=0, min_width=100,
+                    )
+                self._flatten_row(library_row, [prompt_dir_field, prompt_reload])
                 entry_choices = self._prompt_choices()
                 entry_wahl = self._template_choice()
                 if entry_wahl not in entry_choices:
@@ -3875,41 +3899,52 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         self._max_words_field,
                     ],
                 )
-                # Beschreibung links, Autor rechts. Die Guidelines liegen
-                # eingeklappt darunter - sie sind die Ausnahme, nicht der Alltag.
-                with gr.Row(elem_classes=["le-row", "le-prompt-row"]):
-                    with gr.Column(scale=7, min_width=320):
-                        description_field = gr.Textbox(
-                            label="What should this system prompt do?",
-                            value=entry_meta.get("description", ""),
-                            lines=4,
-                            placeholder=(
-                                "e.g. character sheet, turnaround, 3d render, "
-                                "product shot ..."
-                            ),
-                        )
-                    with gr.Column(scale=4, min_width=260):
-                        gr.HTML("<div class='le-subtitle'>AI to generate</div>")
-                        author_source = gr.Dropdown(
-                            choices=[_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API],
-                            value=self._author_source(),
-                            label="Local / provider",
-                        )
-                        api_model = gr.Dropdown(
-                            choices=[],
-                            allow_custom_value=True,
-                            label="API model",
-                            value=self._author_api_config()[1],
-                            visible=self._author_source() == _AUTHOR_SOURCE_API,
-                        )
-                        api_configure = gr.Button(
-                            "Configure...",
-                            size="sm",
-                            visible=self._author_source() == _AUTHOR_SOURCE_API,
-                        )
-                        author_btn = gr.Button(
-                            "Generate", variant="primary", size="sm",
-                        )
+                description_field = gr.Textbox(
+                    label="Short description of what the prompt should deliver",
+                    value=entry_meta.get("description", ""),
+                    lines=4,
+                    placeholder=(
+                        "e.g. character sheet, turnaround, 3d render, "
+                        "product shot ..."
+                    ),
+                )
+                # Enhancer-Quelle und Generate gehoeren zusammen und stehen
+                # unter der Beschreibung, nicht in einer eigenen Spalte.
+                with gr.Row(elem_classes=["le-row", "le-enhancer-row"]) as enhancer_row:
+                    author_source = gr.Dropdown(
+                        choices=[_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API],
+                        value=self._author_source(),
+                        label="Enhancer",
+                        scale=2,
+                        min_width=180,
+                    )
+                    api_model = gr.Dropdown(
+                        choices=[],
+                        allow_custom_value=True,
+                        label="API model",
+                        value=self._author_api_config()[1],
+                        scale=3,
+                        min_width=200,
+                        visible=self._author_source() == _AUTHOR_SOURCE_API,
+                    )
+                    api_configure = gr.Button(
+                        "Configure...",
+                        size="sm",
+                        scale=0,
+                        min_width=130,
+                        visible=self._author_source() == _AUTHOR_SOURCE_API,
+                    )
+                    author_btn = gr.Button(
+                        "Generate",
+                        variant="primary",
+                        size="sm",
+                        scale=0,
+                        min_width=140,
+                    )
+                self._flatten_row(
+                    enhancer_row,
+                    [author_source, api_model, api_configure, author_btn],
+                )
                 with gr.Accordion("Guidelines (optional)", open=False):
                     guidelines_field = gr.Textbox(
                         value="",

@@ -92,8 +92,10 @@ assert "Folder" in labels, "Ordner-Feld fehlt"
 assert "Name (max. 64 chars)" in labels, "Namensfeld im Save-Dialog fehlt"
 assert "System prompt (result, editable)" in labels, "Prompt-Textfeld fehlt"
 assert "Entry" in labels and "Model" in labels, "Entry-/Modell-Auswahl fehlt"
-assert "Local / provider" in labels, "Autor-Auswahl fehlt"
-assert "What should this system prompt do?" in labels, "Beschreibungsfeld fehlt"
+assert "Enhancer" in labels, "Enhancer-Auswahl fehlt"
+assert (
+    "Short description of what the prompt should deliver" in labels
+), "Beschreibungsfeld fehlt"
 assert "Guidelines (optional)" in labels, "Guidelines-Accordion fehlt"
 assert "Provider" in labels, "Provider-Auswahl fehlt"
 assert "Test connection" in button_texte, "API-Test fehlt"
@@ -189,6 +191,21 @@ assert main.server_config["local_enhance_prompt_migrated"] is True
 p._migrate_library()
 assert Path(mig, "photograf.txt").read_text(encoding="utf-8").strip()
 print("OK: Migration einmalig, photograf + sheet geschrieben.")
+
+# Alte Wortgrenzen (0/150) werden einmalig auf 100/350 gehoben, eigene Werte
+# bleiben unangetastet.
+main.server_config.pop(plugin._WORD_DEFAULTS_KEY, None)
+main.server_config["local_enhance_min_words"] = 0
+main.server_config["local_enhance_max_words"] = 150
+p._migrate_word_defaults()
+assert main.server_config["local_enhance_min_words"] == 100, main.server_config
+assert main.server_config["local_enhance_max_words"] == 350, main.server_config
+main.server_config["local_enhance_min_words"] = 0
+main.server_config["local_enhance_max_words"] = 150
+p._migrate_word_defaults()
+assert main.server_config["local_enhance_min_words"] == 0, "Marker greift nicht"
+assert main.server_config["local_enhance_max_words"] == 150, "Marker greift nicht"
+print("OK: Wortgrenzen-Migration einmalig (0/150 -> 100/350).")
 
 # --- Import ----------------------------------------------------------------
 print("--- Import ---")

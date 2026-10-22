@@ -42,15 +42,15 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   WanGPs normaler System-Prompt, kein Override. Die Wahl landet in
   `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
   installationsweit einstellbar (Standard `~/Prompts`).
-  Die Tab-Karte **System Prompts** beginnt mit einer Werkzeugzeile
-  (`Entry`, `Model`, Min/Max); der Ordner liegt eingeklappt unter
-  **Prompt folder**, die Guidelines unter **Guidelines (optional)** (dort
-  `Load prompt guidelines`). Darunter zweispaltig: links `What should this
-  system prompt do?`, rechts **AI to generate** mit `Local / provider`,
-  `API model`, `Configure...` und `Generate`. Dann der große
-  Ergebnis-Editor, Status links + `Save as...` rechts. Datei-Importe liegen
-  eingeklappt unter **Import prompts** (`Load a .txt...` = eine Datei,
-  `Import a folder...` = alle `.txt` eines Ordners).
+  Die Tab-Karte **System Prompts** ist eine senkrechte Abfolge:
+  `Folder` + `Reload`, Werkzeugzeile (`Entry`, `Model`, Min/Max),
+  `Short description of what the prompt should deliver`, eine Zeile
+  **Enhancer** (`Enhancer`, ggf. `API model` + `Configure...`), der
+  eingeklappte Bereich **Guidelines (optional)** (mit
+  `Load prompt guidelines`), der große Ergebnis-Editor, Status + `Save as...`.
+  Datei-Importe liegen eingeklappt unter **Import prompts**
+  (`Load a .txt...` = eine Datei, `Import a folder...` = alle `.txt` eines
+  Ordners).
   Wählt man `OpenAI-compatible API`, erscheint nur `API model` + `Configure...`;
   die Verbindung (`Provider` Ollama/LM Studio/OpenAI/Custom, `Base URL`,
   `API key`, `Remember API key`, `Test connection`) öffnet der Knopf.
@@ -185,12 +185,12 @@ neu starten.
   `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, das
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
   `photograf`; `default` = kein Override), die Karte **System Prompts** mit
-  Werkzeugzeile (`Entry` / `Model` / Min / Max), eingeklappt
-  `Prompt folder` (`Folder` + `Reload`) und `Guidelines (optional)` (mit
-  `Load prompt guidelines`), links Beschreibungsfeld, rechts **AI to generate**
-  (`Local / provider`, `API model`, `Configure...`, `Generate`),
-  Ergebnis-Editor und Status + `Save as...` (öffnet den Namensdialog), keine
-  `gr.Form`-Wrapper —, das Accordion **Import prompts** und bei `OpenAI-compatible API` die
+  `Folder` + `Reload`, Werkzeugzeile (`Entry` / `Model` / Min / Max),
+  Beschreibungsfeld, Zeile **Enhancer** (`Enhancer`, `API model`,
+  `Configure...`, `Generate`), `Guidelines (optional)` (mit
+  `Load prompt guidelines`), Ergebnis-Editor und Status + `Save as...`
+  (öffnet den Namensdialog), keine `gr.Form`-Wrapper —, das Accordion
+  **Import prompts** und bei `OpenAI-compatible API` die
   Verbindungsgruppe (`Provider` / `Base URL` / `API key` /
   `Remember API key` / `Test connection`), darunter die Zeile zum aktuellen
   Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
@@ -396,15 +396,13 @@ neu starten.
   gespeicherten Namen die Datei (`None`, wenn sie fehlt), `default` liefert
   `None` (= Host entscheidet). `_save_template()` prüft gegen `default` +
   `_list_prompt_names()` + Altbestand.
-  Die Karte **System Prompts** ist die einzige Pflegestelle: oben die
-  Werkzeugzeile (`Entry`, `Model`, globale Min/Max), `Prompt folder`
-  (Enter speichert) + `Reload` und `Guidelines (optional)` mit
-  `Load prompt guidelines` liegen eingeklappt; darunter links Beschreibung,
-  rechts **AI to generate** (`Local / provider`, `API model`,
-  `Configure...`, `Generate`); dann der Ergebnis-Editor und
-  Status + `Save as...`. Importe im Accordion **Import prompts**
-  (`Load a .txt...` = eine Datei, `Import a folder...` = Verzeichnis-Upload
-  aller `.txt`).
+  Die Karte **System Prompts** ist die einzige Pflegestelle: `Folder`
+  (Enter speichert) + `Reload`, Werkzeugzeile (`Entry`, `Model`, globale
+  Min/Max), Beschreibung, die Zeile **Enhancer** (`Enhancer`, ggf.
+  `API model` + `Configure...` + `Generate`), `Guidelines (optional)`
+  mit `Load prompt guidelines`, Ergebnis-Editor, Status + `Save as...`.
+  Importe im Accordion **Import prompts** (`Load a .txt...` = eine Datei,
+  `Import a folder...` = Verzeichnis-Upload aller `.txt`).
   `Load prompt guidelines` füllt das Feld aus `_model_guidelines()`; ein
   nicht-leeres Feld **gewinnt** gegen die WanGP-Anweisungen
   (`author_system_prompt(..., guidelines=...)`), leer = WanGP. Ein
@@ -419,15 +417,15 @@ neu starten.
   `Save as...` öffnet ein Namensfeld (vorbefüllt), erst `Save` im Dialog
   schreibt `.txt` + Sidecar und aktualisiert beide Dropdowns; `Cancel`
   blendet es aus.
-  **Autor:** Das Feld **What should this system prompt do?** beschreibt das
-  gewünschte Ergebnis; `Author model` = `Local 27B` oder
+  **Autor:** Das Feld **Short description of what the prompt should deliver**
+  beschreibt das gewünschte Ergebnis; `Enhancer` = `Local 27B` oder
   `OpenAI-compatible API`, `Generate` schreibt daraus den System-Prompt.
   Lokal läuft derselbe Engine-Swap wie `enhance()` (27B, `deepy` lokal,
   `_PromptInstructionOverride`, Modus `T`), nur mit
   `_AUTHOR_INSTRUCTIONS` als System-Anweisung; die API nutzt
   `/v1/chat/completions` mit Base URL, Modell und Key aus
   `local_enhance_author_*`. Bei `OpenAI-compatible API` erscheinen
-  `API model` + `Configure...` in der Box **AI to generate**;
+  `API model` + `Configure...` in der Zeile **Enhancer**;
   `Configure...` öffnet `author_api_group`, `Done` schließt sie. `Provider` setzt die Base URL vor
   (`Ollama` `http://localhost:11434/v1`, `LM Studio`
   `http://127.0.0.1:1234/v1`, `OpenAI` `https://api.openai.com/v1`,
@@ -453,7 +451,10 @@ neu starten.
   behalten ihre `min_width`.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
-  Defaults: Min 0 (= keine Untergrenze), Max 150. Dazu
+  Defaults: Min 100, Max 350. `_migrate_word_defaults()` hebt beim ersten
+  Start exakt die alten Vorgaben (0/150) auf 100/350; der Marker
+  `local_enhance_word_defaults_v2` verhindert einen zweiten Lauf, eigene Werte
+  bleiben. Dazu
   `local_enhance_prompt_dir`, `local_enhance_prompt_migrated` und
   `local_enhance_template` (Default `default`). Dazu `local_enhance_author_source`
   (`Local 27B` / `OpenAI-compatible API`), `local_enhance_author_base_url`,
@@ -542,8 +543,8 @@ neu starten.
   (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
   `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten,
   `Folder`, `Name (max. 64 chars)` (Save-Dialog), `Entry`/`Model`,
-  `Local / provider`, `What should this system prompt do?`,
-  `Prompt folder`, `Guidelines (optional)`, `API model`, `Remember API key`,
+  `Enhancer`, `Short description of what the prompt should deliver`,
+  `Guidelines (optional)`, `API model`, `Remember API key`,
   Prompt-Textfeld, Wortgrenzen, Model check, Prompt workshop, keine doppelte
   `elem_id`, Bypass-LoRA-Nachtrag, `Load prompt guidelines` und `Generate`
   als Knöpfe. Die Ordnerzeile
