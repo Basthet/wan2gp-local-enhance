@@ -178,6 +178,12 @@ neu starten.
   Guidelines-Feld mit `Load prompt guidelines` (lädt die WanGP-Anweisungen,
   eigene Eingabe gewinnt), rechts die Box **AI to generate** mit
   `Local / provider`, `API model`, `Configure...`, `Generate`
+  (seit `2d81151` wieder ersetzt)
+- `2d81151` — Karte senkrecht: `Folder` wieder sichtbar, Enhancer-Zeile
+  (`Enhancer`, `API model`, `Configure...`, `Generate`) direkt unter der
+  Beschreibung, `AI to generate` entfernt; Label
+  `Short description of what the prompt should deliver`; Defaults 100/350
+  plus einmalige Migration von 0/150
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
