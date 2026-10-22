@@ -400,9 +400,10 @@ neu starten.
   sucht `^(text|image|video)_prompt_enhancer_instructions\d*$` (text vor image
   vor video) und liefert den Text der Definition — keine eigenen kuratierten
   Guidelines, keine Netzabfrage. `_guidelines_text()` erklärt den Fallback.
-  `_read_prompt_meta()` füllt beim Eintragswechsel Modell + Tags;
-  `Save` öffnet ein Namensfeld (vorbefüllt), erst `Save` im Dialog schreibt
-  `.txt` + Sidecar und aktualisiert beide Dropdowns; `Cancel` blendet es aus.
+  `_read_prompt_meta()` füllt beim Eintragswechsel Modell + Beschreibung;
+  `Save as...` öffnet ein Namensfeld (vorbefüllt), erst `Save` im Dialog
+  schreibt `.txt` + Sidecar und aktualisiert beide Dropdowns; `Cancel`
+  blendet es aus.
   **Autor:** Das Feld **What should this system prompt do?** beschreibt das
   gewünschte Ergebnis; `Author model` = `Local 27B` oder
   `OpenAI-compatible API`, `Generate` schreibt daraus den System-Prompt.
