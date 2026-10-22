@@ -172,6 +172,10 @@ neu starten.
   (Sidecar `description`), `Author model` + `Generate` direkt daran;
   `API model` + `Configure...` in der Hauptansicht, Verbindung nur im
   Dialog; API-Key nur mit `Remember API key` gespeichert
+- `88f150b` — zweispaltige Karte: links Beschreibung + editierbares
+  Guidelines-Feld mit `Load prompt guidelines` (lädt die WanGP-Anweisungen,
+  eigene Eingabe gewinnt), rechts die Box **AI to generate** mit
+  `Local / provider`, `API model`, `Configure...`, `Generate`
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
