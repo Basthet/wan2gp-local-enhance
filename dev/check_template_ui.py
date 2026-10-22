@@ -88,24 +88,18 @@ print("Labels:", labels)
 print("Typen:", typen)
 
 assert len(karten) == 4, f"erwartet 4 Karten, gefunden {len(karten)}"
-assert any(
-    "le-field-label" in str(getattr(k, "value", ""))
-    for k in knoten
-    if type(k).__name__ == "HTML"
-), "Folder-Beschriftung fehlt"
+assert "Folder" in labels, "Ordner-Feld fehlt"
 assert "Name (max. 64 chars)" in labels, "Namensfeld im Save-Dialog fehlt"
 assert "System prompt (result, editable)" in labels, "Prompt-Textfeld fehlt"
 assert "Entry" in labels and "Model" in labels, "Entry-/Modell-Auswahl fehlt"
 assert "Enhancer" in labels, "Enhancer-Auswahl fehlt"
-assert (
-    "Short description of what the prompt should deliver" in labels
-), "Beschreibungsfeld fehlt"
+assert "A brief description of the intent" in labels, "Beschreibungsfeld fehlt"
 assert "Guidelines (optional)" in labels, "Guidelines-Accordion fehlt"
 assert "Provider" in labels, "Provider-Auswahl fehlt"
 assert "Test connection" in button_texte, "API-Test fehlt"
 assert "Load prompt guidelines" in button_texte, "Guidelines-Button fehlt"
 assert "Generate" in button_texte, "Generate-Button fehlt"
-assert "Reload" in button_texte, "Reload fehlt"
+assert "↻" in button_texte, "Reload fehlt"
 assert "Load .txt" in labels and "Import folder" in labels, "Import-Aktionen fehlen"
 assert "Prompt" in labels and "Enhanced prompt" in labels, "Prompt-Werkstatt fehlt"
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
@@ -125,7 +119,7 @@ zeile = [type(k).__name__ for k in (lib_row.children or [])]
 eintrag = [type(k).__name__ for k in (entry_row.children or [])]
 print("Bibliotheks-Zeile:", zeile)
 print("Eintrags-Zeile:", eintrag)
-assert zeile == ["Textbox", "Button"], zeile
+assert zeile == ["Textbox", "Button", "Button"], zeile
 assert eintrag == ["Dropdown", "Dropdown", "Number", "Number"], eintrag
 # Load und Import folder sind als Upload verdrahtet (schreiben in den Ordner).
 konfiguration = demo.get_config_file()
@@ -258,6 +252,19 @@ assert p._model_guidelines("hidream_o1_dev") == "GUIDE"
 assert p._model_guidelines("unbekannt") == ""
 assert "Select a model" in p._guidelines_text("")
 assert "ships no own" in p._guidelines_text("unbekannt")
+# Beschreibungs-Vorschlag nach Medienart des Zielmodells.
+main.models_def = {
+    "img": {"name": "Img", "metadata": {"main_output": ["Image"]}},
+    "vid": {"name": "Vid", "metadata": {"main_output": ["video"]}},
+    "aud": {"name": "Aud", "metadata": {"main_output": ["audio"]}},
+    "plain": {"name": "Plain", "metadata": {}},
+}
+assert p._description_suggestion("img").startswith("Detailed image prompt")
+assert p._description_suggestion("vid").startswith("Cinematic video prompt")
+assert p._description_suggestion("aud").startswith("Audio prompt")
+assert p._description_suggestion("plain") == ""
+assert p._description_suggestion("unbekannt") == ""
+assert p._description_suggestion("") == ""
 msg = p._author_user_message("GUIDE", "portrait", "old prompt")
 assert "MODEL GUIDELINES" in msg and "portrait" in msg and "old prompt" in msg
 assert "WHAT THE SYSTEM PROMPT SHOULD DO" in msg

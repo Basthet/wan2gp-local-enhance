@@ -43,9 +43,9 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `local_enhance_template` und gilt für **beide** Knöpfe. Der Ordner ist
   installationsweit einstellbar (Standard `~/Prompts`).
   Die Tab-Karte beginnt mit zwei Sätzen, was das Plugin tut (keine
-  `System Prompts`-Überschrift). Darunter: `Folder`-Kopfzeile mit `Reload`,
-  Eingabefeld mit `Save` dahinter, Werkzeugzeile (`Entry`, `Model`, Min/Max),
-  `Short description of what the prompt should deliver`, eine Zeile
+  `System Prompts`-Überschrift). Darunter eine Zeile: `Folder`-Feld, Icon-Knopf `↻` (Reload), `Save`;
+  Werkzeugzeile (`Entry`, `Model`, Min/Max),
+  `A brief description of the intent`, eine Zeile
   **Enhancer** (`Enhancer`, ggf. `API model`, rechts `Configure` über
   `Generate` gestapelt), der eingeklappte Bereich **Guidelines (optional)**
   (mit `Load prompt guidelines`), der große Ergebnis-Editor, Status +
@@ -182,7 +182,7 @@ neu starten.
 - `2d81151` — Karte senkrecht: `Folder` wieder sichtbar, Enhancer-Zeile
   (`Enhancer`, `API model`, `Configure`, `Generate`) direkt unter der
   Beschreibung, `AI to generate` entfernt; Label
-  `Short description of what the prompt should deliver`; Defaults 100/350
+  `A brief description of the intent`; Defaults 100/350
   plus einmalige Migration von 0/150
 - `00de323` — `Configure` über `Generate` gestapelt (150px-Spalte),
   **Import prompts** aufgeklappt, `Save as` schlägt
@@ -406,8 +406,8 @@ neu starten.
   gespeicherten Namen die Datei (`None`, wenn sie fehlt), `default` liefert
   `None` (= Host entscheidet). `_save_template()` prüft gegen `default` +
   `_list_prompt_names()` + Altbestand.
-  Die Karte ist die einzige Pflegestelle: Kopfzeile `Folder` + `Reload`,
-  darunter das Ordnerfeld mit `Save` (Enter speichert ebenfalls),
+  Die Karte ist die einzige Pflegestelle: Zeile `Folder` + `↻` + `Save`
+  (Enter speichert ebenfalls),
   Werkzeugzeile (`Entry`, `Model`, globale Min/Max), Beschreibung, die Zeile
   **Enhancer** (`Enhancer`, ggf. `API model`, rechts `Configure` über
   `Generate`), `Guidelines (optional)` mit `Load prompt guidelines`,
@@ -432,7 +432,7 @@ neu starten.
   `Save as` öffnet ein Namensfeld (vorbefüllt), erst `Save` im Dialog
   schreibt `.txt` + Sidecar und aktualisiert beide Dropdowns; `Cancel`
   blendet es aus.
-  **Autor:** Das Feld **Short description of what the prompt should deliver**
+  **Autor:** Das Feld **A brief description of the intent**
   beschreibt das gewünschte Ergebnis; `Enhancer` = `Local 27B` oder
   `OpenAI-compatible API`, `Generate` schreibt daraus den System-Prompt.
   Lokal läuft derselbe Engine-Swap wie `enhance()` (27B, `deepy` lokal,
@@ -558,13 +558,13 @@ neu starten.
   (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
   `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten,
   `Name (max. 64 chars)` (Save-Dialog), `Entry`/`Model`,
-  `Enhancer`, `Short description of what the prompt should deliver`,
+  `Enhancer`, `A brief description of the intent`,
   `Guidelines (optional)`, `API model`, `Remember API key`,
   Prompt-Textfeld, Wortgrenzen, Model check, Prompt workshop, keine doppelte
   `elem_id`, Bypass-LoRA-Nachtrag, `Load prompt guidelines` und `Generate`
   als Knöpfe. Die Ordnerzeile
   (`local_enhance_library_row`) muss genau
-  `[Textbox, Button]` (`Folder`, `Reload`), die Eintragszeile
+  `[Textbox, Button, Button]` (`Folder`, `↻`, `Save`), die Eintragszeile
   (`local_enhance_entry_row`) genau
   `[Dropdown, Dropdown, Number, Number]` (`Entry`, `Model`, Min, Max)
   enthalten — beide ohne `Form`-Wrapper; **zwei** `upload`-Dependencies

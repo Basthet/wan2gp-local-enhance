@@ -230,6 +230,9 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 # Wachsen ueber die Zeile, min_width gibt dem Label die noetige Breite, damit
 # "Check models" einzeilig bleibt.
 _MODEL_CHECK_BUTTON_WIDTH = 160
+# Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
+# Code geladen hat. Bei jedem UI-Commit mitziehen.
+_UI_BUILD = "build 2026-10-22.7"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -291,9 +294,7 @@ _UI_CSS = (
     "margin:0 0 4px 0;opacity:0.92;}"
     ".le-hint{font-size:0.85em;opacity:0.72;margin:0 0 8px 0;line-height:1.35;}"
     ".le-intro{font-size:0.9em;line-height:1.45;opacity:0.85;margin:0 0 10px 0;}"
-    ".le-folder-head{align-items:center !important;gap:8px !important;"
-    "margin:0 0 2px 0 !important;}"
-    ".le-field-label{font-size:0.9em;font-weight:600;opacity:0.9;margin:0;}"
+    ".le-build{float:right;font-size:0.8em;opacity:0.5;margin-left:8px;}"
     ".le-row{align-items:flex-end !important;gap:8px !important;flex-wrap:wrap !important;}"
     ".le-actions{gap:8px !important;flex-wrap:wrap !important;}"
     ".le-actions button{min-width:170px;}"
@@ -1230,6 +1231,35 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 text = str(value or "").strip()
                 if text:
                     return text
+        return ""
+
+    @classmethod
+    def _description_suggestion(cls, model_type):
+        """Kurzer Vorschlag fuers Beschreibungsfeld, passend zur Medienart."""
+        typ = str(model_type or "").strip()
+        if not typ:
+            return ""
+        vorgabe = (
+            ("image", "Detailed image prompt: subject and pose, appearance, "
+                      "framing, lighting and mood."),
+            ("video", "Cinematic video prompt: subject, motion, camera "
+                      "movement, lighting and mood."),
+            ("audio", "Audio prompt: voice or music style, mood, tempo and "
+                      "delivery."),
+        )
+        try:
+            models = _main("models_def")
+            definition = models.get(typ) if isinstance(models, dict) else None
+            meta = definition.get("metadata") if isinstance(definition, dict) else None
+            outputs = (meta or {}).get("main_output") or []
+            if isinstance(outputs, str):
+                outputs = [outputs]
+            arten = {str(x).strip().lower().rstrip("s") for x in outputs}
+        except Exception:  # noqa: BLE001 - Vorschlag ist optional
+            return ""
+        for schluessel, text in vorgabe:
+            if schluessel in arten:
+                return text
         return ""
 
     @classmethod
@@ -3871,29 +3901,31 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     "<b>OpenCode</b> (remote engine) and <b>Local 27B</b>. Both "
                     "use the system prompt selected here - one <code>.txt</code> "
                     "per entry, plus a sidecar with target model and "
-                    "description.</div>"
+                    "description."
+                    f"<span class='le-build'>{_UI_BUILD}</span></div>"
                 )
-                with gr.Row(elem_classes=["le-row", "le-folder-head"]):
-                    with gr.Column(scale=8, min_width=0):
-                        gr.HTML("<div class='le-field-label'>Folder</div>")
-                    prompt_reload = gr.Button(
-                        "Reload", size="sm", scale=0, min_width=100,
-                    )
                 with gr.Row(
                     elem_classes=["le-row", "le-lib-row"],
                     elem_id="local_enhance_library_row",
                 ) as library_row:
                     prompt_dir_field = gr.Textbox(
-                        show_label=False,
+                        label="Folder",
                         value=self._prompt_dir_setting(),
                         max_lines=1,
                         elem_id="local_enhance_prompt_dir",
                         scale=8,
                     )
+                    prompt_reload = gr.Button(
+                        "↻", size="sm", scale=0, min_width=44,
+                        elem_id="local_enhance_reload_btn",
+                    )
                     prompt_save_dir = gr.Button(
                         "Save", size="sm", scale=0, min_width=90,
                     )
-                self._flatten_row(library_row, [prompt_dir_field, prompt_save_dir])
+                self._flatten_row(
+                    library_row,
+                    [prompt_dir_field, prompt_reload, prompt_save_dir],
+                )
                 entry_choices = self._prompt_choices()
                 entry_wahl = self._template_choice()
                 if entry_wahl not in entry_choices:
@@ -3938,7 +3970,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     ],
                 )
                 description_field = gr.Textbox(
-                    label="Short description of what the prompt should deliver",
+                    label="A brief description of the intent",
                     value=entry_meta.get("description", ""),
                     lines=4,
                     placeholder=(
@@ -4103,10 +4135,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     placeholder=_BYPASS_LORA_DEFAULT,
                 )
                 bypass_models_field = gr.Textbox(
-                    label="Only for models (comma-separated)",
+                    label="Limit to model types (optional)",
                     value=", ".join(self._bypass_models()),
-                    placeholder="empty = always",
-                    info="Leave empty to load the LoRA with every model.",
+                    placeholder="empty = every model",
+                    info=(
+                        "Comma-separated internal model types, e.g. krea2. "
+                        "Empty = the bypass LoRA is added for every model."
+                    ),
                 )
                 bypass_status = gr.Markdown(value=self._bypass_status_text())
                 with gr.Row(elem_classes=["le-actions"]):
@@ -4240,15 +4275,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             show_progress="hidden",
         )
 
-        def modell_wechsel(model_type):
+        def modell_wechsel(model_type, beschreibung):
             # Neue Modellwahl -> eigene Guidelines verwerfen, damit wieder die
-            # WanGP-Anweisungen des Modells gelten.
-            return gr.update(value="")
+            # WanGP-Anweisungen des Modells gelten. Ist die Beschreibung noch
+            # leer, kommt ein Vorschlag passend zur Medienart des Modells.
+            text = str(beschreibung or "").strip()
+            vorschlag = "" if text else self._description_suggestion(model_type)
+            return gr.update(value=""), gr.update(value=vorschlag)
 
         prompt_model.change(
             fn=modell_wechsel,
-            inputs=[prompt_model],
-            outputs=[guidelines_field],
+            inputs=[prompt_model, description_field],
+            outputs=[guidelines_field, description_field],
             show_progress="hidden",
         )
 
