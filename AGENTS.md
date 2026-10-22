@@ -167,6 +167,10 @@ neu starten.
 - `16d0890` — Importe ins Accordion (**Import prompts**), API-Verbindung
   sichtbar bei `OpenAI-compatible API`: Provider-Presets (Ollama/LM Studio/
   OpenAI/Custom), Base URL, Key, Model, `Test connection` (`GET /models`)
+- `511653b` — Tags → Freitext **What should this system prompt do?**
+  (Sidecar `description`), `Author model` + `Generate` direkt daran;
+  `API model` + `Configure...` in der Hauptansicht, Verbindung nur im
+  Dialog; API-Key nur mit `Remember API key` gespeichert
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
