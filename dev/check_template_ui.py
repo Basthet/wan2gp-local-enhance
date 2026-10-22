@@ -88,7 +88,11 @@ print("Labels:", labels)
 print("Typen:", typen)
 
 assert len(karten) == 4, f"erwartet 4 Karten, gefunden {len(karten)}"
-assert "Folder" in labels, "Ordner-Feld fehlt"
+assert any(
+    "le-field-label" in str(getattr(k, "value", ""))
+    for k in knoten
+    if type(k).__name__ == "HTML"
+), "Folder-Beschriftung fehlt"
 assert "Name (max. 64 chars)" in labels, "Namensfeld im Save-Dialog fehlt"
 assert "System prompt (result, editable)" in labels, "Prompt-Textfeld fehlt"
 assert "Entry" in labels and "Model" in labels, "Entry-/Modell-Auswahl fehlt"
@@ -102,7 +106,7 @@ assert "Test connection" in button_texte, "API-Test fehlt"
 assert "Load prompt guidelines" in button_texte, "Guidelines-Button fehlt"
 assert "Generate" in button_texte, "Generate-Button fehlt"
 assert "Reload" in button_texte, "Reload fehlt"
-assert "Load a .txt..." in labels and "Import a folder..." in labels, "Import-Aktionen fehlen"
+assert "Load .txt" in labels and "Import folder" in labels, "Import-Aktionen fehlen"
 assert "Prompt" in labels and "Enhanced prompt" in labels, "Prompt-Werkstatt fehlt"
 assert "Min words" in labels and "Max words" in labels, "Wortgrenzen fehlen"
 ids = [getattr(k, "elem_id", None) for k in knoten if getattr(k, "elem_id", None)]

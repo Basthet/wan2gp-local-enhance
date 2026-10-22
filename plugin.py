@@ -290,6 +290,10 @@ _UI_CSS = (
     "font-weight:600;font-size:0.95em;letter-spacing:0.02em;"
     "margin:0 0 4px 0;opacity:0.92;}"
     ".le-hint{font-size:0.85em;opacity:0.72;margin:0 0 8px 0;line-height:1.35;}"
+    ".le-intro{font-size:0.9em;line-height:1.45;opacity:0.85;margin:0 0 10px 0;}"
+    ".le-folder-head{align-items:center !important;gap:8px !important;"
+    "margin:0 0 2px 0 !important;}"
+    ".le-field-label{font-size:0.9em;font-weight:600;opacity:0.9;margin:0;}"
     ".le-row{align-items:flex-end !important;gap:8px !important;flex-wrap:wrap !important;}"
     ".le-actions{gap:8px !important;flex-wrap:wrap !important;}"
     ".le-actions button{min-width:170px;}"
@@ -3861,22 +3865,35 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         with gr.Column():
             # --- Karte 1: System Prompts ----------------------------------------
             with gr.Column(elem_classes=["le-card"]):
-                gr.HTML("<div class='le-card-title'>System Prompts</div>")
+                # Kurze Erklaerung statt einer nichtssagenden Ueberschrift.
+                gr.HTML(
+                    "<div class='le-intro'>Adds two prompt-enhance buttons: "
+                    "<b>OpenCode</b> (remote engine) and <b>Local 27B</b>. Both "
+                    "use the system prompt selected here - one <code>.txt</code> "
+                    "per entry, plus a sidecar with target model and "
+                    "description.</div>"
+                )
+                with gr.Row(elem_classes=["le-row", "le-folder-head"]):
+                    with gr.Column(scale=8, min_width=0):
+                        gr.HTML("<div class='le-field-label'>Folder</div>")
+                    prompt_reload = gr.Button(
+                        "Reload", size="sm", scale=0, min_width=100,
+                    )
                 with gr.Row(
                     elem_classes=["le-row", "le-lib-row"],
                     elem_id="local_enhance_library_row",
                 ) as library_row:
                     prompt_dir_field = gr.Textbox(
-                        label="Folder",
+                        show_label=False,
                         value=self._prompt_dir_setting(),
                         max_lines=1,
                         elem_id="local_enhance_prompt_dir",
-                        info="Press Enter to save.",
+                        scale=8,
                     )
-                    prompt_reload = gr.Button(
-                        "Reload", size="sm", scale=0, min_width=100,
+                    prompt_save_dir = gr.Button(
+                        "Save", size="sm", scale=0, min_width=90,
                     )
-                self._flatten_row(library_row, [prompt_dir_field, prompt_reload])
+                self._flatten_row(library_row, [prompt_dir_field, prompt_save_dir])
                 entry_choices = self._prompt_choices()
                 entry_wahl = self._template_choice()
                 if entry_wahl not in entry_choices:
@@ -3950,7 +3967,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     )
                     with gr.Column(scale=0, min_width=150) as action_column:
                         api_configure = gr.Button(
-                            "Configure...",
+                            "Configure",
                             size="sm",
                             visible=self._author_source() == _AUTHOR_SOURCE_API,
                         )
@@ -4039,7 +4056,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             value=self._template_status_text()
                         )
                     template_save = gr.Button(
-                        "Save as...", variant="primary", size="sm",
+                        "Save as", variant="primary", size="sm",
                         scale=0, min_width=150,
                     )
                 with gr.Row(elem_classes=["le-row"], visible=False) as save_name_row:
@@ -4064,11 +4081,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     )
                     with gr.Row(elem_classes=["le-row"]):
                         prompt_load = gr.UploadButton(
-                            "Load a .txt...", file_types=[".txt"],
+                            "Load .txt", file_types=[".txt"],
                             size="sm", scale=0, min_width=140,
                         )
                         prompt_folder_import = gr.UploadButton(
-                            "Import a folder...", file_count="directory",
+                            "Import folder", file_count="directory",
                             size="sm", scale=0, min_width=160,
                         )
 
@@ -4327,6 +4344,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if prompt_select is not None:
             dir_outputs.append(prompt_select)
         prompt_dir_field.submit(
+            fn=ordner_speichern,
+            inputs=[prompt_dir_field],
+            outputs=dir_outputs,
+            show_progress="hidden",
+        )
+        prompt_save_dir.click(
             fn=ordner_speichern,
             inputs=[prompt_dir_field],
             outputs=dir_outputs,
