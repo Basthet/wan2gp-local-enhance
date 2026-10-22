@@ -146,16 +146,20 @@ neu starten.
 - `bb23c0b` — Bibliotheks-Zeile kompakt: Ordner, Name und Wortgrenzen in einer
   Reihe, dazu `Reload folder` und `Import prompt...` (bestehende `.txt`
   landet im Ordner); `_flatten_row` löst die Gradio-Form-Wrapper
+- `92ee268` — UI-Feinschliff nach Screenshot: Bibliothek in zwei ausgerichtete
+  Zeilen (Ordner + Save/Reload/Import, darunter Name + Save as name + Min/Max),
+  Textfelder wachsen per CSS, Dropdown heisst `Edit prompt`, Hinweis
+  „Edits apply only after Save as name."
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
 - **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **6 Inputs**,
   `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, das
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
-  `photograf`; `default` = kein Override), die Bibliotheks-Zeile mit
-  **Prompt folder / Save folder / Reload folder / Import prompt... / Name /**
-  **Save as name / Min words / Max words** in einer Reihe (kein `gr.Form`),
-  darunter die Zeile zum aktuellen
+  `photograf`; `default` = kein Override), die Bibliothek mit zwei
+  ausgerichteten Zeilen — **Prompt folder / Save folder / Reload folder /
+  Import prompt...**, darunter **Name / Save as name / Min words / Max
+  words** (kein `gr.Form`) —, darunter die Zeile zum aktuellen
   Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
   *Check models* füllt Status und Liste; ein alter Zwischenspeicher zeigt
   vorher den Ersatztext statt einer Textwand), und der Vision-Lauf aus
