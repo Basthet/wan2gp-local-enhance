@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.18"
+_UI_BUILD = "build 2026-10-23.19"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -3287,6 +3287,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     offloadobj.unload_all()
             except Exception:  # noqa: BLE001
                 pass
+            self._free_local_enhancer()
             release_GPU_ressources(state, PlugIn_Id)
         result = self._first_prompt(prompts)
         return (result, None) if result else (None, "The author model returned nothing.")
@@ -3473,6 +3474,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     offloadobj.unload_all()
             except Exception:
                 pass
+            self._free_local_enhancer()
             release_GPU_ressources(state, PlugIn_Id)
 
         if not prompts:
@@ -4160,6 +4162,26 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         return button_row
 
+    @staticmethod
+    def _free_local_enhancer():
+        """Lokalen Enhancer restlos freigeben (auch den Offload-Wrapper)."""
+        try:
+            reset = _main("reset_prompt_enhancer")
+            apply_reset = _main("reset_prompt_enhancer_if_requested")
+            if callable(reset):
+                reset()
+            if callable(apply_reset):
+                apply_reset()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+
     def enhance_inline_local_api(self, state, text, *values):
         """Local API: Prompt ueber einen lokalen OpenAI-Server verbessern.
 
@@ -4175,6 +4197,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if not text:
             gr.Warning("Enter a prompt first.")
             return gr.update(), gr.update()
+        # Reste eines frueheren lokalen Laufs zuerst freigeben.
+        self._free_local_enhancer()
         base, model = self._find_local_api()
         if not base:
             gr.Warning(
@@ -4217,6 +4241,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if not result:
             gr.Warning(str(fehler).replace("**", "").replace("`", ""))
             return gr.update(), gr.update(interactive=True)
+        self._last_source = text
+        self._last_enhanced = result
         gr.Info(f"Local API ({model}): enhanced")
         return self._with_history(result), gr.update(interactive=True)
 
