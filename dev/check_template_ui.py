@@ -160,6 +160,11 @@ for bad in ("", "..", "../x", ".hidden", "a/b", "a\\b", "default"):
 
 assert p._write_prompt_entry("Mein Prompt", "hello")
 assert p._read_prompt_entry("Mein Prompt").strip() == "hello"
+# Ohne Sidecar muss der Datensatz trotzdem alle drei Schluessel haben -
+# sonst kracht der Eintragswechsel in der UI (meta["description"]).
+assert p._read_prompt_meta("Mein Prompt") == {
+    "model": "", "description": "", "tags": [],
+}, p._read_prompt_meta("Mein Prompt")
 assert p._list_prompt_names() == ["Mein Prompt"]
 # Leere Datei wird uebersprungen.
 Path(p._prompt_dir(), "leer.txt").write_text("   \n", encoding="utf-8")
@@ -237,7 +242,9 @@ assert meta["tags"] == ["bw"], meta
 assert Path(p._prompt_dir(), "Modelltest.json").is_file()
 p._write_prompt_meta("Modelltest", "", [])
 assert not Path(p._prompt_dir(), "Modelltest.json").is_file()
-assert p._read_prompt_meta("gibt es nicht") == {"model": "", "tags": []}
+assert p._read_prompt_meta("gibt es nicht") == {
+    "model": "", "description": "", "tags": [],
+}
 
 main.models_def = {
     "hidden_model": {"name": "Hidden", "visible": False},

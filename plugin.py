@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-22.8"
+_UI_BUILD = "build 2026-10-23.9"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -1116,7 +1116,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def _read_prompt_meta(cls, name):
         """Zielmodell und Tags eines Eintrags; fehlende/kaputte Datei -> leer."""
         name = str(name or "").strip()
-        leer = {"model": "", "tags": []}
+        leer = {"model": "", "description": "", "tags": []}
         if not cls._prompt_name_ok(name):
             return leer
         try:
