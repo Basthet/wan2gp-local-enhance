@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.12"
+_UI_BUILD = "build 2026-10-23.13"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -267,12 +267,13 @@ _UI_CSS = (
     "margin:0 !important;order:1 !important;}"
     "#local_enhance_row .local-enhance-label{flex:0 0 100% !important;"
     "width:auto !important;margin:0 !important;}"
-    # Gradio setzt auf die Kinder seiner Row ein eigenes `flex`; der
-    # Element-Selektor allein verliert dagegen. Mit der Button-Klasse ist der
-    # Selektor stark genug (live geprueft).
+    # Gradio setzt auf die Kinder seiner Row ein eigenes `flex`; die
+    # 50/50-Variante verlor dagegen (live gemessen: computed flex blieb
+    # `0 0 auto`). `width:100%` wird von Gradios Regel nicht angefasst und
+    # ist damit verlaesslich: jeder Knopf nimmt eine eigene Zeile.
     "#local_enhance_row > button.btn_centered{"
-    "flex:1 1 calc(50% - 8px) !important;"
-    "width:auto !important;min-width:0 !important;order:3 !important;}"
+    "flex:0 0 100% !important;width:100% !important;"
+    "min-width:0 !important;order:3 !important;margin:0 !important;}"
     "#local_enhance_row .cbx_centered{flex:0 0 auto !important;"
     "min-width:max-content !important;max-width:max-content !important;"
     # Gemessen: die Kaestchen-Bloecke sind 44 px hoch, die Knoepfe (size=sm)
