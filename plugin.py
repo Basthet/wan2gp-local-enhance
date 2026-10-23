@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.9"
+_UI_BUILD = "build 2026-10-23.10"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -260,18 +260,15 @@ _UI_CSS = (
     "#local_enhance_row > .cbx_centered{"
     "width:max-content !important;min-width:0 !important;max-width:max-content !important;"
     "margin:0 !important;}"
-    # Das Prompt-Dropdown in Zeile 1: feste, kompakte Breite (die Namen sind
-    # hoechstens 64 Zeichen lang, max-content waere zu breit) und order 1 wie
-    # die Kaestchen, damit es vor den Knoepfen steht.
-    "#local_enhance_row > #local_enhance_prompt_dd{flex:0 0 auto !important;"
-    "width:220px !important;min-width:160px !important;max-width:260px !important;"
+    # Zeile 1 ist schmal. Layout: Ueberschrift, darunter Dropdown + Think,
+    # darunter zwei gleich breite Knoepfe. Das Dropdown nimmt die freie Breite.
+    "#local_enhance_row > #local_enhance_prompt_dd{flex:1 1 200px !important;"
+    "width:auto !important;min-width:0 !important;max-width:none !important;"
     "margin:0 !important;order:1 !important;}"
-    # Reihenfolge: Kaestchen zuerst, dann die Knoepfe (order wirkt in Flex).
-    # Die Beschriftung bleibt mit order:0 oben auf ihrer eigenen Zeile.
     "#local_enhance_row .local-enhance-label{flex:0 0 100% !important;"
-    "width:auto !important;}"
-    "#local_enhance_row button{flex:0 0 auto !important;width:auto !important;"
-    "min-width:0 !important;order:2 !important;}"
+    "width:auto !important;margin:0 !important;}"
+    "#local_enhance_row > button{flex:1 1 calc(50% - 5px) !important;"
+    "width:auto !important;min-width:0 !important;order:3 !important;}"
     "#local_enhance_row .cbx_centered{flex:0 0 auto !important;"
     "min-width:max-content !important;max-width:max-content !important;"
     # Gemessen: die Kaestchen-Bloecke sind 44 px hoch, die Knoepfe (size=sm)
@@ -3507,7 +3504,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 choices=prompt_choices,
                 value=prompt_wahl,
                 label="Specific Prompt",
-                show_label=True,
+                show_label=False,
                 elem_id="local_enhance_prompt_dd",
                 scale=0,
                 min_width=160,
