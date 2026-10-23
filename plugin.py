@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.14"
+_UI_BUILD = "build 2026-10-23.15"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -373,6 +373,28 @@ _AUTHOR_PROVIDERS = {
     "Custom": "",
 }
 _AUTHOR_PROVIDER_DEFAULT = "Ollama"
+# Antwort-Parameter des Autors. "max_tokens" begrenzt die Gesamtausgabe
+# inklusive Denken; ein separates Denk-Budget ist providerspezifisch und geht
+# ueber "Extra body" (JSON), z. B. {"max_thinking_tokens": 4096}.
+_AUTHOR_MAX_TOKENS_KEY = "local_enhance_author_max_tokens"
+_AUTHOR_TEMPERATURE_KEY = "local_enhance_author_temperature"
+_AUTHOR_REASONING_KEY = "local_enhance_author_reasoning_effort"
+_AUTHOR_EXTRA_BODY_KEY = "local_enhance_author_extra_body"
+_AUTHOR_MAX_TOKENS_DEFAULT = 2048
+_AUTHOR_TEMPERATURE_DEFAULT = 0.4
+_AUTHOR_REASONING_LEVELS = ("low", "medium", "high")
+# Eingebauter WanGP-Autor: 9B passt auf 8 GB, 27B braucht Offload.
+_AUTHOR_LOCAL_MODEL_KEY = "local_enhance_author_local_model"
+_AUTHOR_LOCAL_AUTO = "auto"
+_AUTHOR_LOCAL_9B = "qwen38_9b"
+_AUTHOR_LOCAL_27B = "qwen38_27b"
+_AUTHOR_LOCAL_MODELS = {
+    _AUTHOR_LOCAL_AUTO: "Auto (VRAM)",
+    _AUTHOR_LOCAL_9B: "Qwen3.8-9B",
+    _AUTHOR_LOCAL_27B: "Qwen3.8-27B",
+}
+# Ab dieser VRAM-Groesse lohnt der 27B; darunter gewinnt das 9B.
+_AUTHOR_27B_MIN_VRAM_GB = 16.0
 _TAG_SUGGESTIONS = [
     "character sheet", "turnaround", "3d render", "portrait", "product shot",
     "environment", "cinematic still", "concept art", "illustration",
@@ -759,6 +781,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             3: "Qwen3.5-4B",
             4: "Qwen3.5-9B",
             5: "Qwen3.8-27B",
+            6: "Qwen3.8-9B",
         }.get(number, f"Modell {number}")
 
     @staticmethod
@@ -1310,6 +1333,191 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         )
 
     @classmethod
+    def _author_max_tokens(cls, value=None):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_AUTHOR_MAX_TOKENS_KEY, _AUTHOR_MAX_TOKENS_DEFAULT)
+        try:
+            return max(0, min(32768, int(float(value or 0))))
+        except (TypeError, ValueError):
+            return _AUTHOR_MAX_TOKENS_DEFAULT
+
+    @classmethod
+    def _author_temperature(cls, value=None):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_AUTHOR_TEMPERATURE_KEY, _AUTHOR_TEMPERATURE_DEFAULT)
+        try:
+            return max(0.0, min(2.0, float(value)))
+        except (TypeError, ValueError):
+            return _AUTHOR_TEMPERATURE_DEFAULT
+
+    @classmethod
+    def _author_reasoning(cls, value=None):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_AUTHOR_REASONING_KEY, "")
+        value = str(value or "").strip().lower()
+        return value if value in _AUTHOR_REASONING_LEVELS else ""
+
+    @classmethod
+    def _author_extra_body(cls, value=None):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_AUTHOR_EXTRA_BODY_KEY, "")
+        return str(value or "").strip()
+
+    @staticmethod
+    def _parse_extra_body(raw):
+        """JSON-Objekt fuer den Request-Body; leer ist erlaubt."""
+        text = str(raw or "").strip()
+        if not text:
+            return {}, None
+        try:
+            data = json.loads(text)
+        except Exception as exc:  # noqa: BLE001
+            return None, f"Extra body is not valid JSON: {exc}"
+        if not isinstance(data, dict):
+            return None, "Extra body must be a JSON object."
+        return data, None
+
+    @classmethod
+    def _author_local_model(cls, value=None):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(_AUTHOR_LOCAL_MODEL_KEY, _AUTHOR_LOCAL_AUTO)
+        value = str(value or "").strip()
+        return value if value in _AUTHOR_LOCAL_MODELS else _AUTHOR_LOCAL_AUTO
+
+    @staticmethod
+    def _total_vram_gb():
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                return float(torch.cuda.get_device_properties(0).total_memory) / (1024 ** 3)
+        except Exception:  # noqa: BLE001 - ohne GPU gilt 0
+            pass
+        return 0.0
+
+    @classmethod
+    def _author_local_enhancer_id(cls, value=None):
+        """6 = Qwen3.8-9B (gguf), 5 = Qwen3.8-27B (gguf_ptq1)."""
+        wahl = cls._author_local_model(value)
+        if wahl == _AUTHOR_LOCAL_9B:
+            return 6
+        if wahl == _AUTHOR_LOCAL_27B:
+            return 5
+        return 5 if cls._total_vram_gb() >= _AUTHOR_27B_MIN_VRAM_GB else 6
+
+    @staticmethod
+    def _author_local_quantization(enhancer_id):
+        return "gguf_ptq1" if int(enhancer_id or 0) == 5 else "gguf"
+
+    @classmethod
+    def _author_api_payload(cls, user_message):
+        """Request-Body inkl. Parameter; (payload, fehler)."""
+        base, model, _key = cls._author_api_config()
+        if not base:
+            return None, "**API not configured:** set the base URL under *Author API settings*."
+        if not model:
+            return None, "**API not configured:** set the model name under *Author API settings*."
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _AUTHOR_INSTRUCTIONS},
+                {"role": "user", "content": user_message},
+            ],
+        }
+        max_tokens = cls._author_max_tokens()
+        if max_tokens > 0:
+            payload["max_tokens"] = max_tokens
+        payload["temperature"] = cls._author_temperature()
+        effort = cls._author_reasoning()
+        if effort:
+            payload["reasoning_effort"] = effort
+        extra, fehler = cls._parse_extra_body(cls._author_extra_body())
+        if fehler:
+            return None, f"**{fehler}**"
+        for key, value in extra.items():
+            if key not in ("model", "messages"):
+                payload[key] = value
+        # Diese beiden bleiben immer unter Kontrolle des Plugins.
+        payload["model"] = model
+        payload["messages"] = [
+            {"role": "system", "content": _AUTHOR_INSTRUCTIONS},
+            {"role": "user", "content": user_message},
+        ]
+        return payload, None
+
+    @staticmethod
+    def _local_probe_targets():
+        """Loopback und LAN-IP, Ports von Ollama und LM Studio."""
+        hosts = ["127.0.0.1", "localhost"]
+        try:
+            import socket
+
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect(("8.8.8.8", 80))
+            lan = probe.getsockname()[0]
+            probe.close()
+            if lan and lan not in hosts:
+                hosts.append(lan)
+        except Exception:  # noqa: BLE001
+            pass
+        targets = []
+        for host in hosts:
+            for port, provider in ((11434, "Ollama"), (1234, "LM Studio")):
+                targets.append((f"http://{host}:{port}/v1", provider))
+        return targets
+
+    @classmethod
+    def _probe_local_servers(cls, urls=None):
+        """Laufende lokale OpenAI-Server finden: Provider, URL, Modelle."""
+        if urls is None:
+            targets = cls._local_probe_targets()
+        else:
+            targets = []
+            for entry in urls:
+                if isinstance(entry, (tuple, list)) and len(entry) == 2:
+                    targets.append((str(entry[0]), str(entry[1])))
+                else:
+                    base = str(entry)
+                    provider = "Ollama" if ":11434" in base else (
+                        "LM Studio" if ":1234" in base else "Custom"
+                    )
+                    targets.append((base, provider))
+        gefunden = []
+        seen = set()
+        for base, provider in targets:
+            base = str(base or "").rstrip("/")
+            if not base or base in seen:
+                continue
+            seen.add(base)
+            url = base + ("/models" if base.endswith("/v1") else "/v1/models")
+            try:
+                request = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(request, timeout=1.2) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            models = []
+            if isinstance(data, dict):
+                for entry in data.get("data") or []:
+                    if isinstance(entry, dict) and entry.get("id"):
+                        models.append(str(entry["id"]))
+            if models:
+                gefunden.append(
+                    {"provider": provider, "base_url": base, "models": sorted(set(models))}
+                )
+        return gefunden
+
+    @classmethod
     def _author_provider(cls, value=None):
         config = _main("server_config") or {}
         config = config if isinstance(config, dict) else {}
@@ -1341,6 +1549,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             config[_AUTHOR_SOURCE_KEY] = source
         if provider in _AUTHOR_PROVIDERS:
             config[_AUTHOR_PROVIDER_KEY] = provider
+
+    @classmethod
+    def _save_author_params(cls, max_tokens, temperature, reasoning, extra, local_model=None):
+        config = _main("server_config")
+        if not isinstance(config, dict):
+            return
+        config[_AUTHOR_MAX_TOKENS_KEY] = cls._author_max_tokens(max_tokens)
+        config[_AUTHOR_TEMPERATURE_KEY] = cls._author_temperature(temperature)
+        effort = str(reasoning or "").strip().lower()
+        config[_AUTHOR_REASONING_KEY] = effort if effort in _AUTHOR_REASONING_LEVELS else ""
+        config[_AUTHOR_EXTRA_BODY_KEY] = str(extra or "").strip()
+        if local_model is not None:
+            config[_AUTHOR_LOCAL_MODEL_KEY] = cls._author_local_model(local_model)
 
     @classmethod
     def _list_api_models(cls, base_url, api_key=""):
@@ -2812,22 +3033,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return cfg
 
     def _author_with_api(self, user_message):
-        base, model, api_key = self._author_api_config()
-        if not base:
-            return None, "**API not configured:** set the base URL under *Author API settings*."
-        if not model:
-            return None, "**API not configured:** set the model name under *Author API settings*."
+        base, _model, api_key = self._author_api_config()
+        payload, fehler = self._author_api_payload(user_message)
+        if fehler:
+            return None, fehler
         url = base.rstrip("/")
         if not url.endswith("/chat/completions"):
             url += "/chat/completions" if url.endswith("/v1") else "/v1/chat/completions"
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": _AUTHOR_INSTRUCTIONS},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": 0.4,
-        }
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -2856,12 +3068,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return (text, None) if text else (None, "The API returned an empty answer.")
 
     def _author_with_local(self, state, model_type, user_message, progress):
-        if not self._local_enhancer_ready():
-            return None, (
-                "**No local enhancer model configured.** Set *Configuration → "
-                "Prompt Enhancer / Deepy → Prompt Enhancer / Deepy LLM Engine* "
-                "to a local Qwen model first."
-            )
         ensure_loaded = _main("ensure_prompt_enhancer_loaded")
         process = _main("process_prompt_enhancer")
         unload_runtime = _main("unload_prompt_enhancer_runtime")
@@ -2891,15 +3097,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         llm_section = config.get("llm_engines")
         previous_enhancer = config.get("enhancer_enabled")
         previous_quant = config.get("prompt_enhancer_quantization")
+        target_id = self._author_local_enhancer_id()
+        target_quant = self._author_local_quantization(target_id)
         swapped = False
-        if int(previous_enhancer or 0) != 5 or str(previous_quant or "") != "gguf_ptq1":
-            config["enhancer_enabled"] = 5
-            config["prompt_enhancer_quantization"] = "gguf_ptq1"
+        if int(previous_enhancer or 0) != target_id or str(previous_quant or "") != target_quant:
+            config["enhancer_enabled"] = target_id
+            config["prompt_enhancer_quantization"] = target_quant
             swapped = True
             reset = _main("reset_prompt_enhancer")
             if callable(reset):
                 reset()
-        local_engine = self._local_engine_name()
+        local_engine = engine_from_legacy_enhancer(target_id)
         previous_engine = None
         flipped = False
         if isinstance(llm_section, dict) and llm_section.get("deepy") != local_engine:
@@ -4003,13 +4211,49 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         self._max_words_field,
                     ],
                 )
+                with gr.Accordion("Model guidelines (override)", open=False):
+                    gr.HTML(
+                        "<div class='le-hint'>Empty = the guidelines WanGP "
+                        "ships for the selected model. This is the only "
+                        "guidelines field - not a second system prompt.</div>"
+                    )
+                    guidelines_field = gr.Textbox(
+                        value="",
+                        show_label=False,
+                        lines=5,
+                        placeholder=(
+                            "Empty = use the guidelines WanGP ships for the "
+                            "selected model."
+                        ),
+                    )
+                    with gr.Row(elem_classes=["le-row", "le-right"]):
+                        guidelines_load = gr.Button(
+                            "Load prompt guidelines",
+                            size="sm",
+                            scale=0,
+                            min_width=180,
+                        )
                 with gr.Row(elem_classes=["le-row", "le-enhancer-row"]) as enhancer_row:
                     author_source = gr.Dropdown(
-                        choices=[_AUTHOR_SOURCE_LOCAL, _AUTHOR_SOURCE_API],
+                        choices=[
+                            ("WanGP local", _AUTHOR_SOURCE_LOCAL),
+                            ("OpenAI-compatible API", _AUTHOR_SOURCE_API),
+                        ],
                         value=self._author_source(),
                         label="Enhancer",
                         scale=2,
                         min_width=180,
+                    )
+                    local_model = gr.Dropdown(
+                        choices=[
+                            (label, value)
+                            for value, label in _AUTHOR_LOCAL_MODELS.items()
+                        ],
+                        value=self._author_local_model(),
+                        label="Local model",
+                        scale=2,
+                        min_width=180,
+                        visible=self._author_source() == _AUTHOR_SOURCE_LOCAL,
                     )
                     api_model = gr.Dropdown(
                         choices=[],
@@ -4032,25 +4276,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             size="sm",
                         )
                 self._flatten_row(
-                    enhancer_row, [author_source, api_model, action_column]
+                    enhancer_row,
+                    [author_source, local_model, api_model, action_column],
                 )
-                with gr.Accordion("Guidelines (optional)", open=False):
-                    guidelines_field = gr.Textbox(
-                        value="",
-                        show_label=False,
-                        lines=5,
-                        placeholder=(
-                            "Empty = use the guidelines WanGP ships for the "
-                            "selected model."
-                        ),
-                    )
-                    with gr.Row(elem_classes=["le-row", "le-right"]):
-                        guidelines_load = gr.Button(
-                            "Load prompt guidelines",
-                            size="sm",
-                            scale=0,
-                            min_width=180,
-                        )
 
                 with gr.Group(visible=False) as author_api_group:
                     gr.HTML(
@@ -4078,6 +4306,45 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             scale=3,
                         )
                     with gr.Row(elem_classes=["le-row"]):
+                        api_max_tokens = gr.Number(
+                            label="Max answer tokens",
+                            value=self._author_max_tokens(),
+                            precision=0,
+                            minimum=0,
+                            maximum=32768,
+                            step=128,
+                            scale=1,
+                        )
+                        api_temperature = gr.Number(
+                            label="Temperature",
+                            value=self._author_temperature(),
+                            minimum=0,
+                            maximum=2,
+                            step=0.05,
+                            scale=1,
+                        )
+                        api_reasoning = gr.Dropdown(
+                            choices=[
+                                ("Default", ""),
+                                ("low", "low"),
+                                ("medium", "medium"),
+                                ("high", "high"),
+                            ],
+                            value=self._author_reasoning(),
+                            label="Reasoning effort",
+                            scale=1,
+                        )
+                    api_extra = gr.Textbox(
+                        label="Extra body (JSON, optional)",
+                        value=self._author_extra_body(),
+                        lines=3,
+                        placeholder='{"max_thinking_tokens": 4096}',
+                        info=(
+                            "Merged into the request body. A separate thinking "
+                            "budget is provider-specific - use this field."
+                        ),
+                    )
+                    with gr.Row(elem_classes=["le-row"]):
                         api_remember = gr.Checkbox(
                             label="Remember API key",
                             value=bool(
@@ -4086,6 +4353,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                                 )
                             ),
                             scale=0,
+                        )
+                        api_detect = gr.Button(
+                            "Detect", size="sm",
+                            scale=0, min_width=90,
                         )
                         api_test = gr.Button(
                             "Test connection", size="sm",
@@ -4486,12 +4757,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         def prompt_erzeugen(
             state_value, model_type, description, text, guidelines, source,
-            provider, base, model, key, remember, progress=gr.Progress(),
+            provider, base, model, key, remember, max_tokens, temperature,
+            reasoning, extra, local_model, progress=gr.Progress(),
         ):
             source = str(source or "").strip()
             self._save_author_api(
                 base, model, key, source=source, provider=provider,
                 remember=bool(remember),
+            )
+            self._save_author_params(
+                max_tokens, temperature, reasoning, extra, local_model
             )
             result, fehler = self.author_system_prompt(
                 state_value, model_type, description, text, source,
@@ -4506,7 +4781,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             inputs=[
                 state, prompt_model, description_field, template_text,
                 guidelines_field, author_source, author_provider, api_base,
-                api_model, api_key, api_remember,
+                api_model, api_key, api_remember, api_max_tokens,
+                api_temperature, api_reasoning, api_extra, local_model,
             ],
             outputs=[template_text, template_status],
             show_progress="full",
@@ -4518,12 +4794,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             ist_api = str(source or "").strip() == _AUTHOR_SOURCE_API
             if ist_api and not base:
                 return (
+                    gr.update(visible=False),
                     gr.update(visible=True),
                     gr.update(visible=True),
                     gr.update(visible=False),
                     gr.update(value=self._author_base_for_provider(provider)),
                 )
             return (
+                gr.update(visible=not ist_api),
                 gr.update(visible=ist_api),
                 gr.update(visible=ist_api),
                 gr.update(visible=False),
@@ -4533,7 +4811,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         author_source.change(
             fn=source_wechsel,
             inputs=[author_source, author_provider],
-            outputs=[api_model, api_configure, author_api_group, api_base],
+            outputs=[
+                local_model, api_model, api_configure, author_api_group,
+                api_base,
+            ],
             show_progress="hidden",
         )
 
@@ -4585,6 +4866,33 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 author_source,
             ],
             outputs=[api_model, api_status],
+            show_progress="hidden",
+        )
+
+        def api_erkennen():
+            treffer = self._probe_local_servers()
+            if not treffer:
+                return (
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                    "**No local server found.** Tried Ollama (11434) and "
+                    "LM Studio (1234) on loopback and LAN.",
+                )
+            erster = treffer[0]
+            modelle = erster["models"]
+            return (
+                gr.update(value=erster["provider"]),
+                gr.update(value=erster["base_url"]),
+                gr.update(choices=modelle, value=modelle[0]),
+                f"**Found {len(treffer)} server(s):** {erster['provider']} at "
+                f"`{erster['base_url']}` with {len(modelle)} model(s).",
+            )
+
+        api_detect.click(
+            fn=api_erkennen,
+            inputs=None,
+            outputs=[author_provider, api_base, api_model, api_status],
             show_progress="hidden",
         )
 

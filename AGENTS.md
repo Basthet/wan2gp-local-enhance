@@ -47,11 +47,12 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   `Saved prompt` + `Folder` + `↻` + `Save`; `System prompt (result,
   editable)`; `A brief description of the intent`; Abschnitt „In case you
   want to empower another AI model to enhance the system prompt:" mit
-  `Model`/Min/Max, dann **Enhancer** (`Enhancer`, ggf. `API model`, rechts
-  `Configure` über `Generate`), **Guidelines (optional)**
-  (mit `Load prompt guidelines`), der große Ergebnis-Editor, Status +
-  `Save as`. **Import prompts** ist aufgeklappt (`Load .txt` = eine
-  Datei, `Import folder` = alle `.txt` eines Ordners).
+  `Model`/Min/Max, **`Model guidelines (override)`** (das einzige
+  Guidelines-Feld, `Load prompt guidelines`), dann **Enhancer**
+  (`Enhancer`, `Local model` bzw. `API model`, rechts `Configure` über
+  `Generate`), der große Ergebnis-Editor, Status + `Save as`.
+  **Import prompts** ist aufgeklappt (`Load .txt` = eine Datei,
+  `Import folder` = alle `.txt` eines Ordners).
   Wählt man `OpenAI-compatible API`, erscheint nur `API model` + `Configure`;
   die Verbindung (`Provider` Ollama/LM Studio/OpenAI/Custom, `Base URL`,
   `API key`, `Remember API key`, `Test connection`) öffnet der Knopf.
@@ -189,6 +190,13 @@ neu starten.
   **Import prompts** aufgeklappt, `Save as` schlägt
   `_next_free_prompt_name()` vor (`Charactersheet 2`) statt den bestehenden
   Eintrag zu überschreiben
+- **Autor-Parameter:** `Max answer tokens`, `Temperature`,
+  `Reasoning effort` und `Extra body` landen im API-Payload
+  (`_author_api_payload`); `Local model` wählt 9B/27B nach VRAM
+  (`_author_local_enhancer_id`, Schwelle 16 GB), `Detect` findet lokale
+  Server auf Loopback und LAN. `Guidelines (optional)` heißt jetzt
+  `Model guidelines (override)` und steht beim Zielmodell, nicht an der
+  API-Verbindung.
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
@@ -197,13 +205,16 @@ neu starten.
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
   `photograf`; `default` = kein Override), die Karte **System Prompts** mit
   `Folder` + `Reload`, Werkzeugzeile (`Entry` / `Model` / Min / Max),
-  Beschreibungsfeld, Zeile **Enhancer** (`Enhancer`, `API model`,
-  `Configure` über `Generate`), `Guidelines (optional)` (mit
-  `Load prompt guidelines`), Ergebnis-Editor und Status + `Save as`
+  Beschreibungsfeld, `Model guidelines (override)` (mit
+  `Load prompt guidelines`), Zeile **Enhancer** (`Enhancer`,
+  `Local model` bzw. `API model`, `Configure` über `Generate`),
+  Ergebnis-Editor und Status + `Save as`
   (öffnet den Namensdialog), keine `gr.Form`-Wrapper —, das Accordion
   **Import prompts** und bei `OpenAI-compatible API` die
   Verbindungsgruppe (`Provider` / `Base URL` / `API key` /
-  `Remember API key` / `Test connection`), darunter die Zeile zum aktuellen
+  `Remember API key` / `Detect` / `Test connection`, `Max answer tokens`,
+  `Temperature`, `Reasoning effort`, `Extra body (JSON, optional)`),
+  darunter die Zeile zum aktuellen
   Modell (live, beim Tab-Wechsel neu), der Modell-Check (Klick auf
   *Check models* füllt Status und Liste; ein alter Zwischenspeicher zeigt
   vorher den Ersatztext statt einer Textwand), und der Vision-Lauf aus
@@ -410,9 +421,9 @@ neu starten.
   Die Karte ist die einzige Pflegestelle: `Saved prompt` + `Folder` + `↻` +
   `Save` (Enter speichert ebenfalls), `System prompt (result, editable)`,
   `A brief description of the intent`, Abschnitt „In case you want to empower
-  another AI model…" mit `Model`/Min/Max und **Enhancer** (`Enhancer`, ggf.
-  `API model`, rechts `Configure` über `Generate`), `Guidelines (optional)`
-  mit `Load prompt guidelines`,
+  another AI model…" mit `Model`/Min/Max, `Model guidelines (override)`
+  mit `Load prompt guidelines`, dann **Enhancer** (`Enhancer`,
+  `Local model` bzw. `API model`, rechts `Configure` über `Generate`),
   Ergebnis-Editor, Status + `Save as`. Importe im aufgeklappten Accordion
   **Import prompts** (`Load .txt` = eine Datei, `Import folder` =
   Verzeichnis-Upload aller `.txt`).
@@ -434,23 +445,33 @@ neu starten.
   `Save as` öffnet ein Namensfeld (vorbefüllt), erst `Save` im Dialog
   schreibt `.txt` + Sidecar und aktualisiert beide Dropdowns; `Cancel`
   blendet es aus.
-  **Autor:** Das Feld **A brief description of the intent**
-  beschreibt das gewünschte Ergebnis; `Enhancer` = `Local 27B` oder
-  `OpenAI-compatible API`, `Generate` schreibt daraus den System-Prompt.
-  Lokal läuft derselbe Engine-Swap wie `enhance()` (27B, `deepy` lokal,
-  `_PromptInstructionOverride`, Modus `T`), nur mit
-  `_AUTHOR_INSTRUCTIONS` als System-Anweisung; die API nutzt
-  `/v1/chat/completions` mit Base URL, Modell und Key aus
+  **Autor:** Das Feld **A brief description of the intent** beschreibt das
+  gewünschte Ergebnis; `Enhancer` = **`WanGP local`** (gespeicherter Wert
+  bleibt `Local 27B`) oder `OpenAI-compatible API`, `Generate` schreibt
+  daraus den System-Prompt. Lokal wählt **`Local model`** zwischen
+  `Auto (VRAM)`, `Qwen3.8-9B` und `Qwen3.8-27B`: Auto nimmt ab **16 GB**
+  VRAM den 27B, sonst den 9B (IDs 6/5, Quantisierung `gguf`/`gguf_ptq1`,
+  Engine über `engine_from_legacy_enhancer()`); der Swap von
+  `enhancer_enabled`/`prompt_enhancer_quantization` wird nach dem Lauf
+  restauriert. `_local_enhancer_ready()` gilt für den Autor **nicht** mehr.
+  Die API nutzt `/v1/chat/completions` mit Base URL, Modell und Key aus
   `local_enhance_author_*`. Bei `OpenAI-compatible API` erscheinen
-  `API model` + `Configure` in der Zeile **Enhancer**;
-  `Configure` öffnet `author_api_group`, `Done` schließt sie. `Provider` setzt die Base URL vor
+  `API model` + `Configure`; `Configure` öffnet `author_api_group`,
+  `Done` schließt sie. `Provider` setzt die Base URL vor
   (`Ollama` `http://localhost:11434/v1`, `LM Studio`
   `http://127.0.0.1:1234/v1`, `OpenAI` `https://api.openai.com/v1`,
-  `Custom` leer). `Test connection` ruft `GET <base>/models` (bzw.
-  `/v1/models`) und füllt `API model`. **API-Key:** nur mit
+  `Custom` leer). **`Detect`** prüft Loopback **und** LAN-IP auf 11434/1234
+  (`/v1/models`, 1,2 s) und setzt Provider, Base URL und Modellliste;
+  `Test connection` prüft eine manuelle URL. **Antwort-Parameter** im Dialog:
+  `Max answer tokens` (`max_tokens`, 0 = Provider-Default),
+  `Temperature`, `Reasoning effort` (`reasoning_effort`, nur wenn gesetzt)
+  und `Extra body (JSON)` für providerspezifische Felder (z. B.
+  `{"max_thinking_tokens": 4096}`). Ein separates Denk-Budget ist nicht
+  standardisiert; `max_tokens` begrenzt die Gesamtausgabe inklusive Denken.
+  `model`/`messages` sind nach dem Merge geschützt. **API-Key:** nur mit
   `Remember API key` in `local_enhance_author_api_key`; ohne Haken bleibt er
-  in `_AUTHOR_KEY_MEMORY` (nur Prozess). `Generate` speichert die
-  Verbindungsfelder vor dem Aufruf. Das Ergebnis landet **nur im Editor**, nie
+  in `_AUTHOR_KEY_MEMORY` (nur Prozess). `Generate` speichert Verbindung und
+  Parameter vor dem Aufruf. Das Ergebnis landet **nur im Editor**, nie
   automatisch gespeichert.
   `_migrate_library()` läuft nur in `setup_ui()` (nie in dev-Skripten),
   merkt sich `local_enhance_prompt_migrated` in `server_config` und schreibt
@@ -476,8 +497,13 @@ neu starten.
   `local_enhance_template` (Default `default`). Dazu `local_enhance_author_source`
   (`Local 27B` / `OpenAI-compatible API`), `local_enhance_author_base_url`,
   `local_enhance_author_model`, `local_enhance_author_api_key` (nur mit
-  `Remember API key`), `local_enhance_author_remember_key` und
-  `local_enhance_author_provider` (Ollama/LM Studio/OpenAI/Custom).
+  `Remember API key`), `local_enhance_author_remember_key`,
+  `local_enhance_author_provider` (Ollama/LM Studio/OpenAI/Custom),
+  `local_enhance_author_max_tokens` (Default 2048, 0 = Provider-Default),
+  `local_enhance_author_temperature` (Default 0.4),
+  `local_enhance_author_reasoning_effort` (leer/low/medium/high),
+  `local_enhance_author_extra_body` (JSON-Objekt als Text) und
+  `local_enhance_author_local_model` (auto/qwen38_9b/qwen38_27b).
 - Ist Min > Max, werden beide getauscht.
 
 ## Prüfen
@@ -561,7 +587,9 @@ neu starten.
   `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten,
   `Name (max. 64 chars)` (Save-Dialog), `Saved prompt`/`Model`,
   `Enhancer`, `A brief description of the intent`,
-  `Guidelines (optional)`, `API model`, `Remember API key`,
+  `Model guidelines (override)`, `Local model`, `Max answer tokens`,
+  `Temperature`, `Reasoning effort`, `Extra body (JSON, optional)`,
+  `API model`, `Remember API key`,
   Prompt-Textfeld, Wortgrenzen, Model check, Prompt workshop, keine doppelte
   `elem_id`, Bypass-LoRA-Nachtrag, `Load prompt guidelines` und `Generate`
   als Knöpfe. Die Ordnerzeile

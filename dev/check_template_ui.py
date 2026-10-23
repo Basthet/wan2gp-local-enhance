@@ -94,8 +94,12 @@ assert "System prompt (result, editable)" in labels, "Prompt-Textfeld fehlt"
 assert "Saved prompt" in labels and "Model" in labels, "Prompt-/Modell-Auswahl fehlt"
 assert "Enhancer" in labels, "Enhancer-Auswahl fehlt"
 assert "A brief description of the intent" in labels, "Beschreibungsfeld fehlt"
-assert "Guidelines (optional)" in labels, "Guidelines-Accordion fehlt"
+assert "Model guidelines (override)" in labels, "Guidelines-Accordion fehlt"
+assert "Local model" in labels, "Local-Model-Auswahl fehlt"
+assert "Max answer tokens" in labels and "Temperature" in labels, "API-Parameter fehlen"
+assert "Reasoning effort" in labels and "Extra body (JSON, optional)" in labels, "API-Parameter fehlen"
 assert "Provider" in labels, "Provider-Auswahl fehlt"
+assert "Detect" in button_texte, "Detect fehlt"
 assert "Test connection" in button_texte, "API-Test fehlt"
 assert "Load prompt guidelines" in button_texte, "Guidelines-Button fehlt"
 assert "Generate" in button_texte, "Generate-Button fehlt"
@@ -297,7 +301,75 @@ assert p._author_base_for_provider("LM Studio").endswith("/v1")
 assert p._author_base_for_provider("OpenAI").startswith("https://")
 assert p._author_base_for_provider("Custom") == ""
 assert p._author_base_for_provider("Unbekannt") == ""
-print("OK: Sidecar, Modellkatalog, Guidelines, Autoren-Nachricht, API-Config, Provider.")
+# API-Payload: Parameter, Extra-Body, geschuetzte Schluessel.
+main.server_config["local_enhance_author_base_url"] = "http://localhost:1234/v1"
+main.server_config["local_enhance_author_model"] = "m"
+main.server_config["local_enhance_author_max_tokens"] = 1234
+main.server_config["local_enhance_author_temperature"] = 0.2
+main.server_config["local_enhance_author_reasoning_effort"] = "high"
+main.server_config["local_enhance_author_extra_body"] = (
+    '{"max_thinking_tokens": 4096, "model": "evil", "messages": []}'
+)
+payload, fehler = p._author_api_payload("hello")
+assert fehler is None, fehler
+assert payload["max_tokens"] == 1234, payload
+assert payload["temperature"] == 0.2, payload
+assert payload["reasoning_effort"] == "high", payload
+assert payload["max_thinking_tokens"] == 4096, payload
+assert payload["model"] == "m", payload
+assert payload["messages"][1]["content"] == "hello", payload
+
+main.server_config["local_enhance_author_max_tokens"] = 0
+main.server_config["local_enhance_author_extra_body"] = '{"temperature": 0.9}'
+payload, fehler = p._author_api_payload("x")
+assert fehler is None and "max_tokens" not in payload, payload
+assert payload["temperature"] == 0.9, payload
+
+main.server_config["local_enhance_author_extra_body"] = "{kaputt"
+_, fehler = p._author_api_payload("x")
+assert fehler and "not valid JSON" in fehler, fehler
+
+# Lokales Modell: 8 GB -> 9B (ID 6/gguf), 24 GB -> 27B (ID 5/gguf_ptq1).
+original_vram = plugin.LocalEnhancePlugin._total_vram_gb
+plugin.LocalEnhancePlugin._total_vram_gb = staticmethod(lambda: 8.0)
+assert p._author_local_enhancer_id("auto") == 6
+assert p._author_local_quantization(6) == "gguf"
+plugin.LocalEnhancePlugin._total_vram_gb = staticmethod(lambda: 24.0)
+assert p._author_local_enhancer_id("auto") == 5
+assert p._author_local_quantization(5) == "gguf_ptq1"
+assert p._author_local_enhancer_id("qwen38_9b") == 6
+assert p._author_local_enhancer_id("qwen38_27b") == 5
+plugin.LocalEnhancePlugin._total_vram_gb = original_vram
+
+# Lokale Server-Erkennung gegen einen echten HTTP-Server, tote URL daneben.
+import http.server, json as _json, threading
+class _Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.endswith("/models"):
+            body = _json.dumps({"data": [{"id": "local-a"}, {"id": "local-b"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+port = server.server_address[1]
+threading.Thread(target=server.serve_forever, daemon=True).start()
+try:
+    treffer = p._probe_local_servers([
+        (f"http://127.0.0.1:{port}/v1", "Test"),
+        ("http://127.0.0.1:9/v1", "Dead"),
+    ])
+finally:
+    server.shutdown()
+assert len(treffer) == 1, treffer
+assert treffer[0]["provider"] == "Test", treffer
+assert treffer[0]["models"] == ["local-a", "local-b"], treffer
+print("OK: Sidecar, Modellkatalog, Guidelines, Autoren-Nachricht, API-Config, Provider, API-Payload, lokales Modell, Erkennung.")
 
 
 
