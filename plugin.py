@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.17"
+_UI_BUILD = "build 2026-10-23.18"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -299,7 +299,7 @@ _UI_CSS = (
     ".le-hint{font-size:0.85em;opacity:0.72;margin:0 0 8px 0;line-height:1.35;}"
     ".le-info{cursor:help;opacity:0.65;font-size:1.05em;align-self:center;}"
     ".le-api-actions{align-items:center !important;}"
-    ".le-api-actions button{min-width:0 !important;}"
+    ".le-api-actions button{min-width:90px !important;}"
     ".le-intro{font-size:0.9em;line-height:1.45;opacity:0.85;margin:0 0 10px 0;}"
     ".le-build{float:right;font-size:0.8em;opacity:0.5;margin-left:8px;}"
     ".le-section{font-size:0.9em;font-weight:600;opacity:0.9;"
