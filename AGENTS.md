@@ -45,10 +45,10 @@ Drei Regler, alle gelten für **beide** Knöpfe:
   Die Tab-Karte beginnt mit zwei Sätzen, was das Plugin tut (keine
   `System Prompts`-Überschrift, rechts Build-Stempel). Reihenfolge:
   `Saved prompt` + `Folder` + `↻` + `Save`; `System prompt (result,
-  editable)`; `A brief description of the intent`; Abschnitt „In case you
+  editable)`; `What should the final prompt look like?`; Abschnitt „In case you
   want to empower another AI model to enhance the system prompt:" mit
-  `Model`/Min/Max, **`Model guidelines (override)`** (das einzige
-  Guidelines-Feld, `Load prompt guidelines`), dann **Enhancer**
+  `Model`/Min/Max, **`Model guidelines (optional)`** (das einzige
+  Guidelines-Feld, `Load WanGP default`), dann **Enhancer**
   (`Enhancer`, `Local model` bzw. `API model`, rechts `Configure` über
   `Generate`), der große Ergebnis-Editor, Status + `Save as`.
   **Import prompts** ist aufgeklappt (`Load .txt` = eine Datei,
@@ -177,14 +177,14 @@ neu starten.
   `API model` + `Configure` in der Hauptansicht, Verbindung nur im
   Dialog; API-Key nur mit `Remember API key` gespeichert
 - `88f150b` — zweispaltige Karte: links Beschreibung + editierbares
-  Guidelines-Feld mit `Load prompt guidelines` (lädt die WanGP-Anweisungen,
+  Guidelines-Feld mit `Load WanGP default` (lädt die WanGP-Anweisungen,
   eigene Eingabe gewinnt), rechts die Box **AI to generate** mit
   `Local / provider`, `API model`, `Configure`, `Generate`
   (seit `2d81151` wieder ersetzt)
 - `2d81151` — Karte senkrecht: `Folder` wieder sichtbar, Enhancer-Zeile
   (`Enhancer`, `API model`, `Configure`, `Generate`) direkt unter der
   Beschreibung, `AI to generate` entfernt; Label
-  `A brief description of the intent`; Defaults 100/350
+  `What should the final prompt look like?`; Defaults 100/350
   plus einmalige Migration von 0/150
 - `00de323` — `Configure` über `Generate` gestapelt (150px-Spalte),
   **Import prompts** aufgeklappt, `Save as` schlägt
@@ -194,8 +194,7 @@ neu starten.
   `Reasoning effort` und `Extra body` landen im API-Payload
   (`_author_api_payload`); `Local model` wählt 9B/27B nach VRAM
   (`_author_local_enhancer_id`, Schwelle 16 GB), `Detect` findet lokale
-  Server auf Loopback und LAN. `Guidelines (optional)` heißt jetzt
-  `Model guidelines (override)` und steht beim Zielmodell, nicht an der
+  Server auf Loopback und LAN. `Model guidelines (optional)` und steht beim Zielmodell, nicht an der
   API-Verbindung.
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
@@ -205,8 +204,8 @@ neu starten.
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
   `photograf`; `default` = kein Override), die Karte **System Prompts** mit
   `Folder` + `Reload`, Werkzeugzeile (`Entry` / `Model` / Min / Max),
-  Beschreibungsfeld, `Model guidelines (override)` (mit
-  `Load prompt guidelines`), Zeile **Enhancer** (`Enhancer`,
+  Beschreibungsfeld, `Model guidelines (optional)` (mit
+  `Load WanGP default`), Zeile **Enhancer** (`Enhancer`,
   `Local model` bzw. `API model`, `Configure` über `Generate`),
   Ergebnis-Editor und Status + `Save as`
   (öffnet den Namensdialog), keine `gr.Form`-Wrapper —, das Accordion
@@ -420,9 +419,8 @@ neu starten.
   `_list_prompt_names()` + Altbestand.
   Die Karte ist die einzige Pflegestelle: `Saved prompt` + `Folder` + `↻` +
   `Save` (Enter speichert ebenfalls), `System prompt (result, editable)`,
-  `A brief description of the intent`, Abschnitt „In case you want to empower
-  another AI model…" mit `Model`/Min/Max, `Model guidelines (override)`
-  mit `Load prompt guidelines`, dann **Enhancer** (`Enhancer`,
+  `What should the final prompt look like?`, Abschnitt `Target model` mit `Model`/Min/Max, `Model guidelines (optional)`
+  mit `Load WanGP default`, dann **Enhancer** (`Enhancer`,
   `Local model` bzw. `API model`, rechts `Configure` über `Generate`),
   Ergebnis-Editor, Status + `Save as`. Importe im aufgeklappten Accordion
   **Import prompts** (`Load .txt` = eine Datei, `Import folder` =
@@ -431,7 +429,7 @@ neu starten.
   `_next_free_prompt_name()` (`Charactersheet 2`, `… 3`, …) - der alte
   Eintrag bleibt also unberührt, ein neuer Stand wird zur neuen Datei. Wer
   denselben Namen eintippt, überschreibt bewusst.
-  `Load prompt guidelines` füllt das Feld aus `_model_guidelines()`; ein
+  `Load WanGP default` füllt das Feld aus `_model_guidelines()`; ein
   nicht-leeres Feld **gewinnt** gegen die WanGP-Anweisungen
   (`author_system_prompt(..., guidelines=...)`), leer = WanGP. Ein
   Modellwechsel leert das Feld wieder.
@@ -586,12 +584,12 @@ neu starten.
   (WanGP-venv, aus dem WanGP-Ordner) baut `create_inline_button()` +
   `create_ui()` in einem `gr.Blocks` nach und prüft: **4** Karten,
   `Name (max. 64 chars)` (Save-Dialog), `Saved prompt`/`Model`,
-  `Enhancer`, `A brief description of the intent`,
-  `Model guidelines (override)`, `Local model`, `Max answer tokens`,
+  `Enhancer`, `What should the final prompt look like?`,
+  `Model guidelines (optional)`, `Local model`, `Max answer tokens`,
   `Temperature`, `Reasoning effort`, `Extra body (JSON, optional)`,
   `API model`, `Remember API key`,
   Prompt-Textfeld, Wortgrenzen, Model check, Prompt workshop, keine doppelte
-  `elem_id`, Bypass-LoRA-Nachtrag, `Load prompt guidelines` und `Generate`
+  `elem_id`, Bypass-LoRA-Nachtrag, `Load WanGP default` und `Generate`
   als Knöpfe. Die Ordnerzeile
   (`local_enhance_library_row`) muss genau
   `[Dropdown, Textbox, Button, Button]` (`Saved prompt`, `Folder`, `↻`,

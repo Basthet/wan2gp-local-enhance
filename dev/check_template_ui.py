@@ -93,15 +93,18 @@ assert "Name (max. 64 chars)" in labels, "Namensfeld im Save-Dialog fehlt"
 assert "System prompt (result, editable)" in labels, "Prompt-Textfeld fehlt"
 assert "Saved prompt" in labels and "Model" in labels, "Prompt-/Modell-Auswahl fehlt"
 assert "Enhancer" in labels, "Enhancer-Auswahl fehlt"
-assert "A brief description of the intent" in labels, "Beschreibungsfeld fehlt"
-assert "Model guidelines (override)" in labels, "Guidelines-Accordion fehlt"
+assert "What should the final prompt look like?" in labels, "Beschreibungsfeld fehlt"
+assert "Model guidelines (optional)" in labels, "Guidelines-Accordion fehlt"
 assert "Local model" in labels, "Local-Model-Auswahl fehlt"
 assert "Max answer tokens" in labels and "Temperature" in labels, "API-Parameter fehlen"
 assert "Reasoning effort" in labels and "Extra body (JSON, optional)" in labels, "API-Parameter fehlen"
+assert "Max thinking tokens" in labels, "Denk-Budget-Feld fehlt"
+assert any("Local API" in text for text in button_texte), "Local-API-Knopf fehlt"
+assert "Load WanGP default" in button_texte, "Guidelines-Knopf fehlt"
 assert "Provider" in labels, "Provider-Auswahl fehlt"
 assert "Detect" in button_texte, "Detect fehlt"
 assert "Test connection" in button_texte, "API-Test fehlt"
-assert "Load prompt guidelines" in button_texte, "Guidelines-Button fehlt"
+assert "Load WanGP default" in button_texte, "Guidelines-Button fehlt"
 assert "Generate" in button_texte, "Generate-Button fehlt"
 assert "↻" in button_texte, "Reload fehlt"
 assert "Load .txt" in labels and "Import folder" in labels, "Import-Aktionen fehlen"
@@ -307,6 +310,7 @@ main.server_config["local_enhance_author_model"] = "m"
 main.server_config["local_enhance_author_max_tokens"] = 1234
 main.server_config["local_enhance_author_temperature"] = 0.2
 main.server_config["local_enhance_author_reasoning_effort"] = "high"
+main.server_config["local_enhance_author_max_thinking_tokens"] = 4096
 main.server_config["local_enhance_author_extra_body"] = (
     '{"max_thinking_tokens": 4096, "model": "evil", "messages": []}'
 )
@@ -316,6 +320,10 @@ assert payload["max_tokens"] == 1234, payload
 assert payload["temperature"] == 0.2, payload
 assert payload["reasoning_effort"] == "high", payload
 assert payload["max_thinking_tokens"] == 4096, payload
+main.server_config["local_enhance_author_max_thinking_tokens"] = 0
+main.server_config["local_enhance_author_extra_body"] = ""
+payload, fehler = p._author_api_payload("hello")
+assert fehler is None and "max_thinking_tokens" not in payload, payload
 assert payload["model"] == "m", payload
 assert payload["messages"][1]["content"] == "hello", payload
 

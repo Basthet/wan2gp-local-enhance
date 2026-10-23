@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.15"
+_UI_BUILD = "build 2026-10-23.16"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -297,6 +297,9 @@ _UI_CSS = (
     "font-weight:600;font-size:0.95em;letter-spacing:0.02em;"
     "margin:0 0 4px 0;opacity:0.92;}"
     ".le-hint{font-size:0.85em;opacity:0.72;margin:0 0 8px 0;line-height:1.35;}"
+    ".le-info{cursor:help;opacity:0.65;font-size:1.05em;align-self:center;}"
+    ".le-api-actions{align-items:center !important;}"
+    ".le-api-actions button{min-width:0 !important;}"
     ".le-intro{font-size:0.9em;line-height:1.45;opacity:0.85;margin:0 0 10px 0;}"
     ".le-build{float:right;font-size:0.8em;opacity:0.5;margin-left:8px;}"
     ".le-section{font-size:0.9em;font-weight:600;opacity:0.9;"
@@ -381,6 +384,8 @@ _AUTHOR_TEMPERATURE_KEY = "local_enhance_author_temperature"
 _AUTHOR_REASONING_KEY = "local_enhance_author_reasoning_effort"
 _AUTHOR_EXTRA_BODY_KEY = "local_enhance_author_extra_body"
 _AUTHOR_MAX_TOKENS_DEFAULT = 2048
+_AUTHOR_MAX_THINKING_KEY = "local_enhance_author_max_thinking_tokens"
+_AUTHOR_MAX_THINKING_DEFAULT = 0
 _AUTHOR_TEMPERATURE_DEFAULT = 0.4
 _AUTHOR_REASONING_LEVELS = ("low", "medium", "high")
 # Eingebauter WanGP-Autor: 9B passt auf 8 GB, 27B braucht Offload.
@@ -1344,6 +1349,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return _AUTHOR_MAX_TOKENS_DEFAULT
 
     @classmethod
+    def _author_max_thinking(cls, value=None):
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        if value is None:
+            value = config.get(
+                _AUTHOR_MAX_THINKING_KEY, _AUTHOR_MAX_THINKING_DEFAULT
+            )
+        try:
+            return max(0, min(32768, int(float(value or 0))))
+        except (TypeError, ValueError):
+            return _AUTHOR_MAX_THINKING_DEFAULT
+
+    @classmethod
     def _author_temperature(cls, value=None):
         config = _main("server_config") or {}
         config = config if isinstance(config, dict) else {}
@@ -1437,6 +1455,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         max_tokens = cls._author_max_tokens()
         if max_tokens > 0:
             payload["max_tokens"] = max_tokens
+        thinking = cls._author_max_thinking()
+        if thinking > 0:
+            payload["max_thinking_tokens"] = thinking
         payload["temperature"] = cls._author_temperature()
         effort = cls._author_reasoning()
         if effort:
@@ -1551,11 +1572,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             config[_AUTHOR_PROVIDER_KEY] = provider
 
     @classmethod
-    def _save_author_params(cls, max_tokens, temperature, reasoning, extra, local_model=None):
+    def _save_author_params(cls, max_tokens, temperature, reasoning, extra,
+                            local_model=None, max_thinking=None):
         config = _main("server_config")
         if not isinstance(config, dict):
             return
         config[_AUTHOR_MAX_TOKENS_KEY] = cls._author_max_tokens(max_tokens)
+        if max_thinking is not None:
+            config[_AUTHOR_MAX_THINKING_KEY] = cls._author_max_thinking(
+                max_thinking
+            )
         config[_AUTHOR_TEMPERATURE_KEY] = cls._author_temperature(temperature)
         effort = str(reasoning or "").strip().lower()
         config[_AUTHOR_REASONING_KEY] = effort if effort in _AUTHOR_REASONING_LEVELS else ""
@@ -1564,7 +1590,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             config[_AUTHOR_LOCAL_MODEL_KEY] = cls._author_local_model(local_model)
 
     @classmethod
-    def _list_api_models(cls, base_url, api_key=""):
+    def _list_api_models(cls, base_url, api_key="", timeout=15):
         """Modelle des OpenAI-kompatiblen Servers (GET /models)."""
         base = str(base_url or "").strip().rstrip("/")
         if not base:
@@ -1575,7 +1601,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             headers["Authorization"] = f"Bearer {api_key}"
         request = urllib.request.Request(url, headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return [], f"HTTP {exc.code}: {exc.reason}"
@@ -3032,6 +3058,105 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         cfg.setdefault("duration_seconds", settings.get("duration_seconds"))
         return cfg
 
+    def _api_chat(self, system, user, max_tokens=0, temperature=None,
+                  effort="", base=None, model=None):
+        """Ein Chat-Aufruf an den konfigurierten OpenAI-Server.
+
+        Fuer den Autor (System = _AUTHOR_INSTRUCTIONS) und fuer den
+        Local-API-Knopf (System = Enhancer-Anweisungen). Gibt (text, fehler)
+        zurueck; wirft nie.
+        """
+        cfg_base, cfg_model, api_key = self._author_api_config()
+        base = str(base or cfg_base or "").strip()
+        model = str(model or cfg_model or "").strip()
+        if not base:
+            return None, "**API not configured:** set the Base URL under *Configure*."
+        if not model:
+            return None, "**API not configured:** set the model under *Configure*."
+        url = base.rstrip("/")
+        if not url.endswith("/chat/completions"):
+            url += "/chat/completions" if url.endswith("/v1") else "/v1/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": str(system or "")},
+                {"role": "user", "content": str(user or "")},
+            ],
+            "temperature": self._author_temperature() if temperature is None else temperature,
+        }
+        try:
+            tokens = int(max_tokens or 0)
+        except (TypeError, ValueError):
+            tokens = 0
+        if tokens > 0:
+            payload["max_tokens"] = tokens
+        thinking = self._author_max_thinking()
+        if thinking > 0:
+            payload["max_thinking_tokens"] = thinking
+        if effort:
+            payload["reasoning_effort"] = effort
+        extra, fehler = self._parse_extra_body(self._author_extra_body())
+        if fehler:
+            return None, f"**{fehler}**"
+        for key, value in extra.items():
+            if key not in ("model", "messages"):
+                payload[key] = value
+        payload["model"] = model
+        payload["messages"] = [
+            {"role": "system", "content": str(system or "")},
+            {"role": "user", "content": str(user or "")},
+        ]
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", "replace")[:400]
+            except Exception:  # noqa: BLE001
+                detail = ""
+            return None, f"**API error {exc.code}:** {detail or exc.reason}"
+        except Exception as exc:  # noqa: BLE001
+            return None, f"**API request failed:** {type(exc).__name__}: {exc}"
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except Exception:  # noqa: BLE001
+            return None, "**API response has no choices[0].message.content.**"
+        text = str(content or "").strip()
+        return (text, None) if text else (None, "The API returned an empty answer.")
+
+    def _find_local_api(self):
+        """Ersten erreichbaren lokalen OpenAI-Server nehmen und merken."""
+        base, model, key = self._author_api_config()
+        if base:
+            modelle, _fehler = self._list_api_models(base, key, timeout=1.2)
+            if modelle:
+                gewaehlt = model if model in modelle else modelle[0]
+                self._save_author_api(
+                    base, gewaehlt, key, provider=self._author_provider()
+                )
+                return base, gewaehlt
+        treffer = self._probe_local_servers()
+        if not treffer:
+            return None, None
+        erster = treffer[0]
+        modelle = erster["models"]
+        gewaehlt = modelle[0] if modelle else ""
+        if not gewaehlt:
+            return None, None
+        self._save_author_api(
+            erster["base_url"], gewaehlt, "", provider=erster["provider"]
+        )
+        return erster["base_url"], gewaehlt
+
     def _author_with_api(self, user_message):
         base, _model, api_key = self._author_api_config()
         payload, fehler = self._author_api_payload(user_message)
@@ -3616,6 +3741,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "start/end/reference images are read by the vision part of the\n"
                 "model; every other mode stays text-only."
             ),
+            "local_enhance_local_api_btn": (
+                "Local API - enhance through a local OpenAI-compatible server\n"
+                "Uses LM Studio / Ollama from the Enhance Prompt card (Base URL,\n"
+                "API model and the response parameters). No WanGP VRAM.\n"
+                "If no server answers, the button disables itself; press Detect\n"
+                "or Test connection in the card after starting the server.\n"
+                "Text only - images are not sent. Think sends reasoning_effort=high."
+            ),
         }
         return """
 (function () {
@@ -3712,6 +3845,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 local_btn = gr.Button(
                     f"{self._button_label()} \u24d8", size="sm", scale=0,
                     min_width=0, elem_id="local_enhance_local_btn",
+                    elem_classes="btn_centered",
+                )
+                local_api_btn = gr.Button(
+                    "Local API \u24d8", size="sm", scale=0, min_width=0,
+                    elem_id="local_enhance_local_api_btn",
                     elem_classes="btn_centered",
                 )
             # Prompt-Bibliothek als Dropdown: "default" = WanGPs normaler
@@ -3960,6 +4098,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Fuer den Tab-Knopf bereithalten: create_ui() laeuft erst nach dieser
         # Funktion (wgp.py:13628 vor 13976) und verdrahtet dieselben Regler; die
         # beiden Wort-Regler holt es dort mit _attach_word_fields() in den Tab.
+        self._local_api_btn = local_api_btn
         self._think_checkbox = think_checkbox
         self._min_words_field = min_field
         self._max_words_field = max_field
@@ -3989,6 +4128,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             outputs=[prompt_component],
             show_progress="full",
         )
+        local_api_btn.click(
+            fn=self.enhance_inline_local_api,
+            inputs=[self.state, prompt_component] + controls,
+            outputs=[prompt_component, local_api_btn],
+            show_progress="full",
+        )
         # Den eingebauten "Enhance Prompt"-Knopf ausblenden. visible=False allein
         # genuegt nicht: beim Modellwechsel setzt WanGPs modellabhaengiges
         # UI-Update ihn wieder auf sichtbar. Deshalb zusaetzlich eine eigene
@@ -4002,6 +4147,66 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     break
 
         return button_row
+
+    def enhance_inline_local_api(self, state, text, *values):
+        """Local API: Prompt ueber einen lokalen OpenAI-Server verbessern.
+
+        Text-only; Bilder werden nicht gesendet. Vor dem Aufruf wird geprueft,
+        ob der konfigurierte oder ein automatisch gefundener Server antwortet.
+        Bei Fehlschlag wird der Knopf deaktiviert; Detect/Test in der Karte
+        schaltet ihn wieder frei.
+        """
+        _mode_value, values = self._split_mode_input(values)
+        controls, _live_images = self._split_image_inputs(values)
+        think, min_words, max_words = self._read_controls(controls)
+        text = str(text or "").strip()
+        if not text:
+            gr.Warning("Enter a prompt first.")
+            return gr.update(), gr.update()
+        base, model = self._find_local_api()
+        if not base:
+            gr.Warning(
+                "No local API server found. Start LM Studio/Ollama and press "
+                "Detect or Test connection in the Enhance Prompt card."
+            )
+            return gr.update(), gr.update(interactive=False)
+        try:
+            get_state_model_type = _main("get_state_model_type")
+            model_type = get_state_model_type(state) if callable(get_state_model_type) else ""
+        except Exception:  # noqa: BLE001
+            model_type = ""
+        model_def = {}
+        try:
+            get_model_def = _main("get_model_def")
+            if callable(get_model_def) and model_type:
+                model_def = get_model_def(model_type) or {}
+        except Exception:  # noqa: BLE001
+            model_def = {}
+        audio_only = bool((model_def or {}).get("audio_only", False))
+        is_image = False
+        try:
+            get_model_settings = _main("get_model_settings")
+            settings = get_model_settings(state, model_type) if callable(get_model_settings) else {}
+            is_image = int((settings or {}).get("image_mode", 0) or 0) > 0
+        except Exception:  # noqa: BLE001
+            is_image = False
+        instructions = self._fallback_instructions(
+            is_image, audio_only, min_words, max_words
+        )
+        tokens = self._output_token_budget(min_words, max_words)
+        result, fehler = self._api_chat(
+            instructions,
+            text,
+            max_tokens=tokens,
+            effort="high" if think else "",
+            base=base,
+            model=model,
+        )
+        if not result:
+            gr.Warning(str(fehler).replace("**", "").replace("`", ""))
+            return gr.update(), gr.update(interactive=True)
+        gr.Info(f"Local API ({model}): enhanced")
+        return self._with_history(result), gr.update(interactive=True)
 
     def enhance_inline_remote(self, state, text, *controls):
         """Wie enhance_remote(), schreibt das Ergebnis direkt ins Prompfeld."""
@@ -4178,18 +4383,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     lines=12,
                     interactive=True,
                 )
-                description_field = gr.Textbox(
-                    label="A brief description of the intent",
-                    value=entry_meta.get("description", ""),
-                    lines=4,
-                    placeholder=(
-                        "e.g. character sheet, turnaround, 3d render, "
-                        "product shot ..."
-                    ),
-                )
                 gr.HTML(
-                    "<div class='le-section'>In case you want to empower "
-                    "another AI model to enhance the system prompt:</div>"
+                    "<div class='le-section'>Target model</div>"
+                    "<div class='le-hint'>These limits apply when Enhance "
+                    "Prompt runs with this model.</div>"
                 )
                 with gr.Row(
                     elem_classes=["le-row", "le-lib-row"],
@@ -4211,11 +4408,26 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         self._max_words_field,
                     ],
                 )
-                with gr.Accordion("Model guidelines (override)", open=False):
+                gr.HTML(
+                    "<div class='le-section'>Write the system prompt</div>"
+                    "<div class='le-hint'>The AI below turns this brief into "
+                    "the system prompt above.</div>"
+                )
+                description_field = gr.Textbox(
+                    label="What should the final prompt look like?",
+                    value=entry_meta.get("description", ""),
+                    lines=4,
+                    placeholder=(
+                        "Describe the desired final prompt: subject, framing, "
+                        "style, detail level ..."
+                    ),
+                )
+                with gr.Accordion("Model guidelines (optional)", open=False):
                     gr.HTML(
-                        "<div class='le-hint'>Empty = the guidelines WanGP "
-                        "ships for the selected model. This is the only "
-                        "guidelines field - not a second system prompt.</div>"
+                        "<div class='le-hint'>Empty = WanGP's default for the "
+                        "selected model. You can also paste model guidelines "
+                        "from the model's documentation/website; the enhancer "
+                        "below writes a new system prompt from them.</div>"
                     )
                     guidelines_field = gr.Textbox(
                         value="",
@@ -4228,10 +4440,15 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     )
                     with gr.Row(elem_classes=["le-row", "le-right"]):
                         guidelines_load = gr.Button(
-                            "Load prompt guidelines",
+                            "Load WanGP default",
                             size="sm",
                             scale=0,
                             min_width=180,
+                        )
+                        gr.HTML(
+                            "<span class='le-info' title='Loads the "
+                            "model-specific default prompt stored in WanGP for "
+                            "the selected model.'>&#9432;</span>"
                         )
                 with gr.Row(elem_classes=["le-row", "le-enhancer-row"]) as enhancer_row:
                     author_source = gr.Dropdown(
@@ -4274,6 +4491,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             "Generate",
                             variant="primary",
                             size="sm",
+                            interactive=(
+                                self._author_source() == _AUTHOR_SOURCE_LOCAL
+                            ),
                         )
                 self._flatten_row(
                     enhancer_row,
@@ -4334,6 +4554,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             label="Reasoning effort",
                             scale=1,
                         )
+                        api_max_thinking = gr.Number(
+                            label="Max thinking tokens",
+                            value=self._author_max_thinking(),
+                            precision=0,
+                            minimum=0,
+                            maximum=32768,
+                            step=256,
+                            scale=1,
+                            info=(
+                                "Provider-specific (vLLM/SGLang). "
+                                "0 = not sent."
+                            ),
+                        )
                     api_extra = gr.Textbox(
                         label="Extra body (JSON, optional)",
                         value=self._author_extra_body(),
@@ -4344,7 +4577,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             "budget is provider-specific - use this field."
                         ),
                     )
-                    with gr.Row(elem_classes=["le-row"]):
+                    with gr.Row(elem_classes=["le-row", "le-api-actions"]):
                         api_remember = gr.Checkbox(
                             label="Remember API key",
                             value=bool(
@@ -4354,6 +4587,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             ),
                             scale=0,
                         )
+                        with gr.Column(scale=1, min_width=0):
+                            gr.HTML("")
                         api_detect = gr.Button(
                             "Detect", size="sm",
                             scale=0, min_width=90,
@@ -4758,7 +4993,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         def prompt_erzeugen(
             state_value, model_type, description, text, guidelines, source,
             provider, base, model, key, remember, max_tokens, temperature,
-            reasoning, extra, local_model, progress=gr.Progress(),
+            reasoning, extra, max_thinking, local_model,
+            progress=gr.Progress(),
         ):
             source = str(source or "").strip()
             self._save_author_api(
@@ -4766,7 +5002,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 remember=bool(remember),
             )
             self._save_author_params(
-                max_tokens, temperature, reasoning, extra, local_model
+                max_tokens, temperature, reasoning, extra, local_model,
+                max_thinking=max_thinking,
             )
             result, fehler = self.author_system_prompt(
                 state_value, model_type, description, text, source,
@@ -4782,7 +5019,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 state, prompt_model, description_field, template_text,
                 guidelines_field, author_source, author_provider, api_base,
                 api_model, api_key, api_remember, api_max_tokens,
-                api_temperature, api_reasoning, api_extra, local_model,
+                api_temperature, api_reasoning, api_extra, api_max_thinking,
+                local_model,
             ],
             outputs=[template_text, template_status],
             show_progress="full",
@@ -4799,6 +5037,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     gr.update(visible=True),
                     gr.update(visible=False),
                     gr.update(value=self._author_base_for_provider(provider)),
+                    gr.update(interactive=False),
                 )
             return (
                 gr.update(visible=not ist_api),
@@ -4806,6 +5045,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 gr.update(visible=ist_api),
                 gr.update(visible=False),
                 gr.update(),
+                gr.update(interactive=not ist_api),
             )
 
         author_source.change(
@@ -4813,7 +5053,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             inputs=[author_source, author_provider],
             outputs=[
                 local_model, api_model, api_configure, author_api_group,
-                api_base,
+                api_base, author_btn,
             ],
             show_progress="hidden",
         )
@@ -4848,7 +5088,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         def api_testen(provider, base, model, key, remember, source):
             models, fehler = self._list_api_models(base, key)
             if fehler:
-                return gr.update(), f"**Connection failed:** {fehler}"
+                return (
+                    gr.update(),
+                    f"**Connection failed:** {fehler}",
+                    gr.update(interactive=False),
+                    gr.update(),
+                )
             wert = model if model in models else (models[0] if models else model)
             self._save_author_api(
                 base, wert, key, source=source, provider=provider,
@@ -4857,6 +5102,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return (
                 gr.update(choices=models, value=wert),
                 f"**Connected:** {len(models)} model(s) found.",
+                gr.update(interactive=True),
+                gr.update(interactive=True),
             )
 
         api_test.click(
@@ -4865,7 +5112,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 author_provider, api_base, api_model, api_key, api_remember,
                 author_source,
             ],
-            outputs=[api_model, api_status],
+            outputs=[api_model, api_status, author_btn, self._local_api_btn],
             show_progress="hidden",
         )
 
@@ -4878,6 +5125,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     gr.update(),
                     "**No local server found.** Tried Ollama (11434) and "
                     "LM Studio (1234) on loopback and LAN.",
+                    gr.update(interactive=False),
+                    gr.update(interactive=False),
                 )
             erster = treffer[0]
             modelle = erster["models"]
@@ -4887,12 +5136,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 gr.update(choices=modelle, value=modelle[0]),
                 f"**Found {len(treffer)} server(s):** {erster['provider']} at "
                 f"`{erster['base_url']}` with {len(modelle)} model(s).",
+                gr.update(interactive=True),
+                gr.update(interactive=True),
             )
 
         api_detect.click(
             fn=api_erkennen,
             inputs=None,
-            outputs=[author_provider, api_base, api_model, api_status],
+            outputs=[
+                author_provider, api_base, api_model, api_status,
+                author_btn, self._local_api_btn,
+            ],
             show_progress="hidden",
         )
 
