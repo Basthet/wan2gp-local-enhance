@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.13"
+_UI_BUILD = "build 2026-10-23.14"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -267,13 +267,15 @@ _UI_CSS = (
     "margin:0 !important;order:1 !important;}"
     "#local_enhance_row .local-enhance-label{flex:0 0 100% !important;"
     "width:auto !important;margin:0 !important;}"
-    # Gradio setzt auf die Kinder seiner Row ein eigenes `flex`; die
-    # 50/50-Variante verlor dagegen (live gemessen: computed flex blieb
-    # `0 0 auto`). `width:100%` wird von Gradios Regel nicht angefasst und
-    # ist damit verlaesslich: jeder Knopf nimmt eine eigene Zeile.
-    "#local_enhance_row > button.btn_centered{"
-    "flex:0 0 100% !important;width:100% !important;"
-    "min-width:0 !important;order:3 !important;margin:0 !important;}"
+    # Eigene Aktionszeile: width:100% erzwingt die neue Zeile unabhaengig
+    # von Gradios flex-Regeln; innerhalb der Row sind die Knoepfe von Haus
+    # aus gleich breit (Gradio: flex 1 1 0%).
+    "#local_enhance_row > .le-actions{"
+    "width:100% !important;flex:0 0 100% !important;order:3 !important;"
+    "margin:0 !important;gap:10px !important;display:flex !important;"
+    "flex-wrap:nowrap !important;}"
+    "#local_enhance_row > .le-actions > button{"
+    "flex:1 1 0 !important;width:auto !important;min-width:0 !important;}"
     "#local_enhance_row .cbx_centered{flex:0 0 auto !important;"
     "min-width:max-content !important;max-width:max-content !important;"
     # Gemessen: die Kaestchen-Bloecke sind 44 px hoch, die Knoepfe (size=sm)
@@ -3489,14 +3491,21 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             )
             # size="sm" + scale=0: die Knoepfe nehmen nur ihre naturale Breite
             # statt die halbe Reihe zu fuellen.
-            remote_btn = gr.Button(
-                f"{remote_label} \u24d8", size="sm", scale=0, min_width=0,
-                elem_id="local_enhance_remote_btn", elem_classes="btn_centered",
-            )
-            local_btn = gr.Button(
-                f"{self._button_label()} \u24d8", size="sm", scale=0, min_width=0,
-                elem_id="local_enhance_local_btn", elem_classes="btn_centered",
-            )
+            # Beide Knoepfe in einer eigenen Zeile: Gradio gibt den Kindern
+            # einer Row automatisch gleiche Breite, und die Zeile selbst
+            # bekommt width:100% - damit sind sie 50/50, ohne gegen Gradios
+            # flex-Regeln auf der Hauptzeile anzukaempfen.
+            with gr.Row(elem_classes=["le-actions"]) as actions_row:
+                remote_btn = gr.Button(
+                    f"{remote_label} \u24d8", size="sm", scale=0, min_width=0,
+                    elem_id="local_enhance_remote_btn",
+                    elem_classes="btn_centered",
+                )
+                local_btn = gr.Button(
+                    f"{self._button_label()} \u24d8", size="sm", scale=0,
+                    min_width=0, elem_id="local_enhance_local_btn",
+                    elem_classes="btn_centered",
+                )
             # Prompt-Bibliothek als Dropdown: "default" = WanGPs normaler
             # System-Prompt, die gespeicherten Namen kommen aus <Ordner>/*.txt.
             # Ein Altbestand (Character Sheet/Turnaround/Eigene Vorlage) wird
