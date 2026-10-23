@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.16"
+_UI_BUILD = "build 2026-10-23.17"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -385,7 +385,8 @@ _AUTHOR_REASONING_KEY = "local_enhance_author_reasoning_effort"
 _AUTHOR_EXTRA_BODY_KEY = "local_enhance_author_extra_body"
 _AUTHOR_MAX_TOKENS_DEFAULT = 2048
 _AUTHOR_MAX_THINKING_KEY = "local_enhance_author_max_thinking_tokens"
-_AUTHOR_MAX_THINKING_DEFAULT = 0
+# Denk-Modelle (strata, vLLM) verbrauchen sonst das ganze Antwort-Budget.
+_AUTHOR_MAX_THINKING_DEFAULT = 1024
 _AUTHOR_TEMPERATURE_DEFAULT = 0.4
 _AUTHOR_REASONING_LEVELS = ("low", "medium", "high")
 # Eingebauter WanGP-Autor: 9B passt auf 8 GB, 27B braucht Offload.
@@ -1390,6 +1391,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return str(value or "").strip()
 
     @staticmethod
+    def _is_local_url(base):
+        text = str(base or "").lower()
+        return any(
+            marker in text
+            for marker in ("127.0.0.1", "localhost", "0.0.0.0", ":1234", ":11434")
+        )
+
+    @staticmethod
     def _parse_extra_body(raw):
         """JSON-Objekt fuer den Request-Body; leer ist erlaubt."""
         text = str(raw or "").strip()
@@ -1453,11 +1462,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             ],
         }
         max_tokens = cls._author_max_tokens()
-        if max_tokens > 0:
-            payload["max_tokens"] = max_tokens
         thinking = cls._author_max_thinking()
-        if thinking > 0:
+        if max_tokens > 0:
+            # Das Denk-Budget sitzt im selben max_tokens-Fenster.
+            payload["max_tokens"] = max_tokens + thinking
+        if thinking > 0 and cls._is_local_url(base):
             payload["max_thinking_tokens"] = thinking
+            payload["reasoning_budget_tokens"] = thinking
         payload["temperature"] = cls._author_temperature()
         effort = cls._author_reasoning()
         if effort:
@@ -3088,11 +3099,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             tokens = int(max_tokens or 0)
         except (TypeError, ValueError):
             tokens = 0
-        if tokens > 0:
-            payload["max_tokens"] = tokens
         thinking = self._author_max_thinking()
-        if thinking > 0:
+        if tokens > 0:
+            payload["max_tokens"] = tokens + thinking
+        if thinking > 0 and self._is_local_url(base):
             payload["max_thinking_tokens"] = thinking
+            payload["reasoning_budget_tokens"] = thinking
         if effort:
             payload["reasoning_effort"] = effort
         extra, fehler = self._parse_extra_body(self._author_extra_body())
@@ -4491,9 +4503,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             "Generate",
                             variant="primary",
                             size="sm",
-                            interactive=(
-                                self._author_source() == _AUTHOR_SOURCE_LOCAL
-                            ),
                         )
                 self._flatten_row(
                     enhancer_row,
@@ -4563,8 +4572,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                             step=256,
                             scale=1,
                             info=(
-                                "Provider-specific (vLLM/SGLang). "
-                                "0 = not sent."
+                                "For thinking models. Sent locally as "
+                                "max_thinking_tokens + reasoning_budget_tokens "
+                                "and added to max_tokens. 0 = not sent."
                             ),
                         )
                     api_extra = gr.Textbox(
@@ -5037,7 +5047,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     gr.update(visible=True),
                     gr.update(visible=False),
                     gr.update(value=self._author_base_for_provider(provider)),
-                    gr.update(interactive=False),
+                    gr.update(interactive=True),
                 )
             return (
                 gr.update(visible=not ist_api),
@@ -5045,7 +5055,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 gr.update(visible=ist_api),
                 gr.update(visible=False),
                 gr.update(),
-                gr.update(interactive=not ist_api),
+                gr.update(interactive=True),
             )
 
         author_source.change(

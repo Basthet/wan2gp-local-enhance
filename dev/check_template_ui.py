@@ -316,10 +316,11 @@ main.server_config["local_enhance_author_extra_body"] = (
 )
 payload, fehler = p._author_api_payload("hello")
 assert fehler is None, fehler
-assert payload["max_tokens"] == 1234, payload
+assert payload["max_tokens"] == 1234 + 4096, payload
 assert payload["temperature"] == 0.2, payload
 assert payload["reasoning_effort"] == "high", payload
 assert payload["max_thinking_tokens"] == 4096, payload
+assert payload["reasoning_budget_tokens"] == 4096, payload
 main.server_config["local_enhance_author_max_thinking_tokens"] = 0
 main.server_config["local_enhance_author_extra_body"] = ""
 payload, fehler = p._author_api_payload("hello")
