@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.11"
+_UI_BUILD = "build 2026-10-23.12"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -271,7 +271,7 @@ _UI_CSS = (
     # Element-Selektor allein verliert dagegen. Mit der Button-Klasse ist der
     # Selektor stark genug (live geprueft).
     "#local_enhance_row > button.btn_centered{"
-    "flex:1 1 calc(50% - 5px) !important;"
+    "flex:1 1 calc(50% - 8px) !important;"
     "width:auto !important;min-width:0 !important;order:3 !important;}"
     "#local_enhance_row .cbx_centered{flex:0 0 auto !important;"
     "min-width:max-content !important;max-width:max-content !important;"
