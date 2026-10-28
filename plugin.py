@@ -284,7 +284,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-28.3"
+_UI_BUILD = "build 2026-10-28.4"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -665,6 +665,12 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # ABC-Datei der Composition Source. Nur fuer Musik-Modelle vorhanden;
         # daraus laesst sich die Section-Struktur fuer die Lyrics lesen.
         self.request_component("custom_guide")
+        # Composition Source (sichtbares Dropdown) und die Quelle selbst:
+        # daraus werden Label und Max-Duration fuer Musik-Modelle abgeleitet.
+        self.request_component("audio_prompt_type_sources")
+        self.request_component("audio_prompt_type")
+        self.request_component("audio_guide")
+        self.request_component("duration_seconds")
         # WanGP liest die angehakten LoRAs aus dieser Komponente
         # (wgp.py:1183, inputs["activated_loras"]). Das Plugin traegt dort die
         # Bypass-LoRA nach. Heisst die Komponente anders, bleibt das Attribut
@@ -1192,6 +1198,159 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def _lyrics_structure_for(self, settings):
         """Gespeicherter Plan, sonst die Struktur der gewaehlten ABC-Quelle."""
         return self._lyrics_structure() or self._structure_from_selected_abc(settings)
+
+    @classmethod
+    def _is_lyrics_model(cls, model_def):
+        """Schreibt das Modell gesungene Lyrics (nicht TTS/Image/Video)?"""
+        if not isinstance(model_def, dict):
+            return False
+        return bool(
+            model_def.get("audio_only", False)
+            and (
+                str(model_def.get("prompt_class") or "").lower() == "lyrics"
+                or cls._music_style_visible(model_def)
+            )
+        )
+
+    @classmethod
+    def _row_label_html(cls, model_def):
+        """Beschriftung der Zeile 1: Lyrics-Modelle bekommen 'Enhance Lyrics'."""
+        text = "Enhance Lyrics:" if cls._is_lyrics_model(model_def) else "Enhance Prompt:"
+        return f"<span style='font-weight:600; white-space:nowrap;'>{text}</span>"
+
+    @staticmethod
+    def _source_audio_duration(value):
+        """Dauer einer Audio-Datei in Sekunden - None, wenn nicht lesbar."""
+        path = LocalEnhancePlugin._file_path(value)
+        if not path:
+            return None
+        try:
+            import soundfile as sf
+
+            info = sf.info(path)
+            if info.samplerate:
+                return float(info.frames) / float(info.samplerate)
+        except Exception:  # noqa: BLE001 - libsndfile kann z. B. kein mp3
+            pass
+        try:
+            import librosa
+
+            return float(librosa.get_duration(path=path))
+        except Exception:  # noqa: BLE001 - ohne Dauer bleibt der Slider stehen
+            return None
+
+    def _source_ui_outputs(self):
+        """Ausgaben des Source-Listeners in fester Reihenfolge."""
+        outputs = [getattr(self, "_row_label", None)]
+        outputs.append(getattr(self, "duration_seconds", None))
+        return [component for component in outputs if component is not None]
+
+    def _source_ui_update(self, state, source, audio_file=None):
+        """Zeile 1 und Max-Duration an die Composition Source anpassen.
+
+        Bei `Use Score from Audio`/`Continue Score from Audio` bestimmt die
+        Quelldatei die Obergrenze: der Slider wird auf ihre Laenge gesetzt.
+        Music Style bleibt bewusst unangetastet - die Transkription liefert
+        Noten, keine Klangfarbe.
+        """
+        model_def = self._current_model_def(state)
+        updates = [gr.update(value=self._row_label_html(model_def))]
+        if getattr(self, "duration_seconds", None) is not None:
+            duration = None
+            source = str(source or "")
+            if source in ("A", "A2"):
+                duration = self._source_audio_duration(audio_file)
+            if duration is None:
+                updates.append(gr.update())
+            else:
+                duration_def = model_def.get("duration_slider") or {}
+                minimum = int(duration_def.get("min", 1) or 1)
+                maximum = int(duration_def.get("max", 600) or 600)
+                value = max(minimum, min(maximum, int(round(duration))))
+                updates.append(gr.update(value=value))
+        return tuple(updates) if len(updates) > 1 else updates[0]
+
+    def _row_label_update(self, state=None):
+        """Zeile-1-Beschriftung fuer den aktuellen Modelltyp."""
+        return gr.update(
+            value=self._row_label_html(self._current_model_def(state))
+        )
+
+    def _cover_components(self, status):
+        """Komponenten, die der Cover-Schalter aktualisiert (nur vorhandene)."""
+        pairs = (
+            ("label", getattr(self, "_row_label", None)),
+            ("source", getattr(self, "audio_prompt_type_sources", None)),
+            ("hidden", getattr(self, "audio_prompt_type", None)),
+            ("duration", getattr(self, "duration_seconds", None)),
+            ("status", status),
+        )
+        return [(key, component) for key, component in pairs if component is not None]
+
+    def _cover_outputs(self, status):
+        return [component for _key, component in self._cover_components(status)]
+
+    def _source_hidden_value(self, source, state=None):
+        """Versteckten `audio_prompt_type`-Text auf eine Quelle setzen.
+
+        Die sichtbare Composition-Source ist nur ein Dropdown; der Host liest
+        den versteckten Text. Ein programmatisches `gr.update` am Dropdown
+        feuert dessen `.change` nicht zuverlaessig, deshalb wird der Text hier
+        selbst gebaut: Source-Buchstaben entfernen, neuen anhaengen.
+        """
+        model_def = self._current_model_def(state)
+        definition = model_def.get("audio_prompt_type_sources") or {}
+        letters = str(definition.get("letters_filter", "012A") or "012A")
+        current = ""
+        component = getattr(self, "audio_prompt_type", None)
+        if component is not None:
+            current = str(getattr(component, "value", "") or "")
+        base = "".join(char for char in current if char not in letters)
+        return base + str(source)
+
+    def _cover_mode_update(self, checked, state, audio_file=None, status=None):
+        """Cover-Schalter: Quelle auf A, Dauer aus der Datei, Label anpassen.
+
+        Ein Cover im YuE2-Sinn nutzt das transkribierte Score der Quelle. Die
+        Musikfarbe wird nicht uebernommen; Music Style bleibt eine eigene Wahl.
+        """
+        model_def = self._current_model_def(state)
+        source = "A" if checked else "0"
+        hidden = self._source_hidden_value(source, state)
+        values = {
+            "label": gr.update(value=self._row_label_html(model_def)),
+            "source": gr.update(value=source),
+            "hidden": gr.update(value=hidden),
+            "duration": gr.update(),
+            "status": gr.update(),
+        }
+        duration = self._source_audio_duration(audio_file) if checked else None
+        if checked and duration is not None:
+            duration_def = model_def.get("duration_slider") or {}
+            minimum = int(duration_def.get("min", 1) or 1)
+            maximum = int(duration_def.get("max", 600) or 600)
+            seconds = max(minimum, min(maximum, int(round(duration))))
+            values["duration"] = gr.update(value=seconds)
+            values["status"] = gr.update(
+                value=(
+                    f"**Cover mode:** source score, Max Song Duration **{seconds}s** "
+                    "from the file. Music Style remains your choice; use the tags "
+                    "or `T1,B2O` if you want it enhanced too."
+                )
+            )
+        elif checked:
+            values["status"] = gr.update(
+                value=(
+                    "**Cover mode:** `Use Score from Audio` selected. Upload the "
+                    "source song to set Max Song Duration from it."
+                )
+            )
+        else:
+            values["status"] = gr.update(
+                value="**Cover mode off:** Composition Source = New Composition."
+            )
+        components = self._cover_components(status)
+        return tuple(values[key] for key, _component in components)
 
     def _current_model_def(self, state_value=None):
         """Definition des aktuellen Modells - nur lesen, nie werfen."""
@@ -4479,10 +4638,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         min_words, max_words = self._word_range()
 
         with gr.Row(elem_id="local_enhance_row") as button_row:
-            gr.HTML(
-                "<span style='font-weight:600; white-space:nowrap;'>Enhance Prompt:</span>",
+            row_label = gr.HTML(
+                self._row_label_html(self._current_model_def(self._state_value())),
                 elem_classes=["local-enhance-label"],
             )
+            self._row_label = row_label
             # size="sm" + scale=0: die Knoepfe nehmen nur ihre naturale Breite
             # statt die halbe Reihe zu fuellen.
             # Beide Knoepfe in einer eigenen Zeile: Gradio gibt den Kindern
@@ -4790,6 +4950,29 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             outputs=local_api_outputs,
             show_progress="full",
         )
+        # Composition Source: Label ("Enhance Lyrics") und Max-Duration an die
+        # gewaehlte Quelle anpassen. Nur wenn WanGP die Komponenten liefert;
+        # bei Bild-/Video-Modellen fehlen sie und der Listener entfaellt.
+        source_dropdown = getattr(self, "audio_prompt_type_sources", None)
+        source_outputs = self._source_ui_outputs()
+        source_audio = getattr(self, "audio_guide", None)
+        if source_dropdown is not None and source_outputs:
+            source_inputs = [self.state, source_dropdown]
+            if source_audio is not None:
+                source_inputs.append(source_audio)
+            source_dropdown.change(
+                fn=self._source_ui_update,
+                inputs=source_inputs,
+                outputs=source_outputs,
+                show_progress="hidden",
+            )
+            if source_audio is not None:
+                source_audio.change(
+                    fn=self._source_ui_update,
+                    inputs=source_inputs,
+                    outputs=source_outputs,
+                    show_progress="hidden",
+                )
         # Den eingebauten "Enhance Prompt"-Knopf ausblenden. visible=False allein
         # genuegt nicht: beim Modellwechsel setzt WanGPs modellabhaengiges
         # UI-Update ihn wieder auf sichtbar. Deshalb zusaetzlich eine eigene
@@ -5856,6 +6039,21 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     "text and adds the tags. The tag lists live in "
                     f"<code>{self._music_tag_path()}</code>.</div>"
                 )
+                gr.HTML(
+                    "<div class='le-hint'>With <b>Use Score from Audio</b> the "
+                    "source sets the structure and the Max Song Duration; "
+                    "Music Style stays your choice because transcription "
+                    "supplies notes, not timbre.</div>"
+                )
+                music_cover = gr.Checkbox(
+                    label="Create Cover",
+                    value=False,
+                    info=(
+                        "Sets Composition Source to Use Score from Audio and "
+                        "takes Max Song Duration from the uploaded source song."
+                    ),
+                )
+                music_cover_status = gr.Markdown()
                 with gr.Row(elem_classes=["le-row"]):
                     music_language = gr.Dropdown(
                         choices=groups["language"],
@@ -5977,6 +6175,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     show_progress="hidden",
                 )
 
+                cover_inputs = [music_cover, state]
+                cover_audio = getattr(self, "audio_guide", None)
+                if cover_audio is not None:
+                    cover_inputs.append(cover_audio)
+                music_cover.change(
+                    fn=self._cover_mode_update,
+                    inputs=cover_inputs,
+                    outputs=self._cover_outputs(music_cover_status),
+                    show_progress="hidden",
+                )
+
                 tag_inputs = [
                     music_language, music_genres, music_vocals,
                     music_instruments, music_mood, music_tempo,
@@ -6026,6 +6235,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     outputs=[music_style_card],
                     show_progress="hidden",
                 )
+
+        row_label = getattr(self, "_row_label", None)
+        if refresh_trigger is not None and row_label is not None:
+            # "Enhance Lyrics" vs. "Enhance Prompt" beim Modellwechsel.
+            refresh_trigger.change(
+                fn=self._row_label_update,
+                inputs=[state],
+                outputs=[row_label],
+                show_progress="hidden",
+            )
 
         # Die Music-Style-Karte haengt am aktuellen Modell: bei YuE2 sichtbar,
         # bei Bild-/TTS-Modellen verborgen. Sie kommt als letzte Ausgabe dazu,

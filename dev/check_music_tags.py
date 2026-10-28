@@ -198,7 +198,44 @@ check(
     and not plugin.LocalEnhancePlugin._mode_writes_lyrics("B2O"),
 )
 
-# 9. Karte in create_ui: mit alt_prompt und Audio-Modell.
+# 9. Cover: Label, Dauer aus der Quelle, versteckter Source-Text.
+check(
+    "_is_lyrics_model erkennt YuE2, nicht TTS/Image",
+    plugin.LocalEnhancePlugin._is_lyrics_model(main.models_def["yue2"])
+    and not plugin.LocalEnhancePlugin._is_lyrics_model(main.models_def["moss_tts"])
+    and not plugin.LocalEnhancePlugin._is_lyrics_model(main.models_def["krea2"]),
+)
+check(
+    "Zeile heisst bei YuE2 Enhance Lyrics",
+    "Enhance Lyrics" in plugin.LocalEnhancePlugin._row_label_html(main.models_def["yue2"])
+    and "Enhance Prompt" in plugin.LocalEnhancePlugin._row_label_html(main.models_def["krea2"]),
+)
+import wave
+
+wav_path = Path(prompt_dir) / "source.wav"
+with wave.open(str(wav_path), "wb") as handle:
+    handle.setnchannels(1)
+    handle.setsampwidth(2)
+    handle.setframerate(16000)
+    handle.writeframes(b"\x00\x00" * 32000)
+duration = plugin.LocalEnhancePlugin._source_audio_duration(str(wav_path))
+check("Dauer der Quelldatei wird gelesen", duration is not None and abs(duration - 2.0) < 0.1, f"-> {duration}")
+
+instance = plugin.LocalEnhancePlugin()
+instance.get_state_model_type = lambda state: "yue2"
+instance.audio_prompt_type = gr.Text(value="A2")
+check(
+    "versteckter Source-Text wird auf A gesetzt",
+    instance._source_hidden_value("A", {"model_type": "yue2"}) == "A",
+    f"-> {instance._source_hidden_value('A', {'model_type': 'yue2'})!r}",
+)
+check(
+    "versteckter Source-Text wird auf 0 gesetzt",
+    instance._source_hidden_value("0", {"model_type": "yue2"}) == "0",
+    f"-> {instance._source_hidden_value('0', {'model_type': 'yue2'})!r}",
+)
+
+# 10. Karte in create_ui: mit alt_prompt und Audio-Modell.
 def build_tab():
     p = plugin.LocalEnhancePlugin()
     p.state = gr.State({"model_type": "yue2"})
@@ -206,6 +243,13 @@ def build_tab():
     p.prompt = gr.Textbox()
     p.alt_prompt = gr.Textbox(label="Music Style")
     p.prompt_enhancer = gr.Textbox(visible=False)
+    p.audio_prompt_type_sources = gr.Dropdown(
+        choices=[("New Composition", "0"), ("Use Score from Audio", "A")],
+        value="0",
+    )
+    p.audio_prompt_type = gr.Text(value="0", visible=False)
+    p.audio_guide = gr.Audio(type="filepath")
+    p.duration_seconds = gr.Slider(1, 600, value=120)
     p.prompt_enhancer_btn = gr.Button()
     p.get_current_model_settings = lambda state: {
         "prompt": "song idea", "alt_prompt": "current style",
@@ -257,13 +301,13 @@ check("fuenf Karten mit Music Style", len(cards) == 5, f"-> {len(cards)}")
 for label in (
     "Language", "Genre", "Vocals", "Instruments", "Mood", "Tempo",
     "Production", "Extra style notes", "Finished Music Style",
-    "Section plan (optional)", "Load from ABC",
+    "Section plan (optional)", "Load from ABC", "Create Cover",
 ):
     check(f"Label {label!r} vorhanden", label in labels)
 for button in ("Apply to Music Style", "Append", "Clear tags"):
     check(f"Knopf {button!r} vorhanden", button in buttons)
 
-# 10. on_tab_select: Karte bei YuE2 sichtbar, bei Krea 2 verborgen.
+# 11. on_tab_select: Karte bei YuE2 sichtbar, bei Krea 2 verborgen.
 werte = p.on_tab_select({"model_type": "yue2"})
 check(
     "on_tab_select liefert drei Ausgaben (Prompt, Modell, Karte)",
