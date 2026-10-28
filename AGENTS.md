@@ -218,6 +218,11 @@ neu starten.
   `Load from ABC`, ABC-`%`-Labels zu `[Intro]`/`[Verse]`/…, automatisch aus der
   gewählten ABC-Quelle, Kontext vor dem Lyrics-Prompt bei `T1`/`T1,B2O` (nicht
   bei `B2O`), Config-Key `local_enhance_lyrics_structure`
+- `e88de0c` — **Create Cover:** Checkbox in der Music-Style-Karte setzt
+  Composition Source auf `A`, den versteckten `audio_prompt_type` selbst,
+  Max Song Duration aus der Quelldatei und die Zeile auf `Enhance Lyrics`;
+  Music Style bleibt eine eigene Wahl; `_row_label` dynamisch,
+  `dev/check_music_tags.py` mit Cover-Fällen (41)
 - **Autor-Parameter:** `Max answer tokens`, `Temperature`,
   `Reasoning effort` und `Extra body` landen im API-Payload
   (`_author_api_payload`); `Local model` wählt 9B/27B nach VRAM
