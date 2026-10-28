@@ -204,6 +204,11 @@ neu starten.
   **Import prompts** aufgeklappt, `Save as` schlägt
   `_next_free_prompt_name()` vor (`Charactersheet 2`) statt den bestehenden
   Eintrag zu überschreiben
+- `fe02028` — **Lyrics/Music Style (YuE2):** `alt_prompt` als Klick-Eingabe und
+  Ausgabe, Modus gegen die Modell-Auswahl geprüft (altes `T` wird `T1`),
+  Ketten über `prompt_enhancer_chaining` (`T1`, `B2O`, `T1,B2O`), Status nennt
+  die geschriebenen Felder, Local API nutzt dieselben Modell-Anweisungen;
+  `dev/check_music_fields.py` + `dev/check_music_wiring.py`
 - **Autor-Parameter:** `Max answer tokens`, `Temperature`,
   `Reasoning effort` und `Extra body` landen im API-Payload
   (`_author_api_payload`); `Local model` wählt 9B/27B nach VRAM
