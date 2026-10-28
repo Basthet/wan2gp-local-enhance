@@ -128,6 +128,52 @@ _IMAGE_INPUT_NAMES = (
 # zurueckgeschrieben.
 _ALT_PROMPT_INPUT_NAME = "alt_prompt"
 
+# Tag-Baukasten fuer Music Style / Music Caption / Genres. Die Werte sind
+# bewusst englisch: die Musik-Modelle sind auf englische Stilbegriffe
+# ausgerichtet, die Lyrics duerfen trotzdem in jeder Sprache sein. Die Datei
+# liegt im Prompt-Ordner des Nutzers (nicht im Repo), damit eigene Tags ein
+# Plugin-Update nicht blockieren.
+_MUSIC_TAG_FILE = "music_style_tags.json"
+_MUSIC_TAG_DEFAULT = {
+    "language": [
+        "English", "German", "Spanish", "French", "Italian", "Portuguese",
+        "Japanese", "Korean",
+    ],
+    "genre": [
+        "acoustic pop", "indie folk", "pop", "rock", "hard rock", "metal",
+        "electronic", "synth-pop", "hip-hop", "R&B", "jazz", "blues",
+        "country", "orchestral", "cinematic", "ambient", "reggae", "funk",
+        "punk", "schlager",
+    ],
+    "vocals": [
+        "warm male vocal", "deep male vocal", "female vocal",
+        "soft female vocal", "duet", "choir", "whispered vocal",
+        "instrumental (no vocals)",
+    ],
+    "instruments": [
+        "fingerpicked guitar", "electric guitar", "piano", "strings",
+        "synth pads", "bass", "drums", "percussion", "saxophone",
+        "trumpet", "organ", "ukulele", "banjo", "cello",
+    ],
+    "mood": [
+        "hopeful", "melancholic", "dreamy", "dark", "uplifting",
+        "energetic", "calm", "romantic", "epic", "nostalgic", "aggressive",
+    ],
+    "tempo": [
+        "slow", "mid-tempo", "upbeat", "60 BPM", "70 BPM", "80 BPM",
+        "90 BPM", "100 BPM", "120 BPM", "140 BPM",
+    ],
+    "production": [
+        "lo-fi", "clean", "cinematic", "live room", "dry", "reverb",
+        "wide stereo", "punchy",
+    ],
+}
+# Reihenfolge der Gruppen im UI und in der fertigen Caption.
+_MUSIC_TAG_GROUPS = (
+    "language", "genre", "vocals", "instruments", "mood", "tempo",
+    "production",
+)
+
 
 class _EnhancerImages(NamedTuple):
     """Bilder, die der lokale Pfad an process_prompt_enhancer() weitergibt.
@@ -238,7 +284,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-28.1"
+_UI_BUILD = "build 2026-10-28.2"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -866,6 +912,168 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if not changed:
             return ""
         return ", fields: " + " + ".join(changed)
+
+    # ------------------------------------------------------ Music-Style-Tags
+
+    @classmethod
+    def _music_tag_path(cls):
+        """Ablage der eigenen Tags: im Prompt-Ordner, nicht im Repo.
+
+        So kann der Nutzer die Listen aendern, ohne den geladenen Plugin-Klon
+        schmutzig zu machen (ein dirty tree blockiert WanGPs Update).
+        """
+        return cls._prompt_dir() / _MUSIC_TAG_FILE
+
+    @classmethod
+    def _music_tag_groups(cls):
+        """Tag-Listen je Gruppe; fehlende/kaputte Datei -> eingebaute Defaults."""
+        groups = {key: list(values) for key, values in _MUSIC_TAG_DEFAULT.items()}
+        try:
+            path = cls._music_tag_path()
+            if not path.is_file():
+                return groups
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - Defaults bleiben
+            return groups
+        if not isinstance(data, dict):
+            return groups
+        for key in _MUSIC_TAG_GROUPS:
+            values = data.get(key)
+            if not isinstance(values, list):
+                continue
+            cleaned = []
+            for value in values:
+                text = str(value or "").strip()
+                if text and text not in cleaned:
+                    cleaned.append(text)
+            if cleaned:
+                groups[key] = cleaned
+        return groups
+
+    @staticmethod
+    def _tag_list(value):
+        """Dropdown-Wert (Einzel oder Mehrfach) als Liste nicht-leerer Strings."""
+        values = value if isinstance(value, (list, tuple)) else [value]
+        return [str(item).strip() for item in values if str(item or "").strip()]
+
+    @classmethod
+    def _compose_music_style(
+        cls, language, genres, vocals, instruments, mood, tempo, production, extra
+    ):
+        """Tags zu einer Music-Style-Zeile zusammenbauen.
+
+        Reihenfolge: Sprache, Genre, Gesang, Instrumente, Stimmung, Tempo,
+        Produktion, Freitext. Bei "instrumental" fallen Sprache und Gesang weg,
+        damit keine widerspruechliche Caption entsteht. Doppelte Begriffe werden
+        ohne Ruecksicht auf Gross-/Kleinschreibung entfernt.
+        """
+        language_list = cls._tag_list(language)
+        vocal_list = cls._tag_list(vocals)
+        instrumental = any(
+            "instrumental" in value.lower()
+            for value in language_list + vocal_list
+        )
+        parts = []
+        if instrumental:
+            parts.append("instrumental")
+        else:
+            parts.extend(language_list)
+            parts.extend(vocal_list)
+        parts.extend(cls._tag_list(genres))
+        parts.extend(cls._tag_list(instruments))
+        parts.extend(cls._tag_list(mood))
+        parts.extend(cls._tag_list(tempo))
+        parts.extend(cls._tag_list(production))
+        parts.extend(cls._tag_list(extra))
+        seen = set()
+        unique = []
+        for part in parts:
+            key = part.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(part)
+        return ", ".join(unique)
+
+    @staticmethod
+    def _music_style_visible(model_def):
+        """Zeigt der Tag-Baukasten fuer dieses Modell?
+
+        Nur Audio-Modelle mit einem zweiten Textfeld, dessen Label nach Musik
+        klingt. TTS-Felder wie "Spoken Language" oder "Reference Transcripts"
+        bleiben aussen vor.
+        """
+        if not isinstance(model_def, dict) or not model_def.get("audio_only", False):
+            return False
+        alt_def = model_def.get("alt_prompt")
+        if not isinstance(alt_def, dict):
+            return False
+        label = str(alt_def.get("label") or alt_def.get("name") or "").lower()
+        return any(
+            word in label
+            for word in (
+                "music", "genre", "caption", "style", "keyword", "tag",
+                "description",
+            )
+        )
+
+    def _current_model_def(self, state_value=None):
+        """Definition des aktuellen Modells - nur lesen, nie werfen."""
+        try:
+            model_type = self._resolve_current_model_type(
+                self._state_value() if state_value is None else state_value
+            )
+            models = _main("models_def") or {}
+            definition = (
+                models.get(model_type) if isinstance(models, dict) else None
+            )
+            return definition if isinstance(definition, dict) else {}
+        except Exception:  # noqa: BLE001 - die Karte bleibt dann verborgen
+            return {}
+
+    def _music_style_visibility_update(self, state=None):
+        """Sichtbarkeit der Music-Style-Karte fuer den Live-Zustand."""
+        return gr.update(
+            visible=self._music_style_visible(self._current_model_def(state))
+        )
+
+    @staticmethod
+    def _music_style_apply(text):
+        """Tag-Ergebnis als Music Style setzen (ersetzt das Feld)."""
+        text = str(text or "").strip()
+        if not text:
+            gr.Warning("Pick at least one tag or add a note first.")
+            return gr.update()
+        return gr.update(value=text)
+
+    @staticmethod
+    def _music_style_append(current, addition):
+        """Tag-Ergebnis an den vorhandenen Music Style anhaengen."""
+        current = str(current or "").strip()
+        addition = str(addition or "").strip()
+        if not addition:
+            gr.Warning("Pick at least one tag or add a note first.")
+            return gr.update()
+        if not current:
+            return gr.update(value=addition)
+        if current.casefold().rstrip(" ,.") == addition.casefold().rstrip(" ,."):
+            return gr.update()
+        return gr.update(value=current.rstrip(" ,") + ", " + addition)
+
+    @staticmethod
+    def _music_style_clear():
+        """Alle Tag-Dropdowns und die Vorschau leeren."""
+        return (
+            gr.update(value=None),   # language
+            gr.update(value=[]),     # genres
+            gr.update(value=None),   # vocals
+            gr.update(value=[]),     # instruments
+            gr.update(value=[]),     # mood
+            gr.update(value=None),   # tempo
+            gr.update(value=[]),     # production
+            gr.update(value=""),     # extra
+            gr.update(value=""),     # preview
+        )
 
     @staticmethod
     def _local_enhancer_ready():
@@ -5435,6 +5643,164 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             show_progress="hidden",
         )
 
+        # --- Karte "Music Style" ---------------------------------------------
+        # Erscheint nur bei Audio-Modellen mit Musik-Feld (YuE2 "Music Style",
+        # ACE "Music Caption", MiniMax "Music Description", ...). Die Tags
+        # bauen eine Caption; "Apply" schreibt sie in WanGPs echtes Feld.
+        music_style_card = None
+        music_style_preview = None
+        if self._alt_prompt_component() is not None:
+            groups = self._music_tag_groups()
+            initial_visible = self._music_style_visible(
+                self._current_model_def(self._state_value())
+            )
+            with gr.Column(
+                elem_classes=["le-card"], visible=initial_visible
+            ) as music_style_card:
+                gr.HTML("<div class='le-card-title'>Music Style</div>")
+                gr.HTML(
+                    "<div class='le-hint'>Pick tags for the music model; the "
+                    "finished caption appears below. <b>Apply</b> replaces "
+                    "WanGP's Music Style field, <b>Append</b> keeps the current "
+                    "text and adds the tags. The tag lists live in "
+                    f"<code>{self._music_tag_path()}</code>.</div>"
+                )
+                with gr.Row(elem_classes=["le-row"]):
+                    music_language = gr.Dropdown(
+                        choices=groups["language"],
+                        value=None,
+                        label="Language",
+                        scale=1,
+                        min_width=150,
+                    )
+                    music_vocals = gr.Dropdown(
+                        choices=groups["vocals"],
+                        value=None,
+                        label="Vocals",
+                        scale=1,
+                        min_width=170,
+                    )
+                    music_tempo = gr.Dropdown(
+                        choices=groups["tempo"],
+                        value=None,
+                        label="Tempo",
+                        allow_custom_value=True,
+                        scale=1,
+                        min_width=140,
+                    )
+                with gr.Row(elem_classes=["le-row"]):
+                    music_genres = gr.Dropdown(
+                        choices=groups["genre"],
+                        value=[],
+                        multiselect=True,
+                        label="Genre",
+                        scale=2,
+                        min_width=220,
+                    )
+                    music_instruments = gr.Dropdown(
+                        choices=groups["instruments"],
+                        value=[],
+                        multiselect=True,
+                        label="Instruments",
+                        scale=3,
+                        min_width=240,
+                    )
+                with gr.Row(elem_classes=["le-row"]):
+                    music_mood = gr.Dropdown(
+                        choices=groups["mood"],
+                        value=[],
+                        multiselect=True,
+                        label="Mood",
+                        scale=2,
+                        min_width=200,
+                    )
+                    music_production = gr.Dropdown(
+                        choices=groups["production"],
+                        value=[],
+                        multiselect=True,
+                        label="Production",
+                        scale=2,
+                        min_width=200,
+                    )
+                music_extra = gr.Textbox(
+                    label="Extra style notes",
+                    lines=2,
+                    placeholder="Anything not covered by the tags ...",
+                )
+                music_style_preview = gr.Textbox(
+                    label="Finished Music Style",
+                    lines=3,
+                    interactive=False,
+                    placeholder="Pick tags or type extra notes ...",
+                )
+                with gr.Row(elem_classes=["le-actions"]):
+                    music_apply = gr.Button(
+                        "Apply to Music Style", variant="primary", size="sm"
+                    )
+                    music_append = gr.Button("Append", size="sm")
+                    music_clear = gr.Button("Clear tags", size="sm")
+                gr.HTML(
+                    "<div class='le-hint'>Tip: <b>instrumental (no vocals)</b> "
+                    "drops the language and vocal tags automatically.</div>"
+                )
+
+                tag_inputs = [
+                    music_language, music_genres, music_vocals,
+                    music_instruments, music_mood, music_tempo,
+                    music_production, music_extra,
+                ]
+                for tag_component in tag_inputs[:-1]:
+                    tag_component.change(
+                        fn=self._compose_music_style,
+                        inputs=tag_inputs,
+                        outputs=music_style_preview,
+                        show_progress="hidden",
+                    )
+                music_extra.input(
+                    fn=self._compose_music_style,
+                    inputs=tag_inputs,
+                    outputs=music_style_preview,
+                    show_progress="hidden",
+                )
+                music_apply.click(
+                    fn=self._music_style_apply,
+                    inputs=[music_style_preview],
+                    outputs=[self.alt_prompt],
+                    show_progress="hidden",
+                )
+                music_append.click(
+                    fn=self._music_style_append,
+                    inputs=[self.alt_prompt, music_style_preview],
+                    outputs=[self.alt_prompt],
+                    show_progress="hidden",
+                )
+                music_clear.click(
+                    fn=self._music_style_clear,
+                    inputs=None,
+                    outputs=[
+                        music_language, music_genres, music_vocals,
+                        music_instruments, music_mood, music_tempo,
+                        music_production, music_extra, music_style_preview,
+                    ],
+                    show_progress="hidden",
+                )
+            if refresh_trigger is not None:
+                # Modellwechsel: Karte ein-/ausblenden, ohne auf den Tab-Wechsel
+                # zu warten. refresh_form_trigger feuert genau dabei.
+                refresh_trigger.change(
+                    fn=self._music_style_visibility_update,
+                    inputs=[state],
+                    outputs=[music_style_card],
+                    show_progress="hidden",
+                )
+
+        # Die Music-Style-Karte haengt am aktuellen Modell: bei YuE2 sichtbar,
+        # bei Bild-/TTS-Modellen verborgen. Sie kommt als letzte Ausgabe dazu,
+        # damit on_tab_select() sie beim Tab-Wechsel nachziehen kann.
+        self._music_style_card = music_style_card
+        if music_style_card is not None:
+            self.on_tab_outputs.append(music_style_card)
+
         def prompt_erzeugen(
             state_value, model_type, description, text, guidelines, source,
             provider, base, model, key, remember, max_tokens, temperature,
@@ -5650,4 +6016,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             except Exception:  # noqa: BLE001 - ohne Typ gilt der Filter nicht
                 typ = None
             werte.append(gr.update(value=self._with_bypass_lora(aktuell, typ)))
+        if getattr(self, "_music_style_card", None) is not None:
+            werte.append(self._music_style_visibility_update(state))
         return tuple(werte)

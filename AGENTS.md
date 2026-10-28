@@ -506,11 +506,37 @@ neu starten.
   bereinigt den Namen, hängt bei Kollision ` 2`/` 3` an und kopiert ein
   vorhandenes Sidecar mit; leere Dateien werden abgelehnt.
   Die Karte hat **vier** Karten (System Prompts, Bypass-LoRA, Model check,
-  Prompt workshop). Ordner- und Eintragszeile werden nach dem Aufbau mit
+  Prompt workshop). Bei Audio-Modellen mit Musik-Feld kommt eine fünfte Karte
+  **Music Style** dazu (siehe unten); ohne `alt_prompt` fehlt sie ganz, deshalb
+  prüft `dev/check_template_ui.py` weiter vier Karten. Ordner- und Eintragszeile werden nach dem Aufbau mit
   `_flatten_row()` aus den Gradio-`Form`-Wrappern geholt
   (`fill_expected_parents` würde die Felder sonst vertikal stapeln). Die
   Textfelder wachsen per CSS (`flex:1 1 240px` bzw. `180px`), die Buttons
   behalten ihre `min_width`.
+- **Music Style (Tag-Baukasten):** Die Karte erscheint nur, wenn
+  `_music_style_visible(model_def)` gilt: `audio_only` **und** `alt_prompt` mit
+  einem Musik-Label (`Music Style`, `Music Caption`, `Genres / Tags`,
+  `Music Description`, `Keywords / Tags`). TTS-Felder wie `Spoken Language` oder
+  `Reference Transcripts` bleiben verborgen. Sie wird beim Tab-Aufbau aus dem
+  Live-Zustand gesetzt und bei `refresh_form_trigger.change` sowie über
+  `on_tab_outputs`/`on_tab_select` nachgezogen; ohne `alt_prompt`-Komponente
+  wird sie gar nicht gebaut.
+  Inhalt: Dropdowns für Language/Vocals/Tempo (einfach, Tempo mit
+  `allow_custom_value`), Genre/Instruments/Mood/Production (mehrfach),
+  `Extra style notes`, darunter die read-only Vorschau `Finished Music Style`
+  und die Knöpfe `Apply to Music Style` (ersetzt `alt_prompt`), `Append`
+  (hängt an) und `Clear tags`.
+  `_compose_music_style()` baut in fester Reihenfolge Sprache, Genre, Gesang,
+  Instrumente, Stimmung, Tempo, Produktion, Freitext; doppelte Begriffe fallen
+  weg. Steht irgendwo `instrumental`, wird nur `instrumental` gesetzt und
+  Sprache/Gesang entfallen. Die Listen stehen als Default in
+  `_MUSIC_TAG_DEFAULT`; eine eigene Datei `music_style_tags.json` im
+  Prompt-Ordner (`_music_tag_path()`) überschreibt sie, kaputte/fehlende Dateien
+  fallen still auf die Defaults zurück. Die Datei liegt bewusst außerhalb des
+  Repos, damit eigene Tags kein Plugin-Update blockieren.
+  Die Karte ist ein Geschwister der Hauptspalte (nach ihr im Tab), weil sie
+  erst nach dem UI-Aufbau entsteht; `create_ui()` setzt `self._music_style_card`
+  erst danach und hängt sie an `on_tab_outputs`.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 100, Max 350. `_migrate_word_defaults()` hebt beim ersten
@@ -710,6 +736,12 @@ neu starten.
   WanGP-Ordner) baut die Knöpfe mit/ohne `alt_prompt` und prüft die
   Gradio-Konfiguration: mit Alt 7/7/7 Eingaben und 2/2/3 Ausgaben, ohne Alt
   6/6/6 und 1/1/2. Erwartung: 12 `PASS`, Exit 0.
+- Music-Style-Tags: `dev/check_music_tags.py` (WanGP-venv, aus dem WanGP-Ordner)
+  prüft **29** Fälle: Komposition/Reihenfolge, Dedupe, instrumental-Regel,
+  Sichtbarkeit (YuE2/ACE ja, TTS/Image nein), eigene `music_style_tags.json`
+  inkl. kaputter Datei, Apply/Append/Clear, die fünfte Karte mit allen
+  Dropdowns/Buttons und `on_tab_select` (sichtbar bei YuE2, verborgen bei
+  Krea 2). Erwartung: 29 `PASS`, Exit 0.
 - Vision live: Modus *Based on Text Prompt and Images* wählen, Startbild mit
   markantem Inhalt setzen, Prompt „a cat" → der verbesserte Prompt muss den
   Bildinhalt beschreiben und die Statuszeile `images: start image` nennen. Dann
