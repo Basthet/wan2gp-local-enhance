@@ -122,58 +122,6 @@ _IMAGE_INPUT_NAMES = (
     "video_prompt_type",
 )
 
-# Zweites Textfeld neben `prompt`. WanGP legt es fuer Modelle mit getrennten
-# Eingaben an - bei YuE2 heisst es "Music Style", die Lyrics stehen in `prompt`.
-# Es wird live als Klick-Eingabe gelesen und bei Ketten, die es schreiben, auch
-# zurueckgeschrieben.
-_ALT_PROMPT_INPUT_NAME = "alt_prompt"
-
-# Tag-Baukasten fuer Music Style / Music Caption / Genres. Die Werte sind
-# bewusst englisch: die Musik-Modelle sind auf englische Stilbegriffe
-# ausgerichtet, die Lyrics duerfen trotzdem in jeder Sprache sein. Die Datei
-# liegt im Prompt-Ordner des Nutzers (nicht im Repo), damit eigene Tags ein
-# Plugin-Update nicht blockieren.
-_MUSIC_TAG_FILE = "music_style_tags.json"
-_MUSIC_TAG_DEFAULT = {
-    "language": [
-        "English", "German", "Spanish", "French", "Italian", "Portuguese",
-        "Japanese", "Korean",
-    ],
-    "genre": [
-        "acoustic pop", "indie folk", "pop", "rock", "hard rock", "metal",
-        "electronic", "synth-pop", "hip-hop", "R&B", "jazz", "blues",
-        "country", "orchestral", "cinematic", "ambient", "reggae", "funk",
-        "punk", "schlager",
-    ],
-    "vocals": [
-        "warm male vocal", "deep male vocal", "female vocal",
-        "soft female vocal", "duet", "choir", "whispered vocal",
-        "instrumental (no vocals)",
-    ],
-    "instruments": [
-        "fingerpicked guitar", "electric guitar", "piano", "strings",
-        "synth pads", "bass", "drums", "percussion", "saxophone",
-        "trumpet", "organ", "ukulele", "banjo", "cello",
-    ],
-    "mood": [
-        "hopeful", "melancholic", "dreamy", "dark", "uplifting",
-        "energetic", "calm", "romantic", "epic", "nostalgic", "aggressive",
-    ],
-    "tempo": [
-        "slow", "mid-tempo", "upbeat", "60 BPM", "70 BPM", "80 BPM",
-        "90 BPM", "100 BPM", "120 BPM", "140 BPM",
-    ],
-    "production": [
-        "lo-fi", "clean", "cinematic", "live room", "dry", "reverb",
-        "wide stereo", "punchy",
-    ],
-}
-# Reihenfolge der Gruppen im UI und in der fertigen Caption.
-_MUSIC_TAG_GROUPS = (
-    "language", "genre", "vocals", "instruments", "mood", "tempo",
-    "production",
-)
-
 
 class _EnhancerImages(NamedTuple):
     """Bilder, die der lokale Pfad an process_prompt_enhancer() weitergibt.
@@ -284,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-28.5"
+_UI_BUILD = "build 2026-10-23.19"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -382,10 +330,6 @@ _UI_CSS = (
 )
 _TEMPLATE_KEY = "local_enhance_template"
 _TEMPLATE_TEXT_KEY = "local_enhance_template_text"
-# Optionaler Struktur-Plan fuer Lyrics (z. B. [Intro] [Verse] [Chorus] ...).
-# Er wird beim Lyrics-Enhancement als Kontext vorangestellt. Bei ABC-Quellen
-# kann er aus den `% intro`-Kommentaren der Datei gelesen werden.
-_LYRICS_STRUCTURE_KEY = "local_enhance_lyrics_structure"
 
 # --- Bibliothek der System-Prompts -------------------------------------------------
 # Ein Ordner, eine Datei pro Eintrag (<name>.txt). Der Ablageordner ist
@@ -658,19 +602,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self.request_component("state")
         self.request_component("refresh_form_trigger")
         self.request_component("prompt")
-        # Zweites Textfeld der Modelle mit getrennten Eingaben (YuE2: "Music
-        # Style"). WanGP legt es fuer jedes Modell an, blendet es aber ohne
-        # `alt_prompt`-Definition aus; der PluginManager setzt es trotzdem.
-        self.request_component(_ALT_PROMPT_INPUT_NAME)
-        # ABC-Datei der Composition Source. Nur fuer Musik-Modelle vorhanden;
-        # daraus laesst sich die Section-Struktur fuer die Lyrics lesen.
-        self.request_component("custom_guide")
-        # Composition Source (sichtbares Dropdown) und die Quelle selbst:
-        # daraus werden Label und Max-Duration fuer Musik-Modelle abgeleitet.
-        self.request_component("audio_prompt_type_sources")
-        self.request_component("audio_prompt_type")
-        self.request_component("audio_guide")
-        self.request_component("duration_seconds")
         # WanGP liest die angehakten LoRAs aus dieser Komponente
         # (wgp.py:1183, inputs["activated_loras"]). Das Plugin traegt dort die
         # Bypass-LoRA nach. Heisst die Komponente anders, bleibt das Attribut
@@ -743,27 +674,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     # ------------------------------------------------------------- Hilfsmittel
 
     @staticmethod
-    def _chaining():
-        """WanGPs Routing-/Kettenmodul fuer Prompt-Enhancer.
-
-        Es entscheidet, ob ein Modus ein Feld schreibt (T/L/B) und ob er aus
-        mehreren Schritten besteht ("T1,B2O"). Der Host benutzt genau dieses
-        Modul (wgp.py:6720-6775); das Plugin darf die Regeln nicht nachbauen,
-        sonst laufen beide Wege auseinander. Der Zugriff ueber __main__ haelt
-        das Plugin auch dann am Laufen, wenn eine kuenftige WanGP-Fassung das
-        Modul intern umbenennt - dann greift der direkte Import als Rueckfall.
-        """
-        module = _main("prompt_enhancer_chaining")
-        if module is not None:
-            return module
-        try:
-            from shared.prompt_enhancer import chaining
-
-            return chaining
-        except Exception:  # noqa: BLE001 - ohne Modul bleibt der Einzelschritt
-            return None
-
-    @staticmethod
     def _with_thinking(mode, enabled):
         """Das Thinking-Flag 'K' an den Enhancer-Modus haengen.
 
@@ -772,7 +682,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         Think-Checkbox war deshalb wirkungslos. chaining.with_thinking() ist die
         offizielle Umsetzung (shared/prompt_enhancer/chaining.py:37).
         """
-        chaining = LocalEnhancePlugin._chaining()
+        chaining = _main("prompt_enhancer_chaining")
         if chaining is not None:
             try:
                 return chaining.with_thinking(mode, enabled)
@@ -822,38 +732,21 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return ordered[-1] if think else ordered[0]
 
     @staticmethod
-    def _mode_choices(model_def, audio_only, image_mode, include_disabled=True):
-        """(Werte, Default) der Enhancer-Auswahl des aktuellen Modells.
-
-        Der Host baut die Liste aus `prompt_enhancer_def` der Modelldefinition
-        (wgp.py:11273) - bei YuE2 sind das `T1` (Lyrics), `B2O` (Music Style)
-        und `T1,B2O` (beide). Ohne diese Liste kann das Plugin nicht erkennen,
-        ob ein alter Live-Wert noch zum Modell passt.
-        """
-        chooser = _main("get_prompt_enhancer_choices")
-        if chooser is None:
-            return [], ""
-        try:
-            choices, default, _definition = chooser(
-                model_def,
-                audio_only,
-                image_mode,
-                include_disabled=include_disabled,
-            )
-        except Exception:  # noqa: BLE001 - dann bleibt der Einzelschritt
-            return [], ""
-        return [str(value) for _label, value in choices], str(default or "")
-
-    @staticmethod
     def _resolve_mode(model_def, audio_only, image_mode):
         """Standard-Enhancer-Modus fuer das aktuelle Modell ermitteln."""
-        choices, default = LocalEnhancePlugin._mode_choices(
-            model_def, audio_only, image_mode, include_disabled=False
-        )
+        chooser = _main("get_prompt_enhancer_choices")
+        if chooser is None:
+            return "T"
+        try:
+            choices, default, _definition = chooser(
+                model_def, audio_only, image_mode, include_disabled=False
+            )
+        except Exception:
+            return "T"
         if default:
-            return default
+            return str(default)
         if choices:
-            return choices[0]
+            return str(choices[0][1])
         return "T"
 
     @staticmethod
@@ -863,582 +756,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         `live_mode` ist der Inhalt von WanGPs verstecktem `prompt_enhancer`-Text,
         also genau die Buchstaben, die Dropdown und Think-Checkbox schreiben
         (wgp.py:13036-13037). Er ist die einzige Quelle fuer die Nutzerauswahl.
-
-        WICHTIG: Nach einem Modellwechsel kann dort noch der Modus des vorigen
-        Modells stehen - das Dropdown bekommt nur neue `choices`
-        (refresh_prompt_enhancer_labels, wgp.py:10898), der versteckte Text
-        nicht. Ein altes `T` an einem YuE2-Modell traefe dann kein
-        Profil (`text_prompt_enhancer_instructions1`) und der Enhancer faellt
-        auf die allgemeinen Audio-Anweisungen zurueck - statt Lyrics entstuende
-        eine Stilbeschreibung. Deshalb wird der Live-Wert gegen die Auswahl des
-        AKTUELLEN Modells geprueft; passt er nicht, gilt der Modell-Default.
+        Leer ist er, wenn der Nutzer "Disabled" gewaehlt hat oder die Komponente
+        fehlt - dann bleibt _resolve_mode() als Fallback (bisheriges Verhalten).
         """
         mode = str(live_mode or "").strip()
         if mode:
-            choices, default = LocalEnhancePlugin._mode_choices(
-                model_def, audio_only, image_mode, include_disabled=True
-            )
-            chaining = LocalEnhancePlugin._chaining()
-            if choices and chaining is not None:
-                try:
-                    normalized = chaining.normalize_choice(mode, choices, default)
-                except Exception:  # noqa: BLE001 - dann gilt der Live-Wert
-                    normalized = mode
-                if normalized:
-                    # normalize_choice() entfernt 'K' (Denken) bewusst; die
-                    # Checkbox des Hosts fuehrt es separat. Fuer den Aufruf muss
-                    # es wieder dran, sonst denkt das Modell trotz Haken nicht.
-                    return chaining.with_thinking(normalized, "K" in mode)
-            elif choices and mode in choices:
-                return mode
-            elif not choices:
-                return mode
-            # Unbekannt/Disabled -> Modell-Default (z. B. YuE2: T1 = Lyrics).
+            return mode
         return LocalEnhancePlugin._resolve_mode(model_def, audio_only, image_mode)
-
-    @staticmethod
-    def _field_labels(model_def):
-        """(Prompt-Label, Alt-Label) des Modells - fuer die Statuszeile."""
-        model_def = model_def if isinstance(model_def, dict) else {}
-        prompt_label = str(
-            model_def.get("prompt_class")
-            or model_def.get("prompt_label")
-            or "Prompt"
-        ).strip()
-        alt_def = model_def.get("alt_prompt")
-        alt_def = alt_def if isinstance(alt_def, dict) else {}
-        alt_label = str(alt_def.get("label") or alt_def.get("name") or "Alt prompt").strip()
-        return prompt_label, alt_label
-
-    @staticmethod
-    def _field_note(model_def, prompt_changed, alt_changed):
-        """Kurzer Hinweis, welche Felder der Klick geschrieben hat."""
-        prompt_label, alt_label = LocalEnhancePlugin._field_labels(model_def)
-        changed = [
-            label
-            for label, active in (
-                (prompt_label, prompt_changed),
-                (alt_label, alt_changed),
-            )
-            if active
-        ]
-        if not changed:
-            return ""
-        return ", fields: " + " + ".join(changed)
-
-    # ------------------------------------------------------ Music-Style-Tags
-
-    @classmethod
-    def _music_tag_path(cls):
-        """Ablage der eigenen Tags: im Prompt-Ordner, nicht im Repo.
-
-        So kann der Nutzer die Listen aendern, ohne den geladenen Plugin-Klon
-        schmutzig zu machen (ein dirty tree blockiert WanGPs Update).
-        """
-        return cls._prompt_dir() / _MUSIC_TAG_FILE
-
-    @classmethod
-    def _music_tag_groups(cls):
-        """Tag-Listen je Gruppe; fehlende/kaputte Datei -> eingebaute Defaults."""
-        groups = {key: list(values) for key, values in _MUSIC_TAG_DEFAULT.items()}
-        try:
-            path = cls._music_tag_path()
-            if not path.is_file():
-                return groups
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001 - Defaults bleiben
-            return groups
-        if not isinstance(data, dict):
-            return groups
-        for key in _MUSIC_TAG_GROUPS:
-            values = data.get(key)
-            if not isinstance(values, list):
-                continue
-            cleaned = []
-            for value in values:
-                text = str(value or "").strip()
-                if text and text not in cleaned:
-                    cleaned.append(text)
-            if cleaned:
-                groups[key] = cleaned
-        return groups
-
-    @staticmethod
-    def _tag_list(value):
-        """Dropdown-Wert (Einzel oder Mehrfach) als Liste nicht-leerer Strings."""
-        values = value if isinstance(value, (list, tuple)) else [value]
-        return [str(item).strip() for item in values if str(item or "").strip()]
-
-    @classmethod
-    def _compose_music_style(
-        cls, language, genres, vocals, instruments, mood, tempo, production, extra
-    ):
-        """Tags zu einer Music-Style-Zeile zusammenbauen.
-
-        Reihenfolge: Sprache, Genre, Gesang, Instrumente, Stimmung, Tempo,
-        Produktion, Freitext. Bei "instrumental" fallen Sprache und Gesang weg,
-        damit keine widerspruechliche Caption entsteht. Doppelte Begriffe werden
-        ohne Ruecksicht auf Gross-/Kleinschreibung entfernt.
-        """
-        language_list = cls._tag_list(language)
-        vocal_list = cls._tag_list(vocals)
-        instrumental = any(
-            "instrumental" in value.lower()
-            for value in language_list + vocal_list
-        )
-        parts = []
-        if instrumental:
-            parts.append("instrumental")
-        else:
-            parts.extend(language_list)
-            parts.extend(vocal_list)
-        parts.extend(cls._tag_list(genres))
-        parts.extend(cls._tag_list(instruments))
-        parts.extend(cls._tag_list(mood))
-        parts.extend(cls._tag_list(tempo))
-        parts.extend(cls._tag_list(production))
-        parts.extend(cls._tag_list(extra))
-        seen = set()
-        unique = []
-        for part in parts:
-            key = part.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(part)
-        return ", ".join(unique)
-
-    @staticmethod
-    def _music_style_visible(model_def):
-        """Zeigt der Tag-Baukasten fuer dieses Modell?
-
-        Nur Audio-Modelle mit einem zweiten Textfeld, dessen Label nach Musik
-        klingt. TTS-Felder wie "Spoken Language" oder "Reference Transcripts"
-        bleiben aussen vor.
-        """
-        if not isinstance(model_def, dict) or not model_def.get("audio_only", False):
-            return False
-        alt_def = model_def.get("alt_prompt")
-        if not isinstance(alt_def, dict):
-            return False
-        label = str(alt_def.get("label") or alt_def.get("name") or "").lower()
-        return any(
-            word in label
-            for word in (
-                "music", "genre", "caption", "style", "keyword", "tag",
-                "description",
-            )
-        )
-
-    # ------------------------------------------------- Lyrics-Struktur (ABC)
-
-    @classmethod
-    def _lyrics_structure(cls):
-        """Gespeicherter Section-Plan fuer Lyrics (leer = keiner)."""
-        config = _main("server_config") or {}
-        config = config if isinstance(config, dict) else {}
-        return str(config.get(_LYRICS_STRUCTURE_KEY, "") or "").strip()
-
-    @classmethod
-    def _save_lyrics_structure(cls, text):
-        """Section-Plan in der Live-Config merken (WanGP schreibt sie mit)."""
-        config = _main("server_config")
-        if isinstance(config, dict):
-            config[_LYRICS_STRUCTURE_KEY] = str(text or "").strip()
-
-    @staticmethod
-    def _structure_label(value):
-        """SheetSage2-Strukturlabel in eine YuE2-Section umwandeln.
-
-        Die ABC-Datei traegt die Labels als `% intro`, `% verse` usw. YuE2
-        erwartet eckige Klammern und Title Case; unbekannte/leere Labels
-        werden verworfen, damit kein Muell in den Lyrics landet.
-        """
-        label = " ".join(str(value or "").replace("%", " ").split()).lower()
-        if not label:
-            return []
-        mapping = {
-            "intro": ["Intro"],
-            "outro": ["Outro"],
-            "fade-out": ["Outro"],
-            "pre-outro": ["Outro"],
-            "verse": ["Verse"],
-            "chorus": ["Chorus"],
-            "bridge": ["Bridge"],
-            "pre-chorus": ["Pre-Chorus"],
-            "post-chorus": ["Post-Chorus"],
-            "interlude": ["Interlude"],
-            "instrumental": ["Instrumental"],
-            "solo": ["Solo"],
-            "theme": ["Theme"],
-            "development": ["Development"],
-            "variation": ["Variation"],
-            "rap": ["Verse"],
-            "silence": [],
-            "loop": [],
-            "preshot": [],
-            "irregular": [],
-        }
-        if label in mapping:
-            return mapping[label]
-        # "intro and verse" / "verse and pre-chorus" kommen ebenfalls vor.
-        parts = [part.strip() for part in label.split(" and ") if part.strip()]
-        if len(parts) > 1:
-            result = []
-            for part in parts:
-                result.extend(mapping.get(part, []))
-            return result
-        return []
-
-    @classmethod
-    def _parse_abc_structure(cls, abc):
-        """Section-Plan aus den `%`-Kommentaren einer SheetSage2-ABC-Datei."""
-        labels = []
-        for line in str(abc or "").replace("\r\n", "\n").split("\n"):
-            stripped = line.strip()
-            if not stripped.startswith("%"):
-                continue
-            for label in cls._structure_label(stripped):
-                if not labels or labels[-1] != label:
-                    labels.append(label)
-        return "\n".join(f"[{label}]" for label in labels)
-
-    @staticmethod
-    def _file_path(value):
-        """Gradio-Datei (str/dict/list) als Pfad - None, wenn unbrauchbar."""
-        if isinstance(value, (list, tuple)):
-            value = value[0] if value else None
-        if isinstance(value, dict):
-            value = value.get("name") or value.get("path")
-        text = str(value or "").strip()
-        return text or None
-
-    @classmethod
-    def _structure_from_abc_file(cls, value):
-        """Upload-Handler: ABC lesen und den Section-Plan zurueckgeben."""
-        path = cls._file_path(value)
-        if not path:
-            gr.Warning("Select an .abc file first.")
-            return gr.update()
-        try:
-            abc = Path(path).read_text(encoding="utf-8-sig")
-        except Exception as exc:  # noqa: BLE001 - Fehler in der UI zeigen
-            gr.Warning(f"Could not read the ABC file: {exc}")
-            return gr.update()
-        structure = cls._parse_abc_structure(abc)
-        if not structure:
-            gr.Warning(
-                "No section labels found. SheetSage2 writes them as "
-                "'% intro', '% verse', '% chorus' comments."
-            )
-            return gr.update()
-        cls._save_lyrics_structure(structure)
-        return gr.update(value=structure)
-
-    @classmethod
-    def _with_lyrics_structure(cls, prompt_text, structure):
-        """Section-Plan als verbindlichen Kontext vor die Lyrics legen.
-
-        Nur fuer Schritte, die Lyrics schreiben. Der Plan wird bewusst als
-        Nutzertext uebergeben (die Modell-Anweisungen bleiben unangetastet),
-        damit das Modell die Abschnitte in genau dieser Reihenfolge fuellt.
-        """
-        structure = str(structure or "").strip()
-        prompt_text = str(prompt_text or "").strip()
-        if not structure:
-            return prompt_text
-        return (
-            "Write the lyrics for exactly this section structure, in this "
-            "order. Keep the section labels as written:\n"
-            f"{structure}\n\n"
-            "Song idea or existing lyrics:\n"
-            f"{prompt_text}"
-        )
-
-    @classmethod
-    def _mode_writes_lyrics(cls, mode):
-        """Schreibt der Modus (mindestens einen Schritt) das Lyrics-Feld?"""
-        chaining = cls._chaining()
-        if chaining is None:
-            return "O" not in str(mode or "") and "L" not in str(mode or "")
-        try:
-            steps = chaining.parse_mode(mode)
-        except Exception:  # noqa: BLE001 - unbekannter Modus
-            return False
-        return any(
-            step.output_field == "prompt" and step.input_field != "alt_prompt"
-            for step in steps
-        )
-
-    def _structure_from_selected_abc(self, settings):
-        """Struktur aus der aktuell gewaehlten ABC-Quelle lesen.
-
-        Nur bei `Use ABC Score`/`Continue ABC Score`; bei `Use Score from
-        Audio` liegt noch keine Transkription vor (die entsteht erst in der
-        Generierung). Dann bleibt nur der manuelle Upload der gespeicherten
-        `.abc`-Datei.
-        """
-        source = str((settings or {}).get("audio_prompt_type", "") or "")
-        if source not in ("1", "12"):
-            return ""
-        component = getattr(self, "custom_guide", None)
-        value = getattr(component, "value", None) if component is not None else None
-        if not value:
-            value = (settings or {}).get("custom_guide")
-        path = self._file_path(value)
-        if not path:
-            return ""
-        try:
-            return self._parse_abc_structure(
-                Path(path).read_text(encoding="utf-8-sig")
-            )
-        except Exception:  # noqa: BLE001 - dann gilt der gespeicherte Plan
-            return ""
-
-    def _lyrics_structure_for(self, settings):
-        """Gespeicherter Plan, sonst die Struktur der gewaehlten ABC-Quelle."""
-        return self._lyrics_structure() or self._structure_from_selected_abc(settings)
-
-    @classmethod
-    def _is_lyrics_model(cls, model_def):
-        """Schreibt das Modell gesungene Lyrics (nicht TTS/Image/Video)?"""
-        if not isinstance(model_def, dict):
-            return False
-        return bool(
-            model_def.get("audio_only", False)
-            and (
-                str(model_def.get("prompt_class") or "").lower() == "lyrics"
-                or cls._music_style_visible(model_def)
-            )
-        )
-
-    @classmethod
-    def _row_label_html(cls, model_def):
-        """Beschriftung der Zeile 1: Lyrics-Modelle bekommen 'Enhance Lyrics'."""
-        text = "Enhance Lyrics:" if cls._is_lyrics_model(model_def) else "Enhance Prompt:"
-        return f"<span style='font-weight:600; white-space:nowrap;'>{text}</span>"
-
-    @staticmethod
-    def _source_audio_duration(value):
-        """Dauer einer Audio-Datei in Sekunden - None, wenn nicht lesbar."""
-        path = LocalEnhancePlugin._file_path(value)
-        if not path:
-            return None
-        try:
-            import soundfile as sf
-
-            info = sf.info(path)
-            if info.samplerate:
-                return float(info.frames) / float(info.samplerate)
-        except Exception:  # noqa: BLE001 - libsndfile kann z. B. kein mp3
-            pass
-        try:
-            import librosa
-
-            return float(librosa.get_duration(path=path))
-        except Exception:  # noqa: BLE001 - ohne Dauer bleibt der Slider stehen
-            return None
-
-    def _source_ui_outputs(self):
-        """Ausgaben des Source-Listeners in fester Reihenfolge."""
-        outputs = [getattr(self, "_row_label", None)]
-        outputs.append(getattr(self, "duration_seconds", None))
-        return [component for component in outputs if component is not None]
-
-    def _source_ui_update(self, state, source, audio_file=None):
-        """Zeile 1 und Max-Duration an die Composition Source anpassen.
-
-        Bei `Use Score from Audio`/`Continue Score from Audio` bestimmt die
-        Quelldatei die Obergrenze: der Slider wird auf ihre Laenge gesetzt.
-        Music Style bleibt bewusst unangetastet - die Transkription liefert
-        Noten, keine Klangfarbe.
-        """
-        model_def = self._current_model_def(state)
-        updates = [gr.update(value=self._row_label_html(model_def))]
-        if getattr(self, "duration_seconds", None) is not None:
-            duration = None
-            source = str(source or "")
-            if source in ("A", "A2", "C"):
-                duration = self._source_audio_duration(audio_file)
-            if duration is None:
-                updates.append(gr.update())
-            else:
-                duration_def = model_def.get("duration_slider") or {}
-                minimum = int(duration_def.get("min", 1) or 1)
-                maximum = int(duration_def.get("max", 600) or 600)
-                value = max(minimum, min(maximum, int(round(duration))))
-                updates.append(gr.update(value=value))
-        return tuple(updates) if len(updates) > 1 else updates[0]
-
-    def _row_label_update(self, state=None):
-        """Zeile-1-Beschriftung fuer den aktuellen Modelltyp."""
-        return gr.update(
-            value=self._row_label_html(self._current_model_def(state))
-        )
-
-    def _source_tempo_update(self, source):
-        """Tempo ist bei einer Score-Quelle vorgegeben - Feld ausblenden."""
-        covered = str(source or "") in ("A", "A2", "C")
-        return (
-            gr.update(visible=False, value=None)
-            if covered else gr.update(visible=True)
-        )
-
-    def _cover_source_value(self):
-        """Cover-Wert des Hosts, sonst der alte A-Fallback.
-
-        Der Host-Patch legt `C` an; ohne Patch bleibt `A` (Use Score from
-        Audio), damit der Schalter auch auf einer ungepatchten Installation
-        funktioniert.
-        """
-        component = getattr(self, "audio_prompt_type_sources", None)
-        choices = getattr(component, "choices", None) or []
-        for choice in choices:
-            if isinstance(choice, (list, tuple)) and len(choice) >= 2:
-                if str(choice[1]) == "C":
-                    return "C"
-        return "A"
-
-    def _cover_components(self, status=None):
-        """Komponenten, die der Cover-Schalter aktualisiert (nur vorhandene)."""
-        if status is None:
-            status = getattr(self, "_cover_status", None)
-        pairs = (
-            ("label", getattr(self, "_row_label", None)),
-            ("source", getattr(self, "audio_prompt_type_sources", None)),
-            ("hidden", getattr(self, "audio_prompt_type", None)),
-            ("duration", getattr(self, "duration_seconds", None)),
-            ("tempo", getattr(self, "_music_tempo", None)),
-            ("status", status),
-        )
-        return [(key, component) for key, component in pairs if component is not None]
-
-    def _cover_outputs(self, status):
-        return [component for _key, component in self._cover_components(status)]
-
-    def _source_hidden_value(self, source, state=None):
-        """Versteckten `audio_prompt_type`-Text auf eine Quelle setzen.
-
-        Die sichtbare Composition-Source ist nur ein Dropdown; der Host liest
-        den versteckten Text. Ein programmatisches `gr.update` am Dropdown
-        feuert dessen `.change` nicht zuverlaessig, deshalb wird der Text hier
-        selbst gebaut: Source-Buchstaben entfernen, neuen anhaengen.
-        """
-        model_def = self._current_model_def(state)
-        definition = model_def.get("audio_prompt_type_sources") or {}
-        letters = str(definition.get("letters_filter", "012A") or "012A")
-        current = ""
-        component = getattr(self, "audio_prompt_type", None)
-        if component is not None:
-            current = str(getattr(component, "value", "") or "")
-        base = "".join(char for char in current if char not in letters)
-        return base + str(source)
-
-    def _cover_mode_update(self, checked, state, audio_file=None, status=None):
-        """Cover-Schalter: Quelle auf A, Dauer aus der Datei, Label anpassen.
-
-        Ein Cover im YuE2-Sinn nutzt das transkribierte Score der Quelle. Die
-        Musikfarbe wird nicht uebernommen; Music Style bleibt eine eigene Wahl.
-        """
-        model_def = self._current_model_def(state)
-        source = self._cover_source_value() if checked else "0"
-        hidden = self._source_hidden_value(source, state)
-        values = {
-            "label": gr.update(value=self._row_label_html(model_def)),
-            "source": gr.update(value=source),
-            "hidden": gr.update(value=hidden),
-            "duration": gr.update(),
-            "tempo": (
-                gr.update(visible=False, value=None)
-                if checked else gr.update(visible=True)
-            ),
-            "status": gr.update(),
-        }
-        duration = self._source_audio_duration(audio_file) if checked else None
-        if checked and duration is not None:
-            duration_def = model_def.get("duration_slider") or {}
-            minimum = int(duration_def.get("min", 1) or 1)
-            maximum = int(duration_def.get("max", 600) or 600)
-            seconds = max(minimum, min(maximum, int(round(duration))))
-            values["duration"] = gr.update(value=seconds)
-            values["status"] = gr.update(
-                value=(
-                    f"**Cover mode:** source score, Max Song Duration **{seconds}s** "
-                    "from the file. Music Style remains your choice; use the tags "
-                    "or `T1,B2O` if you want it enhanced too."
-                )
-            )
-        elif checked:
-            values["status"] = gr.update(
-                value=(
-                    "**Cover mode:** source score selected. Upload the source "
-                    "song to set Max Song Duration from it."
-                )
-            )
-        else:
-            values["status"] = gr.update(
-                value="**Cover mode off:** Composition Source = New Composition."
-            )
-        components = self._cover_components(status)
-        return tuple(values[key] for key, _component in components)
-
-    def _current_model_def(self, state_value=None):
-        """Definition des aktuellen Modells - nur lesen, nie werfen."""
-        try:
-            model_type = self._resolve_current_model_type(
-                self._state_value() if state_value is None else state_value
-            )
-            models = _main("models_def") or {}
-            definition = (
-                models.get(model_type) if isinstance(models, dict) else None
-            )
-            return definition if isinstance(definition, dict) else {}
-        except Exception:  # noqa: BLE001 - die Karte bleibt dann verborgen
-            return {}
-
-    def _music_style_visibility_update(self, state=None):
-        """Sichtbarkeit der Music-Style-Karte fuer den Live-Zustand."""
-        return gr.update(
-            visible=self._music_style_visible(self._current_model_def(state))
-        )
-
-    @staticmethod
-    def _music_style_apply(text):
-        """Tag-Ergebnis als Music Style setzen (ersetzt das Feld)."""
-        text = str(text or "").strip()
-        if not text:
-            gr.Warning("Pick at least one tag or add a note first.")
-            return gr.update()
-        return gr.update(value=text)
-
-    @staticmethod
-    def _music_style_append(current, addition):
-        """Tag-Ergebnis an den vorhandenen Music Style anhaengen."""
-        current = str(current or "").strip()
-        addition = str(addition or "").strip()
-        if not addition:
-            gr.Warning("Pick at least one tag or add a note first.")
-            return gr.update()
-        if not current:
-            return gr.update(value=addition)
-        if current.casefold().rstrip(" ,.") == addition.casefold().rstrip(" ,."):
-            return gr.update()
-        return gr.update(value=current.rstrip(" ,") + ", " + addition)
-
-    @staticmethod
-    def _music_style_clear():
-        """Alle Tag-Dropdowns und die Vorschau leeren."""
-        return (
-            gr.update(value=None),   # language
-            gr.update(value=[]),     # genres
-            gr.update(value=None),   # vocals
-            gr.update(value=[]),     # instruments
-            gr.update(value=[]),     # mood
-            gr.update(value=None),   # tempo
-            gr.update(value=[]),     # production
-            gr.update(value=""),     # extra
-            gr.update(value=""),     # preview
-        )
 
     @staticmethod
     def _local_enhancer_ready():
@@ -2876,44 +2200,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return values[0], values[1:]
         return None, values
 
-    def _alt_prompt_component(self):
-        """WanGPs zweites Textfeld, falls das Modell eines hat (YuE2: Music Style)."""
-        return getattr(self, _ALT_PROMPT_INPUT_NAME, None)
-
-    def _split_alt_input(self, values):
-        """Alt-Text von den Reglern trennen.
-
-        Reihenfolge der Klick-Eingaben: Modus, Regler, Alt-Text, Bilder. Nach
-        _split_image_inputs() steht der Alt-Text also ganz rechts; fehlt die
-        Komponente, bleibt die Liste unveraendert.
-        """
-        values = tuple(values or ())
-        if self._alt_prompt_component() is None or not values:
-            return "", values
-        return str(values[-1] or ""), values[:-1]
-
-    def _inline_inputs(self, prompt_component, with_images):
-        """Klick-Eingaben beider Knoepfe in fester Reihenfolge."""
-        inputs = (
-            [self.state, prompt_component]
-            + self._mode_components()
-            + self._control_components()
-        )
-        alt_component = self._alt_prompt_component()
-        if alt_component is not None:
-            inputs.append(alt_component)
-        if with_images:
-            inputs += self._image_components()
-        return inputs
-
-    def _inline_outputs(self, prompt_component):
-        """Ausgaben beider Knoepfe: Prompt und - falls vorhanden - Alt-Text."""
-        outputs = [prompt_component]
-        alt_component = self._alt_prompt_component()
-        if alt_component is not None:
-            outputs.append(alt_component)
-        return outputs
-
     @classmethod
     def _fallback_instructions(cls, is_image, audio_only, min_words=None, max_words=None, with_images=False):
         """Dieselben eingebauten Anweisungen, die der lokale Pfad benutzt.
@@ -3783,94 +3069,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         cfg.setdefault("duration_seconds", settings.get("duration_seconds"))
         return cfg
 
-    @classmethod
-    def _run_enhance_steps(
-        cls,
-        process,
-        model_type,
-        model_def,
-        mode,
-        prompt_text,
-        alt_text,
-        is_image,
-        audio_only,
-        images,
-        instructions,
-        tokens,
-        kwargs,
-    ):
-        """Prompt (und ggf. Alt-Text) nach WanGPs Routing-Regeln verbessern.
-
-        Ein Einzelschritt (`T1`, `B2O`, ...) schreibt genau ein Feld. Eine Kette
-        (`T1,B2O`) laeuft durch `prompt_enhancer_chaining.run_chain()`: der Host
-        baut fuer Schritte mit `B` das JSON aus beiden Feldern und reicht das
-        Ergebnis des ersten Schritts an den zweiten weiter (wgp.py:6753-6775).
-        Genau dieses Verhalten braucht YuE2: `T1` schreibt die Lyrics, `B2O`
-        schreibt den Music Style anhand der neuen Lyrics.
-
-        Rueckgabe: (prompt_ergebnis, alt_ergebnis) - leer heisst "Feld nicht
-        geschrieben".
-        """
-        chaining = cls._chaining()
-        routing = False
-        if chaining is not None:
-            try:
-                routing = chaining.uses_routing(mode)
-            except Exception:  # noqa: BLE001 - dann Einzelschritt
-                routing = False
-        image_start = images.image_start if images is not None else None
-        image_refs = images.image_refs if images is not None else None
-
-        def call(step_mode, values, batch_images):
-            return process(
-                model_type,
-                model_def,
-                step_mode,
-                list(values),
-                image_start,
-                image_refs,
-                is_image,
-                audio_only,
-                -1,        # seed -> zufaellig
-                prompt_enhancer_instructions=instructions,
-                text_encoder_max_tokens=tokens,
-                enhancer_kwargs=kwargs,
-                batch_images=batch_images,
-            )
-
-        if routing:
-            def enhance_step(step, step_inputs):
-                return call(step.mode, step_inputs, True)
-
-            result = chaining.run_chain(
-                mode,
-                [prompt_text or ""],
-                [alt_text or ""],
-                bool(model_def.get("alt_prompt_inherits_prompt_paragraphs", False)),
-                enhance_step,
-            )
-            prompt_out = cls._first_prompt(result.prompts) if result.prompt_changed else ""
-            alt_out = cls._first_prompt(result.alt_prompts) if result.alt_prompt_changed else ""
-            return prompt_out, alt_out
-
-        # Einzelschritt: Eingabefeld und Ausgabefeld stehen im Modus.
-        input_text = prompt_text
-        output_alt = False
-        if chaining is not None:
-            try:
-                step = chaining.parse_mode(mode)[0]
-            except Exception:  # noqa: BLE001 - unbekannter Modus
-                step = None
-            if step is not None:
-                if step.input_field == "alt_prompt":
-                    input_text = alt_text
-                output_alt = step.output_field == "alt_prompt"
-        elif not input_text:
-            input_text = alt_text
-        prompts = call(mode, [input_text or ""], False)
-        value = cls._first_prompt(prompts)
-        return ("", value) if output_alt else (value, "")
-
     def _api_chat(self, system, user, max_tokens=0, temperature=None,
                   effort="", base=None, model=None):
         """Ein Chat-Aufruf an den konfigurierten OpenAI-Server.
@@ -4106,27 +3304,20 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def enhance(self, state, text, *values, progress=gr.Progress()):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
 
-        `values` sind erst der Modus, dann die Regler (Think/Min/Max), dann der
-        Alt-Text (nur bei Modellen mit zweitem Feld, z. B. YuE2 "Music Style")
-        und zuletzt die Bild-Eingaben - siehe _split_mode_input(),
-        _split_alt_input() und _split_image_inputs().
-
-        Rueckgabe: (prompt, alt_prompt, status). Ein leeres Feld heisst, dass
-        dieser Klick es nicht geschrieben hat; der Aufrufer laesst es dann
-        stehen.
+        `values` sind erst der Modus, dann die Regler (Think/Min/Max),
+        danach die Bild-Eingaben - siehe _split_mode_input() und
+        _split_image_inputs().
         """
         mode_value, values = self._split_mode_input(values)
         controls, live_images = self._split_image_inputs(values)
-        alt_text, controls = self._split_alt_input(controls)
         think, min_words, max_words = self._read_controls(controls)
         self._remember_word_range(min_words, max_words)
         text = str(text or "").strip()
-        alt_text = str(alt_text or "").strip()
-        if not text and not alt_text:
-            return "", "", "Enter a prompt first."
+        if not text:
+            return "", "Enter a prompt first."
 
         if not self._local_enhancer_ready():
-            return "", "", (
+            return "", (
                 "**No local enhancer model configured.**\n\n"
                 "Set *Configuration → Prompt Enhancer / Deepy → Prompt Enhancer / Deepy LLM Engine* "
                 "to a local Qwen model (4B, 9B or 27B) and save. The enhancer then "
@@ -4142,11 +3333,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         wait_for_unload = _main("wait_for_model_unload")
 
         if not all((get_state_model_type, get_model_def, ensure_loaded, process)):
-            return "", "", "**Internal error:** WanGP functions not found. Please report."
+            return "", "**Internal error:** WanGP functions not found. Please report."
 
         model_type = get_state_model_type(state)
         if not model_type:
-            return "", "", "No model selected - pick one in the Media Generator first."
+            return "", "No model selected - pick one in the Media Generator first."
 
         model_def = get_model_def(model_type) or {}
         settings = get_model_settings(state, model_type) or {}
@@ -4176,9 +3367,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # (#!PROMPT!:) darf das Modell nie erreichen - sie wird mitverbessert und
         # erschiene danach doppelt.
         enhancer_input = self._original_for_history(text)
-        alt_input = self._original_for_history(alt_text)
-        if not enhancer_input and not alt_input:
-            return "", "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
+        if not enhancer_input:
+            return "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
 
         if callable(wait_for_unload):
             wait_for_unload()
@@ -4245,28 +3435,26 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 self._model_def_without_prompt_instructions(model_def)
                 if vorlage else model_def
             )
-            lyrics_input = enhancer_input
-            if self._mode_writes_lyrics(mode):
-                lyrics_input = self._with_lyrics_structure(
-                    enhancer_input, self._lyrics_structure_for(settings)
-                )
             with (_PromptInstructionOverride() if vorlage else contextlib.nullcontext()):
-                prompt_result, alt_result = self._run_enhance_steps(
-                    process,
+                prompts = process(
                     model_type,
                     modell_def,
                     mode,
-                    lyrics_input,
-                    alt_input,
+                    [enhancer_input],
+                    images.image_start,
+                    images.image_refs,
                     is_image,
                     audio_only,
-                    images,
-                    anweisungen,
-                    self._output_token_budget(min_words, max_words),
-                    self._enhancer_kwargs(settings, images),
+                    -1,        # seed -> zufaellig
+                    # Wortgrenze steckt in den Anweisungen; das Token-Budget muss
+                    # mitwachsen, sonst schneidet das Limit den Prompt ab. Mit Bildern
+                    # gelten die Bild-Anweisungen (IT2x), sonst die reinen Text-T2x.
+                    prompt_enhancer_instructions=anweisungen,
+                    text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
+                    enhancer_kwargs=self._enhancer_kwargs(settings, images),
                 )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
-            return "", "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
+            return "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
         finally:
             # Engine sofort zurueckstellen - sie darf keinen Moment laenger
             # verstellt bleiben als der Aufruf dauert.
@@ -4289,29 +3477,26 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             self._free_local_enhancer()
             release_GPU_ressources(state, PlugIn_Id)
 
-        if not prompt_result and not alt_result:
-            return "", "", "The enhancer returned no prompt."
-        self._last_enhanced = prompt_result or alt_result
+        if not prompts:
+            return "", "The enhancer returned no prompt."
+        # process_prompt_enhancer() liefert pro Prompt eine Liste - WanGP liest
+        # das Ergebnis ebenfalls als value[0] aus (siehe wgp.py:6696).
+        first = prompts[0] if isinstance(prompts, (list, tuple)) else prompts
+        while isinstance(first, (list, tuple)):
+            first = first[0] if first else ""
+        result = str(first or "").strip()
+        if not result:
+            return "", "The enhancer returned an empty prompt."
+        self._last_enhanced = result
         self._last_source = text
-        self._last_alt_source = alt_text
         self._last_image_labels = images.labels
         seconds = time.time() - started
-        prompt_changed = bool(prompt_result)
-        alt_changed = bool(alt_result)
-        return prompt_result, alt_result, (
+        return result, (
             f"Enhanced locally with **{self._variant_label()}** "
-            f"(mode `{mode}`{self._field_note(model_def, prompt_changed, alt_changed)}"
-            f"{self._image_note(images.labels)}) in {seconds:.1f}s. "
+            f"(mode `{mode}`{self._image_note(images.labels)}) in {seconds:.1f}s. "
             f"{image_advice}"
             "Not happy? Click again."
         )
-
-    def _enhance_tab(self, state, text, *values, progress=gr.Progress()):
-        """Tab-Knopf: nur der Prompt geht ins Arbeitsfeld, Alt-Text bleibt aussen vor."""
-        result, _alt_result, status = self.enhance(
-            state, text, *values, progress=progress
-        )
-        return result, status
 
     @staticmethod
     def _sanitize_original(text):
@@ -4352,7 +3537,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             candidate = ""
         return candidate or cls._sanitize_original(raw)
 
-    def _with_history(self, enhanced, source=None):
+    def _with_history(self, enhanced):
         """Historienzeile wie beim eingebauten Knopf voranstellen.
 
         Ergebnis::
@@ -4372,9 +3557,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Historie - dann darf kein zweiter davor gesetzt werden.
         if PROMPT_UNIT_PREFIX in enhanced:
             return enhanced
-        source = self._original_for_history(
-            self._last_source if source is None else source
-        )
+        source = self._original_for_history(self._last_source)
         if not source or enhanced == source:
             return enhanced
         try:
@@ -4401,21 +3584,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         erkennt an der Engine, dass remote gearbeitet wird (wgp.py:6409), und
         ueberspringt den lokalen Loader (local_runtime, wgp.py:6505).
 
-        `values` sind erst der Modus, dann die Regler (Think/Min/Max) und zuletzt
-        der Alt-Text (nur bei Modellen mit zweitem Feld).
+        `values` sind erst der Modus, dann die Regler (Think/Min/Max).
         """
         mode_value, values = self._split_mode_input(values)
-        alt_text, values = self._split_alt_input(values)
         think, min_words, max_words = self._read_controls(values)
         self._remember_word_range(min_words, max_words)
         text = str(text or "").strip()
-        alt_text = str(alt_text or "").strip()
-        if not text and not alt_text:
-            return "", "", "Enter a prompt first."
+        if not text:
+            return "", "Enter a prompt first."
 
         engine = self._remote_engine_name()
         if not engine:
-            return "", "", (
+            return "", (
                 "**No remote engine configured.** Pick one in the Config tab "
                 "under *Prompt Enhancer / Deepy*."
             )
@@ -4425,11 +3605,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         get_model_settings = _main("get_model_settings")
         process = _main("process_prompt_enhancer")
         if not all((get_state_model_type, get_model_def, process)):
-            return "", "", "**Internal error:** WanGP functions not found. Please report."
+            return "", "**Internal error:** WanGP functions not found. Please report."
 
         model_type = get_state_model_type(state)
         if not model_type:
-            return "", "", "No model selected - pick one in the Media Generator first."
+            return "", "No model selected - pick one in the Media Generator first."
 
         model_def = get_model_def(model_type) or {}
         settings = get_model_settings(state, model_type) or {}
@@ -4448,9 +3628,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         # Originalprompt statt sichtbarer Text - siehe enhance() fuer die Begruendung.
         enhancer_input = self._original_for_history(text)
-        alt_input = self._original_for_history(alt_text)
-        if not enhancer_input and not alt_input:
-            return "", "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
+        if not enhancer_input:
+            return "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
 
         # Engine nur fuer diesen Aufruf umstellen; danach exakt zurueck.
         config = _main("server_config") or {}
@@ -4478,51 +3657,44 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     profile["reasoning_effort"] = effort
                     effort_changed = True
         started = time.time()
-        lyrics_input = enhancer_input
-        if self._mode_writes_lyrics(mode):
-            lyrics_input = self._with_lyrics_structure(
-                enhancer_input, self._lyrics_structure_for(settings)
-            )
         try:
-            prompt_result, alt_result = self._run_enhance_steps(
-                process,
+            prompts = process(
                 model_type,
                 model_def,
                 mode,
-                lyrics_input,
-                alt_input,
+                [enhancer_input],
+                None,      # image_start
+                None,      # original_image_refs
                 is_image,
                 audio_only,
-                None,
+                -1,        # seed -> zufaellig
                 # Ohne Anweisung geht ein LEERER System-Prompt an die Remote-
                 # Engine und der Agent fragt zurueck statt umzuschreiben.
-                self._fallback_instructions(is_image, audio_only, min_words, max_words),
-                self._output_token_budget(min_words, max_words),
+                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, min_words, max_words),
+                text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
                 # The LTX2 handler requires a dict - None crashes it.
-                self._enhancer_kwargs(settings, None),
+                enhancer_kwargs=self._enhancer_kwargs(settings, None),
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             import traceback
             traceback.print_exc()
             print(f"[{PlugIn_Name}] Remote enhancer failed: {type(exc).__name__}: {exc}")
-            return "", "", f"**Remote enhancer failed:** `{type(exc).__name__}: {exc}`"
+            return "", f"**Remote enhancer failed:** `{type(exc).__name__}: {exc}`"
         finally:
             if flipped and isinstance(llm_section, dict):
                 llm_section["deepy"] = previous_engine
             if effort_changed and isinstance(profile, dict):
                 profile["reasoning_effort"] = previous_effort
 
-        if not prompt_result and not alt_result:
-            return "", "", "The enhancer returned an empty prompt."
-        self._last_enhanced = prompt_result or alt_result
+        result = self._first_prompt(prompts)
+        if not result:
+            return "", "The enhancer returned an empty prompt."
+        self._last_enhanced = result
         self._last_source = text
-        self._last_alt_source = alt_text
         seconds = time.time() - started
         effort_note = f" Reasoning effort `{effort}`." if effort else ""
-        return prompt_result, alt_result, (
-            f"Enhanced remotely with **{engine}** "
-            f"(mode `{mode}`{self._field_note(model_def, bool(prompt_result), bool(alt_result))}) "
-            f"in {seconds:.1f}s."
+        return result, (
+            f"Enhanced remotely with **{engine}** (mode `{mode}`) in {seconds:.1f}s."
             f"{effort_note}{self._word_note(min_words, max_words)}. No local VRAM used."
         )
 
@@ -4668,11 +3840,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         min_words, max_words = self._word_range()
 
         with gr.Row(elem_id="local_enhance_row") as button_row:
-            row_label = gr.HTML(
-                self._row_label_html(self._current_model_def(self._state_value())),
+            gr.HTML(
+                "<span style='font-weight:600; white-space:nowrap;'>Enhance Prompt:</span>",
                 elem_classes=["local-enhance-label"],
             )
-            self._row_label = row_label
             # size="sm" + scale=0: die Knoepfe nehmen nur ihre naturale Breite
             # statt die halbe Reihe zu fuellen.
             # Beide Knoepfe in einer eigenen Zeile: Gradio gibt den Kindern
@@ -4957,52 +4128,26 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Die Bilder haengen nur am lokalen Knopf: nur der lokale 27B-Pfad hat
         # einen Vision-Teil, und sie muessen live aus den Komponenten kommen
         # (der Settings-Snapshot ist nach einem frisch hinzugefuegten Bild alt).
-        outputs = self._inline_outputs(prompt_component)
+        controls = self._mode_components() + self._control_components()
+        image_components = self._image_components()
         remote_btn.click(
             fn=self.enhance_inline_remote,
-            inputs=self._inline_inputs(prompt_component, with_images=False),
-            outputs=outputs,
+            inputs=[self.state, prompt_component] + controls,
+            outputs=[prompt_component],
             show_progress="hidden",
         )
         local_btn.click(
             fn=self.enhance_inline,
-            inputs=self._inline_inputs(prompt_component, with_images=True),
-            outputs=outputs,
+            inputs=[self.state, prompt_component] + controls + image_components,
+            outputs=[prompt_component],
             show_progress="full",
         )
-        local_api_outputs = [prompt_component]
-        if self._alt_prompt_component() is not None:
-            local_api_outputs.append(self._alt_prompt_component())
-        local_api_outputs.append(local_api_btn)
         local_api_btn.click(
             fn=self.enhance_inline_local_api,
-            inputs=self._inline_inputs(prompt_component, with_images=False),
-            outputs=local_api_outputs,
+            inputs=[self.state, prompt_component] + controls,
+            outputs=[prompt_component, local_api_btn],
             show_progress="full",
         )
-        # Composition Source: Label ("Enhance Lyrics") und Max-Duration an die
-        # gewaehlte Quelle anpassen. Nur wenn WanGP die Komponenten liefert;
-        # bei Bild-/Video-Modellen fehlen sie und der Listener entfaellt.
-        source_dropdown = getattr(self, "audio_prompt_type_sources", None)
-        source_outputs = self._source_ui_outputs()
-        source_audio = getattr(self, "audio_guide", None)
-        if source_dropdown is not None and source_outputs:
-            source_inputs = [self.state, source_dropdown]
-            if source_audio is not None:
-                source_inputs.append(source_audio)
-            source_dropdown.change(
-                fn=self._source_ui_update,
-                inputs=source_inputs,
-                outputs=source_outputs,
-                show_progress="hidden",
-            )
-            if source_audio is not None:
-                source_audio.change(
-                    fn=self._source_ui_update,
-                    inputs=source_inputs,
-                    outputs=source_outputs,
-                    show_progress="hidden",
-                )
         # Den eingebauten "Enhance Prompt"-Knopf ausblenden. visible=False allein
         # genuegt nicht: beim Modellwechsel setzt WanGPs modellabhaengiges
         # UI-Update ihn wieder auf sichtbar. Deshalb zusaetzlich eine eigene
@@ -5037,66 +4182,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except Exception:  # noqa: BLE001
             pass
 
-    @staticmethod
-    def _api_enhancer_instruction_resolver(model_type, model_def, mode, is_image, fallback, tokens):
-        """Anweisungen + Token-Budget fuer einen Local-API-Schritt.
-
-        Der Host loest dieselbe Frage in `resolve_prompt_enhancer_settings()`
-        (wgp.py:6691): Modell-Handler, dann `model_def[..._prompt_enhancer_
-        instructions<profil>]`, zuletzt die uebergebenen Anweisungen. Der
-        Local-API-Knopf umgeht den Host, deshalb wird die Funktion hier
-        aufgerufen, wenn sie vorhanden ist; sonst gilt dieselbe Reihenfolge in
-        Kurzform.
-        """
-        resolver = _main("resolve_prompt_enhancer_settings")
-        if callable(resolver):
-            try:
-                resolved, budget = resolver(
-                    model_type,
-                    model_def,
-                    mode,
-                    is_image,
-                    prompt_enhancer_instructions=fallback,
-                    text_encoder_max_tokens=tokens,
-                    enhancer_kwargs={},
-                )
-                return str(resolved or fallback or ""), int(budget or tokens)
-            except Exception:  # noqa: BLE001 - Kurzform unten
-                pass
-        suffix = next((char for char in str(mode or "") if char.isdigit()), "")
-        model_def = model_def if isinstance(model_def, dict) else {}
-        prefix = "image" if is_image else "text"
-        for key in (
-            f"{prefix}_prompt_enhancer_instructions{suffix}",
-            f"{prefix}_prompt_enhancer_instructions",
-            f"text_prompt_enhancer_instructions{suffix}",
-            "text_prompt_enhancer_instructions",
-        ):
-            text = str(model_def.get(key) or "").strip()
-            if text:
-                return text, tokens
-        return str(fallback or ""), tokens
-
-    def _local_api_result(self, prompt_result, alt_result, button_update):
-        """Rueckgabe des Local-API-Knopfs passend zu seinen Ausgaben."""
-        updates = []
-        if prompt_result:
-            updates.append(self._with_history(prompt_result))
-        else:
-            updates.append(gr.update())
-        if self._alt_prompt_component() is not None:
-            if alt_result:
-                updates.append(
-                    self._with_history(
-                        alt_result,
-                        source=getattr(self, "_last_alt_source", ""),
-                    )
-                )
-            else:
-                updates.append(gr.update())
-        updates.append(button_update)
-        return tuple(updates)
-
     def enhance_inline_local_api(self, state, text, *values):
         """Local API: Prompt ueber einen lokalen OpenAI-Server verbessern.
 
@@ -5104,22 +4189,14 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         ob der konfigurierte oder ein automatisch gefundener Server antwortet.
         Bei Fehlschlag wird der Knopf deaktiviert; Detect/Test in der Karte
         schaltet ihn wieder frei.
-
-        Modus und Felder folgen denselben Regeln wie die beiden Hauptknoepfe:
-        `T1` schreibt den Prompt, `B2O` den Alt-Text (YuE2: Music Style),
-        `T1,B2O` beides nacheinander. Die Anweisungen kommen aus der
-        Modelldefinition, damit Lyrics und Stil nach den Vorgaben des Modells
-        entstehen.
         """
-        mode_value, values = self._split_mode_input(values)
-        alt_text, values = self._split_alt_input(values)
+        _mode_value, values = self._split_mode_input(values)
         controls, _live_images = self._split_image_inputs(values)
         think, min_words, max_words = self._read_controls(controls)
         text = str(text or "").strip()
-        alt_text = str(alt_text or "").strip()
-        if not text and not alt_text:
+        if not text:
             gr.Warning("Enter a prompt first.")
-            return self._local_api_result("", "", gr.update())
+            return gr.update(), gr.update()
         # Reste eines frueheren lokalen Laufs zuerst freigeben.
         self._free_local_enhancer()
         base, model = self._find_local_api()
@@ -5128,7 +4205,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "No local API server found. Start LM Studio/Ollama and press "
                 "Detect or Test connection in the Enhance Prompt card."
             )
-            return self._local_api_result("", "", gr.update(interactive=False))
+            return gr.update(), gr.update(interactive=False)
         try:
             get_state_model_type = _main("get_state_model_type")
             model_type = get_state_model_type(state) if callable(get_state_model_type) else ""
@@ -5149,125 +4226,38 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             is_image = int((settings or {}).get("image_mode", 0) or 0) > 0
         except Exception:  # noqa: BLE001
             is_image = False
-        mode = self._effective_mode(mode_value, model_def, audio_only, int(is_image))
-        fallback = self._fallback_instructions(
+        instructions = self._fallback_instructions(
             is_image, audio_only, min_words, max_words
         )
         tokens = self._output_token_budget(min_words, max_words)
-        effort = "high" if think else ""
-
-        def api_process(
-            _model_type,
-            _model_def,
-            step_mode,
-            step_values,
-            _image_start=None,
-            _image_refs=None,
-            _is_image=False,
-            _audio_only=False,
-            _seed=-1,
-            prompt_enhancer_instructions=None,
-            text_encoder_max_tokens=512,
-            enhancer_kwargs=None,
-            batch_images=False,
-        ):
-            instructions, budget = self._api_enhancer_instruction_resolver(
-                model_type,
-                model_def,
-                step_mode,
-                is_image,
-                prompt_enhancer_instructions or fallback,
-                int(text_encoder_max_tokens or tokens),
-            )
-            chaining = self._chaining()
-            if chaining is not None:
-                try:
-                    instructions = chaining.append_combined_input_contract(
-                        instructions, step_mode
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
-            outputs = []
-            for value in step_values:
-                answer, fehler = self._api_chat(
-                    instructions,
-                    value,
-                    max_tokens=budget,
-                    effort=effort,
-                    base=base,
-                    model=model,
-                )
-                if not answer:
-                    raise RuntimeError(str(fehler))
-                outputs.append(answer)
-            return outputs
-
-        lyrics_input = text
-        if self._mode_writes_lyrics(mode):
-            lyrics_input = self._with_lyrics_structure(
-                text, self._lyrics_structure_for(settings)
-            )
-        try:
-            prompt_result, alt_result = self._run_enhance_steps(
-                api_process,
-                model_type,
-                model_def,
-                mode,
-                lyrics_input,
-                alt_text,
-                is_image,
-                audio_only,
-                None,
-                fallback,
-                tokens,
-                {},
-            )
-        except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
-            gr.Warning(f"Local API ({model}) failed: {exc}")
-            return self._local_api_result("", "", gr.update(interactive=True))
-        if not prompt_result and not alt_result:
-            gr.Warning("The API returned an empty answer.")
-            return self._local_api_result("", "", gr.update(interactive=True))
-        self._last_source = text
-        self._last_alt_source = alt_text
-        self._last_enhanced = prompt_result or alt_result
-        gr.Info(
-            f"Local API ({model}): enhanced"
-            f"{self._field_note(model_def, bool(prompt_result), bool(alt_result))}"
+        result, fehler = self._api_chat(
+            instructions,
+            text,
+            max_tokens=tokens,
+            effort="high" if think else "",
+            base=base,
+            model=model,
         )
-        return self._local_api_result(prompt_result, alt_result, gr.update(interactive=True))
-
-    def _inline_result(self, prompt_result, alt_result):
-        """Rueckgabe der Inline-Knoepfe passend zu _inline_outputs()."""
-        updates = []
-        if prompt_result:
-            updates.append(self._with_history(prompt_result))
-        else:
-            updates.append(gr.update())
-        if self._alt_prompt_component() is not None:
-            if alt_result:
-                updates.append(
-                    self._with_history(
-                        alt_result,
-                        source=getattr(self, "_last_alt_source", ""),
-                    )
-                )
-            else:
-                updates.append(gr.update())
-        return tuple(updates) if len(updates) > 1 else updates[0]
+        if not result:
+            gr.Warning(str(fehler).replace("**", "").replace("`", ""))
+            return gr.update(), gr.update(interactive=True)
+        self._last_source = text
+        self._last_enhanced = result
+        gr.Info(f"Local API ({model}): enhanced")
+        return self._with_history(result), gr.update(interactive=True)
 
     def enhance_inline_remote(self, state, text, *controls):
-        """Wie enhance_remote(), schreibt das Ergebnis direkt in die Felder."""
-        result, alt_result, status = self.enhance_remote(state, text, *controls)
-        if not result and not alt_result:
+        """Wie enhance_remote(), schreibt das Ergebnis direkt ins Prompfeld."""
+        result, status = self.enhance_remote(state, text, *controls)
+        if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
-            return self._inline_result("", "")
+            return gr.update()
         gr.Info(str(status).replace("**", "").replace("`", ""))
-        return self._inline_result(result, alt_result)
+        return self._with_history(result)
 
     def enhance_inline(self, state, text, *values, progress=gr.Progress()):
-        """Wie enhance(), schreibt das Ergebnis aber direkt in die Felder."""
-        result, alt_result, status = self.enhance(state, text, *values, progress=progress)
+        """Wie enhance(), schreibt das Ergebnis aber direkt ins Prompfeld."""
+        result, status = self.enhance(state, text, *values, progress=progress)
         # --- Diagnose (vorlaeufig): Ergebnis und Status mitschreiben ---------
         # Der Grund stand bisher nur als Toast in der Oberflaeche und war damit
         # von aussen nicht zu sehen. Diese Zeile schreibt ihn zusaetzlich in
@@ -5277,22 +4267,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                       encoding="utf-8") as _dbg:
                 _dbg.write(
                     f"enhance_inline result={'JA' if result else 'NEIN'} "
-                    f"alt={'JA' if alt_result else 'NEIN'} "
                     f"laenge={len(str(result or ''))} "
                     f"status={str(status)[:300]!r} "
                     f"text_eingabe={len(str(text or ''))} Zeichen\n"
                 )
         except Exception:
             pass
-        if not result and not alt_result:
+        if not result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
-            return self._inline_result("", "")
+            return gr.update()
         # Fuer die Statuszeile dieselbe Trennung wie in enhance(): erst den
-        # Modus abziehen, dann Alt-Text und Bilder, sonst verschieben sich die
-        # Eingaben.
+        # Modus abziehen, sonst verschieben sich die Eingaben um eins.
         _mode_value, values = self._split_mode_input(values)
         controls, _live_images = self._split_image_inputs(values)
-        _alt_text, controls = self._split_alt_input(controls)
         think, min_words, max_words = self._read_controls(controls)
         marker = " + Think" if think else ""
         gr.Info(
@@ -5300,7 +4287,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             f"{marker}{self._word_note(min_words, max_words)}"
             f"{self._image_note(getattr(self, '_last_image_labels', ()))}"
         )
-        return self._inline_result(result, alt_result)
+        return self._with_history(result)
 
     # ------------------------------------------------------------------- UI
 
@@ -5769,18 +4756,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             print(f"[{PlugIn_Name}] Komponente 'activated_loras' nicht gefunden - "
                   "die Bypass-LoRA wird nicht automatisch eingetragen.")
 
-        tab_inputs = (
-            [state, text_in]
-            + self._mode_components()
-            + self._control_components()
-        )
-        alt_component = self._alt_prompt_component()
-        if alt_component is not None:
-            tab_inputs.append(alt_component)
-        tab_inputs += self._image_components()
         enhance_btn.click(
-            fn=self._enhance_tab,
-            inputs=tab_inputs,
+            fn=self.enhance,
+            inputs=[state, text_in] + self._mode_components()
+            + self._control_components() + self._image_components(),
             outputs=[text_out, status],
         )
 
@@ -6047,251 +5026,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             show_progress="hidden",
         )
 
-        # --- Karte "Music Style" ---------------------------------------------
-        # Erscheint nur bei Audio-Modellen mit Musik-Feld (YuE2 "Music Style",
-        # ACE "Music Caption", MiniMax "Music Description", ...). Die Tags
-        # bauen eine Caption; "Apply" schreibt sie in WanGPs echtes Feld.
-        music_style_card = None
-        music_style_preview = None
-        if self._alt_prompt_component() is not None:
-            groups = self._music_tag_groups()
-            initial_visible = self._music_style_visible(
-                self._current_model_def(self._state_value())
-            )
-            with gr.Column(
-                elem_classes=["le-card"], visible=initial_visible
-            ) as music_style_card:
-                gr.HTML("<div class='le-card-title'>Music Style</div>")
-                gr.HTML(
-                    "<div class='le-hint'>Pick tags for the music model; the "
-                    "finished caption appears below. <b>Apply</b> replaces "
-                    "WanGP's Music Style field, <b>Append</b> keeps the current "
-                    "text and adds the tags. The tag lists live in "
-                    f"<code>{self._music_tag_path()}</code>.</div>"
-                )
-                gr.HTML(
-                    "<div class='le-hint'>With <b>Use Score from Audio</b> the "
-                    "source sets the structure and the Max Song Duration; "
-                    "Music Style stays your choice because transcription "
-                    "supplies notes, not timbre.</div>"
-                )
-                music_cover = gr.Checkbox(
-                    label="Create Cover",
-                    value=False,
-                    info=(
-                        "Sets Composition Source to Use Score from Audio and "
-                        "takes Max Song Duration from the uploaded source song."
-                    ),
-                )
-                music_cover_status = gr.Markdown()
-                self._cover_status = music_cover_status
-                with gr.Row(elem_classes=["le-row"]):
-                    music_language = gr.Dropdown(
-                        choices=groups["language"],
-                        value=None,
-                        label="Language",
-                        scale=1,
-                        min_width=150,
-                    )
-                    music_vocals = gr.Dropdown(
-                        choices=groups["vocals"],
-                        value=None,
-                        label="Vocals",
-                        scale=1,
-                        min_width=170,
-                    )
-                    music_tempo = gr.Dropdown(
-                        choices=groups["tempo"],
-                        value=None,
-                        label="Tempo",
-                        allow_custom_value=True,
-                        scale=1,
-                        min_width=140,
-                    )
-                    self._music_tempo = music_tempo
-                with gr.Row(elem_classes=["le-row"]):
-                    music_genres = gr.Dropdown(
-                        choices=groups["genre"],
-                        value=[],
-                        multiselect=True,
-                        label="Genre",
-                        scale=2,
-                        min_width=220,
-                    )
-                    music_instruments = gr.Dropdown(
-                        choices=groups["instruments"],
-                        value=[],
-                        multiselect=True,
-                        label="Instruments",
-                        scale=3,
-                        min_width=240,
-                    )
-                with gr.Row(elem_classes=["le-row"]):
-                    music_mood = gr.Dropdown(
-                        choices=groups["mood"],
-                        value=[],
-                        multiselect=True,
-                        label="Mood",
-                        scale=2,
-                        min_width=200,
-                    )
-                    music_production = gr.Dropdown(
-                        choices=groups["production"],
-                        value=[],
-                        multiselect=True,
-                        label="Production",
-                        scale=2,
-                        min_width=200,
-                    )
-                music_extra = gr.Textbox(
-                    label="Extra style notes",
-                    lines=2,
-                    placeholder="Anything not covered by the tags ...",
-                )
-                music_style_preview = gr.Textbox(
-                    label="Finished Music Style",
-                    lines=3,
-                    interactive=False,
-                    placeholder="Pick tags or type extra notes ...",
-                )
-                with gr.Row(elem_classes=["le-actions"]):
-                    music_apply = gr.Button(
-                        "Apply to Music Style", variant="primary", size="sm"
-                    )
-                    music_append = gr.Button("Append", size="sm")
-                    music_clear = gr.Button("Clear tags", size="sm")
-                gr.HTML(
-                    "<div class='le-hint'>Tip: <b>instrumental (no vocals)</b> "
-                    "drops the language and vocal tags automatically.</div>"
-                )
-                gr.HTML("<div class='le-section'>Lyrics structure</div>")
-                music_structure = gr.Textbox(
-                    label="Section plan (optional)",
-                    value=self._lyrics_structure(),
-                    lines=3,
-                    placeholder="[Intro]\n[Verse 1]\n[Chorus]\n...",
-                    info=(
-                        "Used when the Lyrics are enhanced (T1 or T1,B2O). "
-                        "For a source song: enable Save ABC and MIDI Score, "
-                        "then load the exported .abc here."
-                    ),
-                )
-                with gr.Row(elem_classes=["le-actions"]):
-                    music_structure_load = gr.UploadButton(
-                        "Load from ABC", file_types=[".abc"], size="sm"
-                    )
-                    music_structure_clear = gr.Button(
-                        "Clear structure", size="sm"
-                    )
-                music_structure.input(
-                    fn=self._save_lyrics_structure,
-                    inputs=[music_structure],
-                    outputs=[],
-                    show_progress="hidden",
-                )
-                music_structure_load.upload(
-                    fn=self._structure_from_abc_file,
-                    inputs=[music_structure_load],
-                    outputs=[music_structure],
-                    show_progress="hidden",
-                )
-
-                def structure_leeren():
-                    self._save_lyrics_structure("")
-                    return gr.update(value="")
-
-                music_structure_clear.click(
-                    fn=structure_leeren,
-                    inputs=None,
-                    outputs=[music_structure],
-                    show_progress="hidden",
-                )
-
-                cover_inputs = [music_cover, state]
-                cover_audio = getattr(self, "audio_guide", None)
-                if cover_audio is not None:
-                    cover_inputs.append(cover_audio)
-                music_cover.change(
-                    fn=self._cover_mode_update,
-                    inputs=cover_inputs,
-                    outputs=self._cover_outputs(music_cover_status),
-                    show_progress="hidden",
-                )
-                if getattr(self, "audio_prompt_type_sources", None) is not None:
-                    self.audio_prompt_type_sources.change(
-                        fn=self._source_tempo_update,
-                        inputs=[self.audio_prompt_type_sources],
-                        outputs=[music_tempo],
-                        show_progress="hidden",
-                    )
-
-                tag_inputs = [
-                    music_language, music_genres, music_vocals,
-                    music_instruments, music_mood, music_tempo,
-                    music_production, music_extra,
-                ]
-                for tag_component in tag_inputs[:-1]:
-                    tag_component.change(
-                        fn=self._compose_music_style,
-                        inputs=tag_inputs,
-                        outputs=music_style_preview,
-                        show_progress="hidden",
-                    )
-                music_extra.input(
-                    fn=self._compose_music_style,
-                    inputs=tag_inputs,
-                    outputs=music_style_preview,
-                    show_progress="hidden",
-                )
-                music_apply.click(
-                    fn=self._music_style_apply,
-                    inputs=[music_style_preview],
-                    outputs=[self.alt_prompt],
-                    show_progress="hidden",
-                )
-                music_append.click(
-                    fn=self._music_style_append,
-                    inputs=[self.alt_prompt, music_style_preview],
-                    outputs=[self.alt_prompt],
-                    show_progress="hidden",
-                )
-                music_clear.click(
-                    fn=self._music_style_clear,
-                    inputs=None,
-                    outputs=[
-                        music_language, music_genres, music_vocals,
-                        music_instruments, music_mood, music_tempo,
-                        music_production, music_extra, music_style_preview,
-                    ],
-                    show_progress="hidden",
-                )
-            if refresh_trigger is not None:
-                # Modellwechsel: Karte ein-/ausblenden, ohne auf den Tab-Wechsel
-                # zu warten. refresh_form_trigger feuert genau dabei.
-                refresh_trigger.change(
-                    fn=self._music_style_visibility_update,
-                    inputs=[state],
-                    outputs=[music_style_card],
-                    show_progress="hidden",
-                )
-
-        row_label = getattr(self, "_row_label", None)
-        if refresh_trigger is not None and row_label is not None:
-            # "Enhance Lyrics" vs. "Enhance Prompt" beim Modellwechsel.
-            refresh_trigger.change(
-                fn=self._row_label_update,
-                inputs=[state],
-                outputs=[row_label],
-                show_progress="hidden",
-            )
-
-        # Die Music-Style-Karte haengt am aktuellen Modell: bei YuE2 sichtbar,
-        # bei Bild-/TTS-Modellen verborgen. Sie kommt als letzte Ausgabe dazu,
-        # damit on_tab_select() sie beim Tab-Wechsel nachziehen kann.
-        self._music_style_card = music_style_card
-        if music_style_card is not None:
-            self.on_tab_outputs.append(music_style_card)
-
         def prompt_erzeugen(
             state_value, model_type, description, text, guidelines, source,
             provider, base, model, key, remember, max_tokens, temperature,
@@ -6507,6 +5241,4 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             except Exception:  # noqa: BLE001 - ohne Typ gilt der Filter nicht
                 typ = None
             werte.append(gr.update(value=self._with_bypass_lora(aktuell, typ)))
-        if getattr(self, "_music_style_card", None) is not None:
-            werte.append(self._music_style_visibility_update(state))
         return tuple(werte)

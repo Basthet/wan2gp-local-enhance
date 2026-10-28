@@ -20,18 +20,7 @@ Der **Modus** (WanGPs Dropdown „Enhance Prompt using a LLM") gilt für beide
 Knöpfe und kommt **live** aus WanGPs verstecktem `prompt_enhancer`-Text — auch
 `"K"` aus der Think-Checkbox steckt darin. Nur wenn dieser Wert leer ist
 („Disabled" gewählt) oder die Komponente fehlt, fällt das Plugin auf den
-Modell-Default zurück (`_resolve_mode`). Ein **veralteter** Live-Wert (vom
-vorigen Modell, z. B. `T` an YuE2) wird gegen die Modell-Auswahl geprüft und
-verworfen — sonst fehlt das Profil (`…instructions1`) und statt Lyrics entsteht
-eine allgemeine Audio-Stilbeschreibung.
-
-Modelle mit **zwei** Textfeldern (YuE2: `prompt` = Lyrics, `alt_prompt` =
-Music Style) bekommen das zweite Feld als Klick-Eingabe. Das Plugin folgt
-WanGPs Routing (`T`/`L`/`B`, `O` schreibt `alt_prompt`, Komma = Kette) über
-`prompt_enhancer_chaining`: `T1` schreibt Lyrics, `B2O` den Music Style,
-`T1,B2O` beides nacheinander — der Style-Schritt sieht die **neuen** Lyrics als
-JSON-Kontext. Die Anweisungen kommen aus der Modelldefinition; das Plugin
-übergibt nur den Fallback.
+Modell-Default zurück (`_resolve_mode`).
 
 Drei Regler, alle gelten für **beide** Knöpfe:
 
@@ -139,11 +128,8 @@ neu starten.
   (`state, prompt, Modus, Think, Preset, Min, Max`), der lokale **7 +
   Bild-Eingaben**; seit `e5ed6d8` sind es **6**
   (`state, prompt, Modus, Think, Min, Max`), das
-  Preset ist weg. Mit dem zweiten Textfeld (`alt_prompt`, bei YuE2 „Music
-  Style") sind es **7** bzw. **7 + Bild-Eingaben**; die Komponente existiert in
-  WanGP immer, ist ohne `alt_prompt`-Definition aber unsichtbar. Vorher stand
-  im Klick immer der Modell-Default, wodurch Modelle mit erstem Modus `"T"`
-  (`qwen_image_21_7B`) die Bilder verwarfen.
+  Preset ist weg. Vorher stand im Klick immer der Modell-Default, wodurch
+  Modelle mit erstem Modus `"T"` (`qwen_image_21_7B`) die Bilder verwarfen.
 - `e5ed6d8` — Wortgrenze in den Plugin-Tab: Preset-Dropdown entfernt, Min/Max
   als zwei Felder im Tab, `_UI_CSS` und `dev/ui_preview.py` angepasst
 - `b758ac5` — Modell-Check-Kern: `_collect_enhancer_overrides()` sammelt die
@@ -204,29 +190,6 @@ neu starten.
   **Import prompts** aufgeklappt, `Save as` schlägt
   `_next_free_prompt_name()` vor (`Charactersheet 2`) statt den bestehenden
   Eintrag zu überschreiben
-- `fe02028` — **Lyrics/Music Style (YuE2):** `alt_prompt` als Klick-Eingabe und
-  Ausgabe, Modus gegen die Modell-Auswahl geprüft (altes `T` wird `T1`),
-  Ketten über `prompt_enhancer_chaining` (`T1`, `B2O`, `T1,B2O`), Status nennt
-  die geschriebenen Felder, Local API nutzt dieselben Modell-Anweisungen;
-  `dev/check_music_fields.py` + `dev/check_music_wiring.py`
-- `45a12a0` — **Music-Style-Tag-Baukasten:** fünfte Karte bei Audio-Modellen mit
-  Musik-Feld, Dropdowns (Language/Genre/Vocals/Instruments/Mood/Tempo/
-  Production), Live-Vorschau, `Apply`/`Append`/`Clear`, eigene
-  `music_style_tags.json` im Prompt-Ordner, Sichtbarkeit über
-  `refresh_form_trigger` und `on_tab_select`; `dev/check_music_tags.py`
-- `04688f1` — **Lyrics-Struktur:** `Section plan (optional)` mit
-  `Load from ABC`, ABC-`%`-Labels zu `[Intro]`/`[Verse]`/…, automatisch aus der
-  gewählten ABC-Quelle, Kontext vor dem Lyrics-Prompt bei `T1`/`T1,B2O` (nicht
-  bei `B2O`), Config-Key `local_enhance_lyrics_structure`
-- `e88de0c` — **Create Cover:** Checkbox in der Music-Style-Karte setzt
-  Composition Source, den versteckten `audio_prompt_type` selbst, Max Song
-  Duration aus der Quelldatei und die Zeile auf `Enhance Lyrics`; Music Style
-  bleibt eine eigene Wahl; `_row_label` dynamisch,
-  `dev/check_music_tags.py` mit Cover-Fällen
-- `4488deb` — **echter Cover-Eintrag:** Host-Patch
-  `patches/yue2-cover.patch` ergänzt `C` in der YuE2-Composition-Source,
-  Pipeline mappt C auf A, Host-UI/Validierung behandeln C wie A; Plugin nutzt
-  C wenn vorhanden (sonst A), versteckt/leert Tempo, setzt Duration; 43 Tests
 - **Autor-Parameter:** `Max answer tokens`, `Temperature`,
   `Reasoning effort` und `Extra body` landen im API-Payload
   (`_author_api_payload`); `Local model` wählt 9B/27B nach VRAM
@@ -236,9 +199,8 @@ neu starten.
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
-- **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **7 Inputs**
-  (`state, prompt, Modus, Think, Min, Max, alt_prompt`),
-  `local_enhance_local_btn` **7 + Anzahl der Bild-Eingaben** des Modells, das
+- **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **6 Inputs**,
+  `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, das
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
   `photograf`; `default` = kein Override), die Karte **System Prompts** mit
   `Folder` + `Reload`, Werkzeugzeile (`Entry` / `Model` / Min / Max),
@@ -385,15 +347,9 @@ neu starten.
     Think-Checkbox fehlen kann: `bool` = Think, Zahlen = die beiden Wort-Regler
     (erst Min, dann Max); ein einzelnes Zahlenfeld gilt weiter als Obergrenze
     (Altbestand). Feste Reihenfolge der Klick-Eingaben:
-    `state, prompt, Modus, Think, Min, Max, alt_prompt` → **7**. Der Modus-String
-    wird vorher mit `_split_mode_input()` abgezogen, die Bilder trennt
-    `_split_image_inputs()` von rechts ab, den Alt-Text `_split_alt_input()`.
-    `alt_prompt` existiert in WanGP für **jedes** Modell (bei fehlender
-    `alt_prompt`-Definition nur unsichtbar), deshalb steht die Komponente immer
-    in der Verdrahtung; `_alt_prompt_component()` liefert sie oder `None`.
-  - Die Feldnamen des Modells liefert `_field_labels()` (`prompt_class` bzw.
-    `alt_prompt.label`), die Statuszeile nennt die tatsächlich geschriebenen
-    Felder über `_field_note()`.
+    `state, prompt, Modus, Think, Min, Max` → **6**. Der Modus-String wird
+    vorher mit `_split_mode_input()` abgezogen, die Bilder trennt
+    `_split_image_inputs()` von rechts ab.
 - **Modell-Check im Tab:** Der Knopf liest `_main("models_def")` **nur** — kein
   `refresh_model_defs()`, kein `map_family_handlers()`, kein Import von
   Host-Modulen. Beides wäre hier falsch: `refresh_model_defs()` löst den ganzen
@@ -524,103 +480,19 @@ neu starten.
   bereinigt den Namen, hängt bei Kollision ` 2`/` 3` an und kopiert ein
   vorhandenes Sidecar mit; leere Dateien werden abgelehnt.
   Die Karte hat **vier** Karten (System Prompts, Bypass-LoRA, Model check,
-  Prompt workshop). Bei Audio-Modellen mit Musik-Feld kommt eine fünfte Karte
-  **Music Style** dazu (siehe unten); ohne `alt_prompt` fehlt sie ganz, deshalb
-  prüft `dev/check_template_ui.py` weiter vier Karten. Ordner- und Eintragszeile werden nach dem Aufbau mit
+  Prompt workshop). Ordner- und Eintragszeile werden nach dem Aufbau mit
   `_flatten_row()` aus den Gradio-`Form`-Wrappern geholt
   (`fill_expected_parents` würde die Felder sonst vertikal stapeln). Die
   Textfelder wachsen per CSS (`flex:1 1 240px` bzw. `180px`), die Buttons
   behalten ihre `min_width`.
-- **Music Style (Tag-Baukasten):** Die Karte erscheint nur, wenn
-  `_music_style_visible(model_def)` gilt: `audio_only` **und** `alt_prompt` mit
-  einem Musik-Label (`Music Style`, `Music Caption`, `Genres / Tags`,
-  `Music Description`, `Keywords / Tags`). TTS-Felder wie `Spoken Language` oder
-  `Reference Transcripts` bleiben verborgen. Sie wird beim Tab-Aufbau aus dem
-  Live-Zustand gesetzt und bei `refresh_form_trigger.change` sowie über
-  `on_tab_outputs`/`on_tab_select` nachgezogen; ohne `alt_prompt`-Komponente
-  wird sie gar nicht gebaut.
-  Inhalt: Dropdowns für Language/Vocals/Tempo (einfach, Tempo mit
-  `allow_custom_value`), Genre/Instruments/Mood/Production (mehrfach),
-  `Extra style notes`, darunter die read-only Vorschau `Finished Music Style`
-  und die Knöpfe `Apply to Music Style` (ersetzt `alt_prompt`), `Append`
-  (hängt an) und `Clear tags`.
-  `_compose_music_style()` baut in fester Reihenfolge Sprache, Genre, Gesang,
-  Instrumente, Stimmung, Tempo, Produktion, Freitext; doppelte Begriffe fallen
-  weg. Steht irgendwo `instrumental`, wird nur `instrumental` gesetzt und
-  Sprache/Gesang entfallen. Die Listen stehen als Default in
-  `_MUSIC_TAG_DEFAULT`; eine eigene Datei `music_style_tags.json` im
-  Prompt-Ordner (`_music_tag_path()`) überschreibt sie, kaputte/fehlende Dateien
-  fallen still auf die Defaults zurück. Die Datei liegt bewusst außerhalb des
-  Repos, damit eigene Tags kein Plugin-Update blockieren.
-  Die Karte ist ein Geschwister der Hauptspalte (nach ihr im Tab), weil sie
-  erst nach dem UI-Aufbau entsteht; `create_ui()` setzt `self._music_style_card`
-  erst danach und hängt sie an `on_tab_outputs`.
-- **Lyrics-Struktur (Section-Plan):** Unter den Tags steht
-  `Section plan (optional)` mit `Load from ABC` und `Clear structure`. Der Plan
-  wird in `local_enhance_lyrics_structure` gespeichert (Input-Event) und beim
-  Lyrics-Enhancement (`T1`, `T1,B2O`, `B3` … also jeder Schritt, der `prompt`
-  schreibt) als verbindlicher Kontext vor den Prompt gelegt
-  (`_with_lyrics_structure`). Bei `B2O`/`L…` (kein Lyrics-Output) bleibt er
-  unberührt. `_mode_writes_lyrics()` entscheidet das über
-  `prompt_enhancer_chaining.parse_mode`.
-  `_parse_abc_structure()` liest die `% intro`/`% verse`/`% chorus`-Kommentare
-  einer SheetSage2-ABC-Datei (auch `% verse and pre-chorus`, `% fade-out`) und
-  macht daraus `[Intro]`, `[Verse]`, `[Pre-Chorus]`, `[Outro]`; unbekannte
-  Labels (`silence`, `loop`, `irregular`) fallen weg, aufeinanderfolgende
-  Duplikate werden zusammengefasst. `Load from ABC` liest eine Datei direkt.
-  Bei **Use ABC Score / Continue ABC Score** (`audio_prompt_type` `1`/`12`)
-  liest `_structure_from_selected_abc()` die gewählte `custom_guide`-Datei
-  automatisch, wenn das Feld leer ist. Bei **Use Score from Audio** (`A`/`A2`)
-  gibt es zu diesem Zeitpunkt noch keine Transkription — der Enhancer läuft vor
-  der Generierung. Dann einmal mit `Save ABC and MIDI Score` generieren und die
-  exportierte `.abc` über `Load from ABC` laden.
-- **Create Cover (Plugin-Schalter + Host-Patch):** Checkbox oben in der
-  Music-Style-Karte. Der echte Eintrag **Cover** im Composition-Source-Dropdown
-  kommt aus `patches/yue2-cover.patch` (Host-Patch, siehe unten). Das Plugin
-  erkennt ihn an den Choices (`_cover_source_value()`): gibt es `C`, wird `C`
-  gesetzt, sonst bleibt der Fallback `A` (Use Score from Audio). Beim
-  Einschalten:
-  - `audio_prompt_type_sources` sichtbar auf `C` (oder `A` ohne Patch),
-  - den **versteckten** `audio_prompt_type`-Text selbst auf `C`/`A` (bzw. auf
-    `0` beim Ausschalten), weil ein programmatisches Dropdown-Update den
-    Host-`.change` nicht zuverlässig auslöst; Basis ist der bisherige Text ohne
-    die `letters_filter`-Zeichen (`012AC`) plus neuer Quelle,
-  - `duration_seconds` auf die Länge der gewählten `audio_guide`-Datei
-    (`soundfile`, Fallback `librosa`), begrenzt auf `min`/`max` des
-    `duration_slider`,
-  - das Tempo-Dropdown wird versteckt und geleert (`_music_tempo`), weil eine
-    Score-Quelle das Tempo vorgibt,
-  - die Zeile-1-Beschriftung auf `Enhance Lyrics:`.
-  Ausschalten setzt die Quelle auf `New Composition` (`0`) und zeigt das
-  Tempo-Feld wieder. **Music Style bleibt unangetastet** — die Transkription
-  liefert Noten, keine Klangfarbe; ein YuE2-Cover ist eine neue Aufführung,
-  kein Stimmen-Klon. Der Schalter liefert eine Statuszeile in der Karte.
-  `_row_label` wird außerdem bei `refresh_form_trigger.change` (Modellwechsel)
-  aktualisiert; die sichtbare Zeile heißt bei `prompt_class == "Lyrics"` oder
-  Musik-Feld `Enhance Lyrics`.
-  Die Komponenten `audio_prompt_type_sources`, `audio_prompt_type`,
-  `audio_guide` und `duration_seconds` werden in `setup_ui()` angefragt; fehlen
-  sie (Bild-/Video-Modell, Nachbau), filtert `_cover_components()` sie still.
-- **Host-Patch „Cover“:** `patches/yue2-cover.patch` ergänzt in WanGP
-  `SOURCE_LABELS["C"] = "Cover (Score from Audio, fixed tempo)"`, erweitert
-  `letters_filter` auf `012AC`, lässt `validate_source` C wie A prüfen und
-  bildet C in `yue2/pipeline.py` vor der Engine auf A ab. In `wgp.py` behandeln
-  Audio-Upload, Validierung, stiller WAV-Fallback, Enhancer-Kwargs und
-  `refresh_audio_prompt_type_sources` C wie A (`any_letters(..., "AC")` bzw.
-  `"ABC"`). Anwenden im WanGP-Klon:
-  `cd ~/git/Wan2GP && git apply ~/git/wan2gp-local-enhance/patches/yue2-cover.patch`,
-  zurück mit `git apply -R ...`. **Nicht update-sicher** — nach einem
-  WanGP-Update erneut anwenden. Der Patch ist kein Stimmen-Klon; er liefert nur
-  die feste Score-Quelle.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 100, Max 350. `_migrate_word_defaults()` hebt beim ersten
   Start exakt die alten Vorgaben (0/150) auf 100/350; der Marker
   `local_enhance_word_defaults_v2` verhindert einen zweiten Lauf, eigene Werte
   bleiben. Dazu
-  `local_enhance_prompt_dir`, `local_enhance_prompt_migrated`,
-  `local_enhance_template` (Default `default`) und
-  `local_enhance_lyrics_structure` (leerer Section-Plan). Dazu `local_enhance_author_source`
+  `local_enhance_prompt_dir`, `local_enhance_prompt_migrated` und
+  `local_enhance_template` (Default `default`). Dazu `local_enhance_author_source`
   (`Local 27B` / `OpenAI-compatible API`), `local_enhance_author_base_url`,
   `local_enhance_author_model`, `local_enhance_author_api_key` (nur mit
   `Remember API key`), `local_enhance_author_remember_key`,
@@ -790,37 +662,13 @@ neu starten.
   auf den Plugin-Instanzen setzen (`p.image_start = gr.File(...)`,
   `p.image_prompt_type = gr.CheckboxGroup(...)`, `p.video_prompt_type = …`) und
   `demo.get_config_file()` nach `targets == [<knopf-id>, "click"]` durchsuchen:
-  `local_enhance_remote_btn` muss **7** Inputs haben (mit `alt_prompt`),
-  `local_enhance_local_btn` **7 + Anzahl der Bild-Komponenten**; der Tab-Knopf
-  wird mit denselben Reglern verdrahtet, also ebenfalls **7 + Anzahl der
-  Bild-Eingaben**. Ohne `alt_prompt`-Komponente (Nachbau ohne zweites Feld)
-  bleiben es **6** bzw. **6 + Bilder**.
+  `local_enhance_remote_btn` muss **6** Inputs haben, `local_enhance_local_btn`
+  **6 + Anzahl der Bild-Komponenten**; der Tab-Knopf wird mit denselben Reglern
+  verdrahtet, also ebenfalls **6 + Anzahl der Bild-Eingaben**.
 - End-to-End (WanGP läuft): `http://127.0.0.1:7860/config` abrufen — die
-  Dependencies von `local_enhance_remote_btn` müssen **7 Inputs** haben
-  (`state, prompt, Modus, Think, Min, Max, alt_prompt`),
-  `local_enhance_local_btn` **7 + Anzahl der Bild-Eingaben** des Modells;
-  Ausgaben: Prompt + `alt_prompt` (Remote/Lokal) bzw. Prompt + `alt_prompt` +
-  Knopf (Local API).
-- Music-Felder ohne GPU/WanGP: `dev/check_music_fields.py` (WanGP-venv, aus dem
-  WanGP-Ordner) prüft **13** Fälle: veralteter Live-Modus (`T` an YuE2) fällt
-  auf `T1` zurück, leerer Wert ergibt `T1`, `T1,B2O`/`T1K` bleiben erhalten,
-  `_field_labels` liefert `Lyrics`/`Music Style`, `_split_alt_input` trennt den
-  Alt-Text, `T1` schreibt nur den Prompt, `B2O` nur den Style (mit JSON aus
-  beiden Feldern), `T1,B2O` schreibt beide und reicht die neuen Lyrics an den
-  Style-Schritt weiter. Erwartung: 13 `PASS`, Exit 0.
-- Verdrahtung mit Alt-Text: `dev/check_music_wiring.py` (WanGP-venv, aus dem
-  WanGP-Ordner) baut die Knöpfe mit/ohne `alt_prompt` und prüft die
-  Gradio-Konfiguration: mit Alt 7/7/7 Eingaben und 2/2/3 Ausgaben, ohne Alt
-  6/6/6 und 1/1/2. Erwartung: 12 `PASS`, Exit 0.
-- Music-Style-Tags: `dev/check_music_tags.py` (WanGP-venv, aus dem WanGP-Ordner)
-  prüft **43** Fälle: Komposition/Reihenfolge, Dedupe, instrumental-Regel,
-  Sichtbarkeit (YuE2/ACE ja, TTS/Image nein), eigene `music_style_tags.json`
-  inkl. kaputter Datei, Apply/Append/Clear, ABC-Struktur (inkl.
-  `verse and pre-chorus`/`fade-out`), Lyrics-Kontext, `_mode_writes_lyrics`,
-  Cover (Lyrics-Label, Dauer aus WAV, versteckter Source-Text C, Tempo
-  versteckt), die fünfte Karte mit allen Dropdowns/Buttons/`Section plan`/
-  `Create Cover` und `on_tab_select` (sichtbar bei YuE2, verborgen bei Krea 2).
-  Erwartung: 43 `PASS`, Exit 0.
+  Dependencies von `local_enhance_remote_btn` müssen **6 Inputs** haben
+  (`state, prompt, Modus, Think, Min, Max`), `local_enhance_local_btn`
+  **6 + Anzahl der Bild-Eingaben** des Modells.
 - Vision live: Modus *Based on Text Prompt and Images* wählen, Startbild mit
   markantem Inhalt setzen, Prompt „a cat" → der verbesserte Prompt muss den
   Bildinhalt beschreiben und die Statuszeile `images: start image` nennen. Dann
@@ -846,14 +694,9 @@ neu starten.
   live berechnete Zeile steht über dem eingeklappten Modell-Check und wird beim
   Tab-Wechsel neu gezogen (`on_tab_outputs`, siehe „Technisches"). Die beiden
   Knöpfe in Zeile 1 bekommen weiterhin **keinen** eigenen Hinweis: sie schreiben
-  Prompt und (falls vorhanden) `alt_prompt` (`outputs=[prompt, alt_prompt]`;
-  Status ginge allenfalls als `gr.Info`/`gr.Warning`-Toast raus) und haben keine
-  Statuszeile — ein Hinweis dort bräuchte eine eigene Ausgabe-Komponente.
-- **Style → Lyrics:** `T1` (Lyrics) liest bei YuE2 nur den Prompt; der Music
-  Style fließt erst im Style-Schritt (`B2O` bzw. `T1,B2O`) ein. Das entspricht
-  der Modelldefinition („Lyrics then Music Style", `yue2_handler.py:211`); eine
-  Variante `B1` (Style als Kontext für die Lyrics) bietet YuE2 nicht an und wird
-  deshalb auch nicht erfunden.
+  nur ins Promptfeld (`outputs=[prompt_component]`; Status ginge allenfalls als
+  `gr.Info`/`gr.Warning`-Toast raus) und haben keine Statuszeile — ein Hinweis
+  dort bräuchte eine eigene Ausgabe-Komponente.
 - Das Denk-Budget der 27B ist hart auf **2000 Tokens** begrenzt
   (`shared/prompt_enhancer/qwen35_text.py:64`) — es gibt keinen Config-Key dafür.
 - Der Tab-Knopf hat keine eigenen Widgets; er nutzt dieselben Regler wie die
