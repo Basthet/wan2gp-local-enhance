@@ -214,6 +214,10 @@ neu starten.
   Production), Live-Vorschau, `Apply`/`Append`/`Clear`, eigene
   `music_style_tags.json` im Prompt-Ordner, Sichtbarkeit über
   `refresh_form_trigger` und `on_tab_select`; `dev/check_music_tags.py`
+- `04688f1` — **Lyrics-Struktur:** `Section plan (optional)` mit
+  `Load from ABC`, ABC-`%`-Labels zu `[Intro]`/`[Verse]`/…, automatisch aus der
+  gewählten ABC-Quelle, Kontext vor dem Lyrics-Prompt bei `T1`/`T1,B2O` (nicht
+  bei `B2O`), Config-Key `local_enhance_lyrics_structure`
 - **Autor-Parameter:** `Max answer tokens`, `Temperature`,
   `Reasoning effort` und `Extra body` landen im API-Payload
   (`_author_api_payload`); `Local model` wählt 9B/27B nach VRAM
