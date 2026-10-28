@@ -219,10 +219,14 @@ neu starten.
   gewählten ABC-Quelle, Kontext vor dem Lyrics-Prompt bei `T1`/`T1,B2O` (nicht
   bei `B2O`), Config-Key `local_enhance_lyrics_structure`
 - `e88de0c` — **Create Cover:** Checkbox in der Music-Style-Karte setzt
-  Composition Source auf `A`, den versteckten `audio_prompt_type` selbst,
-  Max Song Duration aus der Quelldatei und die Zeile auf `Enhance Lyrics`;
-  Music Style bleibt eine eigene Wahl; `_row_label` dynamisch,
-  `dev/check_music_tags.py` mit Cover-Fällen (41)
+  Composition Source, den versteckten `audio_prompt_type` selbst, Max Song
+  Duration aus der Quelldatei und die Zeile auf `Enhance Lyrics`; Music Style
+  bleibt eine eigene Wahl; `_row_label` dynamisch,
+  `dev/check_music_tags.py` mit Cover-Fällen
+- `4488deb` — **echter Cover-Eintrag:** Host-Patch
+  `patches/yue2-cover.patch` ergänzt `C` in der YuE2-Composition-Source,
+  Pipeline mappt C auf A, Host-UI/Validierung behandeln C wie A; Plugin nutzt
+  C wenn vorhanden (sonst A), versteckt/leert Tempo, setzt Duration; 43 Tests
 - **Autor-Parameter:** `Max answer tokens`, `Temperature`,
   `Reasoning effort` und `Extra body` landen im API-Payload
   (`_author_api_payload`); `Local model` wählt 9B/27B nach VRAM
