@@ -122,6 +122,12 @@ _IMAGE_INPUT_NAMES = (
     "video_prompt_type",
 )
 
+# Zweites Textfeld neben `prompt`. WanGP legt es fuer Modelle mit getrennten
+# Eingaben an - bei YuE2 heisst es "Music Style", die Lyrics stehen in `prompt`.
+# Es wird live als Klick-Eingabe gelesen und bei Ketten, die es schreiben, auch
+# zurueckgeschrieben.
+_ALT_PROMPT_INPUT_NAME = "alt_prompt"
+
 
 class _EnhancerImages(NamedTuple):
     """Bilder, die der lokale Pfad an process_prompt_enhancer() weitergibt.
@@ -232,7 +238,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.19"
+_UI_BUILD = "build 2026-10-28.1"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -602,6 +608,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self.request_component("state")
         self.request_component("refresh_form_trigger")
         self.request_component("prompt")
+        # Zweites Textfeld der Modelle mit getrennten Eingaben (YuE2: "Music
+        # Style"). WanGP legt es fuer jedes Modell an, blendet es aber ohne
+        # `alt_prompt`-Definition aus; der PluginManager setzt es trotzdem.
+        self.request_component(_ALT_PROMPT_INPUT_NAME)
         # WanGP liest die angehakten LoRAs aus dieser Komponente
         # (wgp.py:1183, inputs["activated_loras"]). Das Plugin traegt dort die
         # Bypass-LoRA nach. Heisst die Komponente anders, bleibt das Attribut
@@ -674,6 +684,27 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     # ------------------------------------------------------------- Hilfsmittel
 
     @staticmethod
+    def _chaining():
+        """WanGPs Routing-/Kettenmodul fuer Prompt-Enhancer.
+
+        Es entscheidet, ob ein Modus ein Feld schreibt (T/L/B) und ob er aus
+        mehreren Schritten besteht ("T1,B2O"). Der Host benutzt genau dieses
+        Modul (wgp.py:6720-6775); das Plugin darf die Regeln nicht nachbauen,
+        sonst laufen beide Wege auseinander. Der Zugriff ueber __main__ haelt
+        das Plugin auch dann am Laufen, wenn eine kuenftige WanGP-Fassung das
+        Modul intern umbenennt - dann greift der direkte Import als Rueckfall.
+        """
+        module = _main("prompt_enhancer_chaining")
+        if module is not None:
+            return module
+        try:
+            from shared.prompt_enhancer import chaining
+
+            return chaining
+        except Exception:  # noqa: BLE001 - ohne Modul bleibt der Einzelschritt
+            return None
+
+    @staticmethod
     def _with_thinking(mode, enabled):
         """Das Thinking-Flag 'K' an den Enhancer-Modus haengen.
 
@@ -682,7 +713,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         Think-Checkbox war deshalb wirkungslos. chaining.with_thinking() ist die
         offizielle Umsetzung (shared/prompt_enhancer/chaining.py:37).
         """
-        chaining = _main("prompt_enhancer_chaining")
+        chaining = LocalEnhancePlugin._chaining()
         if chaining is not None:
             try:
                 return chaining.with_thinking(mode, enabled)
@@ -732,21 +763,38 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         return ordered[-1] if think else ordered[0]
 
     @staticmethod
-    def _resolve_mode(model_def, audio_only, image_mode):
-        """Standard-Enhancer-Modus fuer das aktuelle Modell ermitteln."""
+    def _mode_choices(model_def, audio_only, image_mode, include_disabled=True):
+        """(Werte, Default) der Enhancer-Auswahl des aktuellen Modells.
+
+        Der Host baut die Liste aus `prompt_enhancer_def` der Modelldefinition
+        (wgp.py:11273) - bei YuE2 sind das `T1` (Lyrics), `B2O` (Music Style)
+        und `T1,B2O` (beide). Ohne diese Liste kann das Plugin nicht erkennen,
+        ob ein alter Live-Wert noch zum Modell passt.
+        """
         chooser = _main("get_prompt_enhancer_choices")
         if chooser is None:
-            return "T"
+            return [], ""
         try:
             choices, default, _definition = chooser(
-                model_def, audio_only, image_mode, include_disabled=False
+                model_def,
+                audio_only,
+                image_mode,
+                include_disabled=include_disabled,
             )
-        except Exception:
-            return "T"
+        except Exception:  # noqa: BLE001 - dann bleibt der Einzelschritt
+            return [], ""
+        return [str(value) for _label, value in choices], str(default or "")
+
+    @staticmethod
+    def _resolve_mode(model_def, audio_only, image_mode):
+        """Standard-Enhancer-Modus fuer das aktuelle Modell ermitteln."""
+        choices, default = LocalEnhancePlugin._mode_choices(
+            model_def, audio_only, image_mode, include_disabled=False
+        )
         if default:
-            return str(default)
+            return default
         if choices:
-            return str(choices[0][1])
+            return choices[0]
         return "T"
 
     @staticmethod
@@ -756,13 +804,68 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         `live_mode` ist der Inhalt von WanGPs verstecktem `prompt_enhancer`-Text,
         also genau die Buchstaben, die Dropdown und Think-Checkbox schreiben
         (wgp.py:13036-13037). Er ist die einzige Quelle fuer die Nutzerauswahl.
-        Leer ist er, wenn der Nutzer "Disabled" gewaehlt hat oder die Komponente
-        fehlt - dann bleibt _resolve_mode() als Fallback (bisheriges Verhalten).
+
+        WICHTIG: Nach einem Modellwechsel kann dort noch der Modus des vorigen
+        Modells stehen - das Dropdown bekommt nur neue `choices`
+        (refresh_prompt_enhancer_labels, wgp.py:10898), der versteckte Text
+        nicht. Ein altes `T` an einem YuE2-Modell traefe dann kein
+        Profil (`text_prompt_enhancer_instructions1`) und der Enhancer faellt
+        auf die allgemeinen Audio-Anweisungen zurueck - statt Lyrics entstuende
+        eine Stilbeschreibung. Deshalb wird der Live-Wert gegen die Auswahl des
+        AKTUELLEN Modells geprueft; passt er nicht, gilt der Modell-Default.
         """
         mode = str(live_mode or "").strip()
         if mode:
-            return mode
+            choices, default = LocalEnhancePlugin._mode_choices(
+                model_def, audio_only, image_mode, include_disabled=True
+            )
+            chaining = LocalEnhancePlugin._chaining()
+            if choices and chaining is not None:
+                try:
+                    normalized = chaining.normalize_choice(mode, choices, default)
+                except Exception:  # noqa: BLE001 - dann gilt der Live-Wert
+                    normalized = mode
+                if normalized:
+                    # normalize_choice() entfernt 'K' (Denken) bewusst; die
+                    # Checkbox des Hosts fuehrt es separat. Fuer den Aufruf muss
+                    # es wieder dran, sonst denkt das Modell trotz Haken nicht.
+                    return chaining.with_thinking(normalized, "K" in mode)
+            elif choices and mode in choices:
+                return mode
+            elif not choices:
+                return mode
+            # Unbekannt/Disabled -> Modell-Default (z. B. YuE2: T1 = Lyrics).
         return LocalEnhancePlugin._resolve_mode(model_def, audio_only, image_mode)
+
+    @staticmethod
+    def _field_labels(model_def):
+        """(Prompt-Label, Alt-Label) des Modells - fuer die Statuszeile."""
+        model_def = model_def if isinstance(model_def, dict) else {}
+        prompt_label = str(
+            model_def.get("prompt_class")
+            or model_def.get("prompt_label")
+            or "Prompt"
+        ).strip()
+        alt_def = model_def.get("alt_prompt")
+        alt_def = alt_def if isinstance(alt_def, dict) else {}
+        alt_label = str(alt_def.get("label") or alt_def.get("name") or "Alt prompt").strip()
+        return prompt_label, alt_label
+
+    @staticmethod
+    def _field_note(model_def, prompt_changed, alt_changed):
+        """Kurzer Hinweis, welche Felder der Klick geschrieben hat."""
+        prompt_label, alt_label = LocalEnhancePlugin._field_labels(model_def)
+        changed = [
+            label
+            for label, active in (
+                (prompt_label, prompt_changed),
+                (alt_label, alt_changed),
+            )
+            if active
+        ]
+        if not changed:
+            return ""
+        return ", fields: " + " + ".join(changed)
 
     @staticmethod
     def _local_enhancer_ready():
@@ -2200,6 +2303,44 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             return values[0], values[1:]
         return None, values
 
+    def _alt_prompt_component(self):
+        """WanGPs zweites Textfeld, falls das Modell eines hat (YuE2: Music Style)."""
+        return getattr(self, _ALT_PROMPT_INPUT_NAME, None)
+
+    def _split_alt_input(self, values):
+        """Alt-Text von den Reglern trennen.
+
+        Reihenfolge der Klick-Eingaben: Modus, Regler, Alt-Text, Bilder. Nach
+        _split_image_inputs() steht der Alt-Text also ganz rechts; fehlt die
+        Komponente, bleibt die Liste unveraendert.
+        """
+        values = tuple(values or ())
+        if self._alt_prompt_component() is None or not values:
+            return "", values
+        return str(values[-1] or ""), values[:-1]
+
+    def _inline_inputs(self, prompt_component, with_images):
+        """Klick-Eingaben beider Knoepfe in fester Reihenfolge."""
+        inputs = (
+            [self.state, prompt_component]
+            + self._mode_components()
+            + self._control_components()
+        )
+        alt_component = self._alt_prompt_component()
+        if alt_component is not None:
+            inputs.append(alt_component)
+        if with_images:
+            inputs += self._image_components()
+        return inputs
+
+    def _inline_outputs(self, prompt_component):
+        """Ausgaben beider Knoepfe: Prompt und - falls vorhanden - Alt-Text."""
+        outputs = [prompt_component]
+        alt_component = self._alt_prompt_component()
+        if alt_component is not None:
+            outputs.append(alt_component)
+        return outputs
+
     @classmethod
     def _fallback_instructions(cls, is_image, audio_only, min_words=None, max_words=None, with_images=False):
         """Dieselben eingebauten Anweisungen, die der lokale Pfad benutzt.
@@ -3069,6 +3210,94 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         cfg.setdefault("duration_seconds", settings.get("duration_seconds"))
         return cfg
 
+    @classmethod
+    def _run_enhance_steps(
+        cls,
+        process,
+        model_type,
+        model_def,
+        mode,
+        prompt_text,
+        alt_text,
+        is_image,
+        audio_only,
+        images,
+        instructions,
+        tokens,
+        kwargs,
+    ):
+        """Prompt (und ggf. Alt-Text) nach WanGPs Routing-Regeln verbessern.
+
+        Ein Einzelschritt (`T1`, `B2O`, ...) schreibt genau ein Feld. Eine Kette
+        (`T1,B2O`) laeuft durch `prompt_enhancer_chaining.run_chain()`: der Host
+        baut fuer Schritte mit `B` das JSON aus beiden Feldern und reicht das
+        Ergebnis des ersten Schritts an den zweiten weiter (wgp.py:6753-6775).
+        Genau dieses Verhalten braucht YuE2: `T1` schreibt die Lyrics, `B2O`
+        schreibt den Music Style anhand der neuen Lyrics.
+
+        Rueckgabe: (prompt_ergebnis, alt_ergebnis) - leer heisst "Feld nicht
+        geschrieben".
+        """
+        chaining = cls._chaining()
+        routing = False
+        if chaining is not None:
+            try:
+                routing = chaining.uses_routing(mode)
+            except Exception:  # noqa: BLE001 - dann Einzelschritt
+                routing = False
+        image_start = images.image_start if images is not None else None
+        image_refs = images.image_refs if images is not None else None
+
+        def call(step_mode, values, batch_images):
+            return process(
+                model_type,
+                model_def,
+                step_mode,
+                list(values),
+                image_start,
+                image_refs,
+                is_image,
+                audio_only,
+                -1,        # seed -> zufaellig
+                prompt_enhancer_instructions=instructions,
+                text_encoder_max_tokens=tokens,
+                enhancer_kwargs=kwargs,
+                batch_images=batch_images,
+            )
+
+        if routing:
+            def enhance_step(step, step_inputs):
+                return call(step.mode, step_inputs, True)
+
+            result = chaining.run_chain(
+                mode,
+                [prompt_text or ""],
+                [alt_text or ""],
+                bool(model_def.get("alt_prompt_inherits_prompt_paragraphs", False)),
+                enhance_step,
+            )
+            prompt_out = cls._first_prompt(result.prompts) if result.prompt_changed else ""
+            alt_out = cls._first_prompt(result.alt_prompts) if result.alt_prompt_changed else ""
+            return prompt_out, alt_out
+
+        # Einzelschritt: Eingabefeld und Ausgabefeld stehen im Modus.
+        input_text = prompt_text
+        output_alt = False
+        if chaining is not None:
+            try:
+                step = chaining.parse_mode(mode)[0]
+            except Exception:  # noqa: BLE001 - unbekannter Modus
+                step = None
+            if step is not None:
+                if step.input_field == "alt_prompt":
+                    input_text = alt_text
+                output_alt = step.output_field == "alt_prompt"
+        elif not input_text:
+            input_text = alt_text
+        prompts = call(mode, [input_text or ""], False)
+        value = cls._first_prompt(prompts)
+        return ("", value) if output_alt else (value, "")
+
     def _api_chat(self, system, user, max_tokens=0, temperature=None,
                   effort="", base=None, model=None):
         """Ein Chat-Aufruf an den konfigurierten OpenAI-Server.
@@ -3304,20 +3533,27 @@ class LocalEnhancePlugin(WAN2GPPlugin):
     def enhance(self, state, text, *values, progress=gr.Progress()):
         """Lokalen Enhancer auf `text` anwenden. Laeuft im GPU-Kontext.
 
-        `values` sind erst der Modus, dann die Regler (Think/Min/Max),
-        danach die Bild-Eingaben - siehe _split_mode_input() und
-        _split_image_inputs().
+        `values` sind erst der Modus, dann die Regler (Think/Min/Max), dann der
+        Alt-Text (nur bei Modellen mit zweitem Feld, z. B. YuE2 "Music Style")
+        und zuletzt die Bild-Eingaben - siehe _split_mode_input(),
+        _split_alt_input() und _split_image_inputs().
+
+        Rueckgabe: (prompt, alt_prompt, status). Ein leeres Feld heisst, dass
+        dieser Klick es nicht geschrieben hat; der Aufrufer laesst es dann
+        stehen.
         """
         mode_value, values = self._split_mode_input(values)
         controls, live_images = self._split_image_inputs(values)
+        alt_text, controls = self._split_alt_input(controls)
         think, min_words, max_words = self._read_controls(controls)
         self._remember_word_range(min_words, max_words)
         text = str(text or "").strip()
-        if not text:
-            return "", "Enter a prompt first."
+        alt_text = str(alt_text or "").strip()
+        if not text and not alt_text:
+            return "", "", "Enter a prompt first."
 
         if not self._local_enhancer_ready():
-            return "", (
+            return "", "", (
                 "**No local enhancer model configured.**\n\n"
                 "Set *Configuration → Prompt Enhancer / Deepy → Prompt Enhancer / Deepy LLM Engine* "
                 "to a local Qwen model (4B, 9B or 27B) and save. The enhancer then "
@@ -3333,11 +3569,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         wait_for_unload = _main("wait_for_model_unload")
 
         if not all((get_state_model_type, get_model_def, ensure_loaded, process)):
-            return "", "**Internal error:** WanGP functions not found. Please report."
+            return "", "", "**Internal error:** WanGP functions not found. Please report."
 
         model_type = get_state_model_type(state)
         if not model_type:
-            return "", "No model selected - pick one in the Media Generator first."
+            return "", "", "No model selected - pick one in the Media Generator first."
 
         model_def = get_model_def(model_type) or {}
         settings = get_model_settings(state, model_type) or {}
@@ -3367,8 +3603,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # (#!PROMPT!:) darf das Modell nie erreichen - sie wird mitverbessert und
         # erschiene danach doppelt.
         enhancer_input = self._original_for_history(text)
-        if not enhancer_input:
-            return "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
+        alt_input = self._original_for_history(alt_text)
+        if not enhancer_input and not alt_input:
+            return "", "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
 
         if callable(wait_for_unload):
             wait_for_unload()
@@ -3436,25 +3673,22 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 if vorlage else model_def
             )
             with (_PromptInstructionOverride() if vorlage else contextlib.nullcontext()):
-                prompts = process(
+                prompt_result, alt_result = self._run_enhance_steps(
+                    process,
                     model_type,
                     modell_def,
                     mode,
-                    [enhancer_input],
-                    images.image_start,
-                    images.image_refs,
+                    enhancer_input,
+                    alt_input,
                     is_image,
                     audio_only,
-                    -1,        # seed -> zufaellig
-                    # Wortgrenze steckt in den Anweisungen; das Token-Budget muss
-                    # mitwachsen, sonst schneidet das Limit den Prompt ab. Mit Bildern
-                    # gelten die Bild-Anweisungen (IT2x), sonst die reinen Text-T2x.
-                    prompt_enhancer_instructions=anweisungen,
-                    text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
-                    enhancer_kwargs=self._enhancer_kwargs(settings, images),
+                    images,
+                    anweisungen,
+                    self._output_token_budget(min_words, max_words),
+                    self._enhancer_kwargs(settings, images),
                 )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
-            return "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
+            return "", "", f"**Enhancer failed:** `{type(exc).__name__}: {exc}`"
         finally:
             # Engine sofort zurueckstellen - sie darf keinen Moment laenger
             # verstellt bleiben als der Aufruf dauert.
@@ -3477,26 +3711,29 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             self._free_local_enhancer()
             release_GPU_ressources(state, PlugIn_Id)
 
-        if not prompts:
-            return "", "The enhancer returned no prompt."
-        # process_prompt_enhancer() liefert pro Prompt eine Liste - WanGP liest
-        # das Ergebnis ebenfalls als value[0] aus (siehe wgp.py:6696).
-        first = prompts[0] if isinstance(prompts, (list, tuple)) else prompts
-        while isinstance(first, (list, tuple)):
-            first = first[0] if first else ""
-        result = str(first or "").strip()
-        if not result:
-            return "", "The enhancer returned an empty prompt."
-        self._last_enhanced = result
+        if not prompt_result and not alt_result:
+            return "", "", "The enhancer returned no prompt."
+        self._last_enhanced = prompt_result or alt_result
         self._last_source = text
+        self._last_alt_source = alt_text
         self._last_image_labels = images.labels
         seconds = time.time() - started
-        return result, (
+        prompt_changed = bool(prompt_result)
+        alt_changed = bool(alt_result)
+        return prompt_result, alt_result, (
             f"Enhanced locally with **{self._variant_label()}** "
-            f"(mode `{mode}`{self._image_note(images.labels)}) in {seconds:.1f}s. "
+            f"(mode `{mode}`{self._field_note(model_def, prompt_changed, alt_changed)}"
+            f"{self._image_note(images.labels)}) in {seconds:.1f}s. "
             f"{image_advice}"
             "Not happy? Click again."
         )
+
+    def _enhance_tab(self, state, text, *values, progress=gr.Progress()):
+        """Tab-Knopf: nur der Prompt geht ins Arbeitsfeld, Alt-Text bleibt aussen vor."""
+        result, _alt_result, status = self.enhance(
+            state, text, *values, progress=progress
+        )
+        return result, status
 
     @staticmethod
     def _sanitize_original(text):
@@ -3537,7 +3774,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             candidate = ""
         return candidate or cls._sanitize_original(raw)
 
-    def _with_history(self, enhanced):
+    def _with_history(self, enhanced, source=None):
         """Historienzeile wie beim eingebauten Knopf voranstellen.
 
         Ergebnis::
@@ -3557,7 +3794,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Historie - dann darf kein zweiter davor gesetzt werden.
         if PROMPT_UNIT_PREFIX in enhanced:
             return enhanced
-        source = self._original_for_history(self._last_source)
+        source = self._original_for_history(
+            self._last_source if source is None else source
+        )
         if not source or enhanced == source:
             return enhanced
         try:
@@ -3584,18 +3823,21 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         erkennt an der Engine, dass remote gearbeitet wird (wgp.py:6409), und
         ueberspringt den lokalen Loader (local_runtime, wgp.py:6505).
 
-        `values` sind erst der Modus, dann die Regler (Think/Min/Max).
+        `values` sind erst der Modus, dann die Regler (Think/Min/Max) und zuletzt
+        der Alt-Text (nur bei Modellen mit zweitem Feld).
         """
         mode_value, values = self._split_mode_input(values)
+        alt_text, values = self._split_alt_input(values)
         think, min_words, max_words = self._read_controls(values)
         self._remember_word_range(min_words, max_words)
         text = str(text or "").strip()
-        if not text:
-            return "", "Enter a prompt first."
+        alt_text = str(alt_text or "").strip()
+        if not text and not alt_text:
+            return "", "", "Enter a prompt first."
 
         engine = self._remote_engine_name()
         if not engine:
-            return "", (
+            return "", "", (
                 "**No remote engine configured.** Pick one in the Config tab "
                 "under *Prompt Enhancer / Deepy*."
             )
@@ -3605,11 +3847,11 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         get_model_settings = _main("get_model_settings")
         process = _main("process_prompt_enhancer")
         if not all((get_state_model_type, get_model_def, process)):
-            return "", "**Internal error:** WanGP functions not found. Please report."
+            return "", "", "**Internal error:** WanGP functions not found. Please report."
 
         model_type = get_state_model_type(state)
         if not model_type:
-            return "", "No model selected - pick one in the Media Generator first."
+            return "", "", "No model selected - pick one in the Media Generator first."
 
         model_def = get_model_def(model_type) or {}
         settings = get_model_settings(state, model_type) or {}
@@ -3628,8 +3870,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
 
         # Originalprompt statt sichtbarer Text - siehe enhance() fuer die Begruendung.
         enhancer_input = self._original_for_history(text)
-        if not enhancer_input:
-            return "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
+        alt_input = self._original_for_history(alt_text)
+        if not enhancer_input and not alt_input:
+            return "", "", "Der Prompt besteht nur aus Kommentar-/Historienzeilen."
 
         # Engine nur fuer diesen Aufruf umstellen; danach exakt zurueck.
         config = _main("server_config") or {}
@@ -3658,43 +3901,45 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     effort_changed = True
         started = time.time()
         try:
-            prompts = process(
+            prompt_result, alt_result = self._run_enhance_steps(
+                process,
                 model_type,
                 model_def,
                 mode,
-                [enhancer_input],
-                None,      # image_start
-                None,      # original_image_refs
+                enhancer_input,
+                alt_input,
                 is_image,
                 audio_only,
-                -1,        # seed -> zufaellig
+                None,
                 # Ohne Anweisung geht ein LEERER System-Prompt an die Remote-
                 # Engine und der Agent fragt zurueck statt umzuschreiben.
-                prompt_enhancer_instructions=self._fallback_instructions(is_image, audio_only, min_words, max_words),
-                text_encoder_max_tokens=self._output_token_budget(min_words, max_words),
+                self._fallback_instructions(is_image, audio_only, min_words, max_words),
+                self._output_token_budget(min_words, max_words),
                 # The LTX2 handler requires a dict - None crashes it.
-                enhancer_kwargs=self._enhancer_kwargs(settings, None),
+                self._enhancer_kwargs(settings, None),
             )
         except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
             import traceback
             traceback.print_exc()
             print(f"[{PlugIn_Name}] Remote enhancer failed: {type(exc).__name__}: {exc}")
-            return "", f"**Remote enhancer failed:** `{type(exc).__name__}: {exc}`"
+            return "", "", f"**Remote enhancer failed:** `{type(exc).__name__}: {exc}`"
         finally:
             if flipped and isinstance(llm_section, dict):
                 llm_section["deepy"] = previous_engine
             if effort_changed and isinstance(profile, dict):
                 profile["reasoning_effort"] = previous_effort
 
-        result = self._first_prompt(prompts)
-        if not result:
-            return "", "The enhancer returned an empty prompt."
-        self._last_enhanced = result
+        if not prompt_result and not alt_result:
+            return "", "", "The enhancer returned an empty prompt."
+        self._last_enhanced = prompt_result or alt_result
         self._last_source = text
+        self._last_alt_source = alt_text
         seconds = time.time() - started
         effort_note = f" Reasoning effort `{effort}`." if effort else ""
-        return result, (
-            f"Enhanced remotely with **{engine}** (mode `{mode}`) in {seconds:.1f}s."
+        return prompt_result, alt_result, (
+            f"Enhanced remotely with **{engine}** "
+            f"(mode `{mode}`{self._field_note(model_def, bool(prompt_result), bool(alt_result))}) "
+            f"in {seconds:.1f}s."
             f"{effort_note}{self._word_note(min_words, max_words)}. No local VRAM used."
         )
 
@@ -4128,24 +4373,27 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Die Bilder haengen nur am lokalen Knopf: nur der lokale 27B-Pfad hat
         # einen Vision-Teil, und sie muessen live aus den Komponenten kommen
         # (der Settings-Snapshot ist nach einem frisch hinzugefuegten Bild alt).
-        controls = self._mode_components() + self._control_components()
-        image_components = self._image_components()
+        outputs = self._inline_outputs(prompt_component)
         remote_btn.click(
             fn=self.enhance_inline_remote,
-            inputs=[self.state, prompt_component] + controls,
-            outputs=[prompt_component],
+            inputs=self._inline_inputs(prompt_component, with_images=False),
+            outputs=outputs,
             show_progress="hidden",
         )
         local_btn.click(
             fn=self.enhance_inline,
-            inputs=[self.state, prompt_component] + controls + image_components,
-            outputs=[prompt_component],
+            inputs=self._inline_inputs(prompt_component, with_images=True),
+            outputs=outputs,
             show_progress="full",
         )
+        local_api_outputs = [prompt_component]
+        if self._alt_prompt_component() is not None:
+            local_api_outputs.append(self._alt_prompt_component())
+        local_api_outputs.append(local_api_btn)
         local_api_btn.click(
             fn=self.enhance_inline_local_api,
-            inputs=[self.state, prompt_component] + controls,
-            outputs=[prompt_component, local_api_btn],
+            inputs=self._inline_inputs(prompt_component, with_images=False),
+            outputs=local_api_outputs,
             show_progress="full",
         )
         # Den eingebauten "Enhance Prompt"-Knopf ausblenden. visible=False allein
@@ -4182,6 +4430,66 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         except Exception:  # noqa: BLE001
             pass
 
+    @staticmethod
+    def _api_enhancer_instruction_resolver(model_type, model_def, mode, is_image, fallback, tokens):
+        """Anweisungen + Token-Budget fuer einen Local-API-Schritt.
+
+        Der Host loest dieselbe Frage in `resolve_prompt_enhancer_settings()`
+        (wgp.py:6691): Modell-Handler, dann `model_def[..._prompt_enhancer_
+        instructions<profil>]`, zuletzt die uebergebenen Anweisungen. Der
+        Local-API-Knopf umgeht den Host, deshalb wird die Funktion hier
+        aufgerufen, wenn sie vorhanden ist; sonst gilt dieselbe Reihenfolge in
+        Kurzform.
+        """
+        resolver = _main("resolve_prompt_enhancer_settings")
+        if callable(resolver):
+            try:
+                resolved, budget = resolver(
+                    model_type,
+                    model_def,
+                    mode,
+                    is_image,
+                    prompt_enhancer_instructions=fallback,
+                    text_encoder_max_tokens=tokens,
+                    enhancer_kwargs={},
+                )
+                return str(resolved or fallback or ""), int(budget or tokens)
+            except Exception:  # noqa: BLE001 - Kurzform unten
+                pass
+        suffix = next((char for char in str(mode or "") if char.isdigit()), "")
+        model_def = model_def if isinstance(model_def, dict) else {}
+        prefix = "image" if is_image else "text"
+        for key in (
+            f"{prefix}_prompt_enhancer_instructions{suffix}",
+            f"{prefix}_prompt_enhancer_instructions",
+            f"text_prompt_enhancer_instructions{suffix}",
+            "text_prompt_enhancer_instructions",
+        ):
+            text = str(model_def.get(key) or "").strip()
+            if text:
+                return text, tokens
+        return str(fallback or ""), tokens
+
+    def _local_api_result(self, prompt_result, alt_result, button_update):
+        """Rueckgabe des Local-API-Knopfs passend zu seinen Ausgaben."""
+        updates = []
+        if prompt_result:
+            updates.append(self._with_history(prompt_result))
+        else:
+            updates.append(gr.update())
+        if self._alt_prompt_component() is not None:
+            if alt_result:
+                updates.append(
+                    self._with_history(
+                        alt_result,
+                        source=getattr(self, "_last_alt_source", ""),
+                    )
+                )
+            else:
+                updates.append(gr.update())
+        updates.append(button_update)
+        return tuple(updates)
+
     def enhance_inline_local_api(self, state, text, *values):
         """Local API: Prompt ueber einen lokalen OpenAI-Server verbessern.
 
@@ -4189,14 +4497,22 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         ob der konfigurierte oder ein automatisch gefundener Server antwortet.
         Bei Fehlschlag wird der Knopf deaktiviert; Detect/Test in der Karte
         schaltet ihn wieder frei.
+
+        Modus und Felder folgen denselben Regeln wie die beiden Hauptknoepfe:
+        `T1` schreibt den Prompt, `B2O` den Alt-Text (YuE2: Music Style),
+        `T1,B2O` beides nacheinander. Die Anweisungen kommen aus der
+        Modelldefinition, damit Lyrics und Stil nach den Vorgaben des Modells
+        entstehen.
         """
-        _mode_value, values = self._split_mode_input(values)
+        mode_value, values = self._split_mode_input(values)
+        alt_text, values = self._split_alt_input(values)
         controls, _live_images = self._split_image_inputs(values)
         think, min_words, max_words = self._read_controls(controls)
         text = str(text or "").strip()
-        if not text:
+        alt_text = str(alt_text or "").strip()
+        if not text and not alt_text:
             gr.Warning("Enter a prompt first.")
-            return gr.update(), gr.update()
+            return self._local_api_result("", "", gr.update())
         # Reste eines frueheren lokalen Laufs zuerst freigeben.
         self._free_local_enhancer()
         base, model = self._find_local_api()
@@ -4205,7 +4521,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "No local API server found. Start LM Studio/Ollama and press "
                 "Detect or Test connection in the Enhance Prompt card."
             )
-            return gr.update(), gr.update(interactive=False)
+            return self._local_api_result("", "", gr.update(interactive=False))
         try:
             get_state_model_type = _main("get_state_model_type")
             model_type = get_state_model_type(state) if callable(get_state_model_type) else ""
@@ -4226,38 +4542,120 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             is_image = int((settings or {}).get("image_mode", 0) or 0) > 0
         except Exception:  # noqa: BLE001
             is_image = False
-        instructions = self._fallback_instructions(
+        mode = self._effective_mode(mode_value, model_def, audio_only, int(is_image))
+        fallback = self._fallback_instructions(
             is_image, audio_only, min_words, max_words
         )
         tokens = self._output_token_budget(min_words, max_words)
-        result, fehler = self._api_chat(
-            instructions,
-            text,
-            max_tokens=tokens,
-            effort="high" if think else "",
-            base=base,
-            model=model,
-        )
-        if not result:
-            gr.Warning(str(fehler).replace("**", "").replace("`", ""))
-            return gr.update(), gr.update(interactive=True)
+        effort = "high" if think else ""
+
+        def api_process(
+            _model_type,
+            _model_def,
+            step_mode,
+            step_values,
+            _image_start=None,
+            _image_refs=None,
+            _is_image=False,
+            _audio_only=False,
+            _seed=-1,
+            prompt_enhancer_instructions=None,
+            text_encoder_max_tokens=512,
+            enhancer_kwargs=None,
+            batch_images=False,
+        ):
+            instructions, budget = self._api_enhancer_instruction_resolver(
+                model_type,
+                model_def,
+                step_mode,
+                is_image,
+                prompt_enhancer_instructions or fallback,
+                int(text_encoder_max_tokens or tokens),
+            )
+            chaining = self._chaining()
+            if chaining is not None:
+                try:
+                    instructions = chaining.append_combined_input_contract(
+                        instructions, step_mode
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            outputs = []
+            for value in step_values:
+                answer, fehler = self._api_chat(
+                    instructions,
+                    value,
+                    max_tokens=budget,
+                    effort=effort,
+                    base=base,
+                    model=model,
+                )
+                if not answer:
+                    raise RuntimeError(str(fehler))
+                outputs.append(answer)
+            return outputs
+
+        try:
+            prompt_result, alt_result = self._run_enhance_steps(
+                api_process,
+                model_type,
+                model_def,
+                mode,
+                text,
+                alt_text,
+                is_image,
+                audio_only,
+                None,
+                fallback,
+                tokens,
+                {},
+            )
+        except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI landen
+            gr.Warning(f"Local API ({model}) failed: {exc}")
+            return self._local_api_result("", "", gr.update(interactive=True))
+        if not prompt_result and not alt_result:
+            gr.Warning("The API returned an empty answer.")
+            return self._local_api_result("", "", gr.update(interactive=True))
         self._last_source = text
-        self._last_enhanced = result
-        gr.Info(f"Local API ({model}): enhanced")
-        return self._with_history(result), gr.update(interactive=True)
+        self._last_alt_source = alt_text
+        self._last_enhanced = prompt_result or alt_result
+        gr.Info(
+            f"Local API ({model}): enhanced"
+            f"{self._field_note(model_def, bool(prompt_result), bool(alt_result))}"
+        )
+        return self._local_api_result(prompt_result, alt_result, gr.update(interactive=True))
+
+    def _inline_result(self, prompt_result, alt_result):
+        """Rueckgabe der Inline-Knoepfe passend zu _inline_outputs()."""
+        updates = []
+        if prompt_result:
+            updates.append(self._with_history(prompt_result))
+        else:
+            updates.append(gr.update())
+        if self._alt_prompt_component() is not None:
+            if alt_result:
+                updates.append(
+                    self._with_history(
+                        alt_result,
+                        source=getattr(self, "_last_alt_source", ""),
+                    )
+                )
+            else:
+                updates.append(gr.update())
+        return tuple(updates) if len(updates) > 1 else updates[0]
 
     def enhance_inline_remote(self, state, text, *controls):
-        """Wie enhance_remote(), schreibt das Ergebnis direkt ins Prompfeld."""
-        result, status = self.enhance_remote(state, text, *controls)
-        if not result:
+        """Wie enhance_remote(), schreibt das Ergebnis direkt in die Felder."""
+        result, alt_result, status = self.enhance_remote(state, text, *controls)
+        if not result and not alt_result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
-            return gr.update()
+            return self._inline_result("", "")
         gr.Info(str(status).replace("**", "").replace("`", ""))
-        return self._with_history(result)
+        return self._inline_result(result, alt_result)
 
     def enhance_inline(self, state, text, *values, progress=gr.Progress()):
-        """Wie enhance(), schreibt das Ergebnis aber direkt ins Prompfeld."""
-        result, status = self.enhance(state, text, *values, progress=progress)
+        """Wie enhance(), schreibt das Ergebnis aber direkt in die Felder."""
+        result, alt_result, status = self.enhance(state, text, *values, progress=progress)
         # --- Diagnose (vorlaeufig): Ergebnis und Status mitschreiben ---------
         # Der Grund stand bisher nur als Toast in der Oberflaeche und war damit
         # von aussen nicht zu sehen. Diese Zeile schreibt ihn zusaetzlich in
@@ -4267,19 +4665,22 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                       encoding="utf-8") as _dbg:
                 _dbg.write(
                     f"enhance_inline result={'JA' if result else 'NEIN'} "
+                    f"alt={'JA' if alt_result else 'NEIN'} "
                     f"laenge={len(str(result or ''))} "
                     f"status={str(status)[:300]!r} "
                     f"text_eingabe={len(str(text or ''))} Zeichen\n"
                 )
         except Exception:
             pass
-        if not result:
+        if not result and not alt_result:
             gr.Warning(str(status).replace("**", "").replace("`", ""))
-            return gr.update()
+            return self._inline_result("", "")
         # Fuer die Statuszeile dieselbe Trennung wie in enhance(): erst den
-        # Modus abziehen, sonst verschieben sich die Eingaben um eins.
+        # Modus abziehen, dann Alt-Text und Bilder, sonst verschieben sich die
+        # Eingaben.
         _mode_value, values = self._split_mode_input(values)
         controls, _live_images = self._split_image_inputs(values)
+        _alt_text, controls = self._split_alt_input(controls)
         think, min_words, max_words = self._read_controls(controls)
         marker = " + Think" if think else ""
         gr.Info(
@@ -4287,7 +4688,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             f"{marker}{self._word_note(min_words, max_words)}"
             f"{self._image_note(getattr(self, '_last_image_labels', ()))}"
         )
-        return self._with_history(result)
+        return self._inline_result(result, alt_result)
 
     # ------------------------------------------------------------------- UI
 
@@ -4756,10 +5157,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             print(f"[{PlugIn_Name}] Komponente 'activated_loras' nicht gefunden - "
                   "die Bypass-LoRA wird nicht automatisch eingetragen.")
 
+        tab_inputs = (
+            [state, text_in]
+            + self._mode_components()
+            + self._control_components()
+        )
+        alt_component = self._alt_prompt_component()
+        if alt_component is not None:
+            tab_inputs.append(alt_component)
+        tab_inputs += self._image_components()
         enhance_btn.click(
-            fn=self.enhance,
-            inputs=[state, text_in] + self._mode_components()
-            + self._control_components() + self._image_components(),
+            fn=self._enhance_tab,
+            inputs=tab_inputs,
             outputs=[text_out, status],
         )
 

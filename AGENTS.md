@@ -20,7 +20,18 @@ Der **Modus** (WanGPs Dropdown „Enhance Prompt using a LLM") gilt für beide
 Knöpfe und kommt **live** aus WanGPs verstecktem `prompt_enhancer`-Text — auch
 `"K"` aus der Think-Checkbox steckt darin. Nur wenn dieser Wert leer ist
 („Disabled" gewählt) oder die Komponente fehlt, fällt das Plugin auf den
-Modell-Default zurück (`_resolve_mode`).
+Modell-Default zurück (`_resolve_mode`). Ein **veralteter** Live-Wert (vom
+vorigen Modell, z. B. `T` an YuE2) wird gegen die Modell-Auswahl geprüft und
+verworfen — sonst fehlt das Profil (`…instructions1`) und statt Lyrics entsteht
+eine allgemeine Audio-Stilbeschreibung.
+
+Modelle mit **zwei** Textfeldern (YuE2: `prompt` = Lyrics, `alt_prompt` =
+Music Style) bekommen das zweite Feld als Klick-Eingabe. Das Plugin folgt
+WanGPs Routing (`T`/`L`/`B`, `O` schreibt `alt_prompt`, Komma = Kette) über
+`prompt_enhancer_chaining`: `T1` schreibt Lyrics, `B2O` den Music Style,
+`T1,B2O` beides nacheinander — der Style-Schritt sieht die **neuen** Lyrics als
+JSON-Kontext. Die Anweisungen kommen aus der Modelldefinition; das Plugin
+übergibt nur den Fallback.
 
 Drei Regler, alle gelten für **beide** Knöpfe:
 
@@ -128,8 +139,11 @@ neu starten.
   (`state, prompt, Modus, Think, Preset, Min, Max`), der lokale **7 +
   Bild-Eingaben**; seit `e5ed6d8` sind es **6**
   (`state, prompt, Modus, Think, Min, Max`), das
-  Preset ist weg. Vorher stand im Klick immer der Modell-Default, wodurch
-  Modelle mit erstem Modus `"T"` (`qwen_image_21_7B`) die Bilder verwarfen.
+  Preset ist weg. Mit dem zweiten Textfeld (`alt_prompt`, bei YuE2 „Music
+  Style") sind es **7** bzw. **7 + Bild-Eingaben**; die Komponente existiert in
+  WanGP immer, ist ohne `alt_prompt`-Definition aber unsichtbar. Vorher stand
+  im Klick immer der Modell-Default, wodurch Modelle mit erstem Modus `"T"`
+  (`qwen_image_21_7B`) die Bilder verwarfen.
 - `e5ed6d8` — Wortgrenze in den Plugin-Tab: Preset-Dropdown entfernt, Min/Max
   als zwei Felder im Tab, `_UI_CSS` und `dev/ui_preview.py` angepasst
 - `b758ac5` — Modell-Check-Kern: `_collect_enhancer_overrides()` sammelt die
@@ -199,8 +213,9 @@ neu starten.
 - **Push-Zustand:** `main` und `origin/main` sind synchron; alle hier
   gelisteten Commits sind gepusht (kein Force-Push, kein Rebase). Der Stand
   unten beschreibt also `origin/main`, nicht einen lokalen Vorlauf.
-- **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **6 Inputs**,
-  `local_enhance_local_btn` **6 + Anzahl der Bild-Eingaben** des Modells, das
+- **Nach dem Neustart prüfen:** `local_enhance_remote_btn` **7 Inputs**
+  (`state, prompt, Modus, Think, Min, Max, alt_prompt`),
+  `local_enhance_local_btn` **7 + Anzahl der Bild-Eingaben** des Modells, das
   **Specific-Prompt-Dropdown** in Zeile 1 (zeigt nach der Migration
   `photograf`; `default` = kein Override), die Karte **System Prompts** mit
   `Folder` + `Reload`, Werkzeugzeile (`Entry` / `Model` / Min / Max),
@@ -347,9 +362,15 @@ neu starten.
     Think-Checkbox fehlen kann: `bool` = Think, Zahlen = die beiden Wort-Regler
     (erst Min, dann Max); ein einzelnes Zahlenfeld gilt weiter als Obergrenze
     (Altbestand). Feste Reihenfolge der Klick-Eingaben:
-    `state, prompt, Modus, Think, Min, Max` → **6**. Der Modus-String wird
-    vorher mit `_split_mode_input()` abgezogen, die Bilder trennt
-    `_split_image_inputs()` von rechts ab.
+    `state, prompt, Modus, Think, Min, Max, alt_prompt` → **7**. Der Modus-String
+    wird vorher mit `_split_mode_input()` abgezogen, die Bilder trennt
+    `_split_image_inputs()` von rechts ab, den Alt-Text `_split_alt_input()`.
+    `alt_prompt` existiert in WanGP für **jedes** Modell (bei fehlender
+    `alt_prompt`-Definition nur unsichtbar), deshalb steht die Komponente immer
+    in der Verdrahtung; `_alt_prompt_component()` liefert sie oder `None`.
+  - Die Feldnamen des Modells liefert `_field_labels()` (`prompt_class` bzw.
+    `alt_prompt.label`), die Statuszeile nennt die tatsächlich geschriebenen
+    Felder über `_field_note()`.
 - **Modell-Check im Tab:** Der Knopf liest `_main("models_def")` **nur** — kein
   `refresh_model_defs()`, kein `map_family_handlers()`, kein Import von
   Host-Modulen. Beides wäre hier falsch: `refresh_model_defs()` löst den ganzen
@@ -662,13 +683,28 @@ neu starten.
   auf den Plugin-Instanzen setzen (`p.image_start = gr.File(...)`,
   `p.image_prompt_type = gr.CheckboxGroup(...)`, `p.video_prompt_type = …`) und
   `demo.get_config_file()` nach `targets == [<knopf-id>, "click"]` durchsuchen:
-  `local_enhance_remote_btn` muss **6** Inputs haben, `local_enhance_local_btn`
-  **6 + Anzahl der Bild-Komponenten**; der Tab-Knopf wird mit denselben Reglern
-  verdrahtet, also ebenfalls **6 + Anzahl der Bild-Eingaben**.
+  `local_enhance_remote_btn` muss **7** Inputs haben (mit `alt_prompt`),
+  `local_enhance_local_btn` **7 + Anzahl der Bild-Komponenten**; der Tab-Knopf
+  wird mit denselben Reglern verdrahtet, also ebenfalls **7 + Anzahl der
+  Bild-Eingaben**. Ohne `alt_prompt`-Komponente (Nachbau ohne zweites Feld)
+  bleiben es **6** bzw. **6 + Bilder**.
 - End-to-End (WanGP läuft): `http://127.0.0.1:7860/config` abrufen — die
-  Dependencies von `local_enhance_remote_btn` müssen **6 Inputs** haben
-  (`state, prompt, Modus, Think, Min, Max`), `local_enhance_local_btn`
-  **6 + Anzahl der Bild-Eingaben** des Modells.
+  Dependencies von `local_enhance_remote_btn` müssen **7 Inputs** haben
+  (`state, prompt, Modus, Think, Min, Max, alt_prompt`),
+  `local_enhance_local_btn` **7 + Anzahl der Bild-Eingaben** des Modells;
+  Ausgaben: Prompt + `alt_prompt` (Remote/Lokal) bzw. Prompt + `alt_prompt` +
+  Knopf (Local API).
+- Music-Felder ohne GPU/WanGP: `dev/check_music_fields.py` (WanGP-venv, aus dem
+  WanGP-Ordner) prüft **13** Fälle: veralteter Live-Modus (`T` an YuE2) fällt
+  auf `T1` zurück, leerer Wert ergibt `T1`, `T1,B2O`/`T1K` bleiben erhalten,
+  `_field_labels` liefert `Lyrics`/`Music Style`, `_split_alt_input` trennt den
+  Alt-Text, `T1` schreibt nur den Prompt, `B2O` nur den Style (mit JSON aus
+  beiden Feldern), `T1,B2O` schreibt beide und reicht die neuen Lyrics an den
+  Style-Schritt weiter. Erwartung: 13 `PASS`, Exit 0.
+- Verdrahtung mit Alt-Text: `dev/check_music_wiring.py` (WanGP-venv, aus dem
+  WanGP-Ordner) baut die Knöpfe mit/ohne `alt_prompt` und prüft die
+  Gradio-Konfiguration: mit Alt 7/7/7 Eingaben und 2/2/3 Ausgaben, ohne Alt
+  6/6/6 und 1/1/2. Erwartung: 12 `PASS`, Exit 0.
 - Vision live: Modus *Based on Text Prompt and Images* wählen, Startbild mit
   markantem Inhalt setzen, Prompt „a cat" → der verbesserte Prompt muss den
   Bildinhalt beschreiben und die Statuszeile `images: start image` nennen. Dann
@@ -694,9 +730,14 @@ neu starten.
   live berechnete Zeile steht über dem eingeklappten Modell-Check und wird beim
   Tab-Wechsel neu gezogen (`on_tab_outputs`, siehe „Technisches"). Die beiden
   Knöpfe in Zeile 1 bekommen weiterhin **keinen** eigenen Hinweis: sie schreiben
-  nur ins Promptfeld (`outputs=[prompt_component]`; Status ginge allenfalls als
-  `gr.Info`/`gr.Warning`-Toast raus) und haben keine Statuszeile — ein Hinweis
-  dort bräuchte eine eigene Ausgabe-Komponente.
+  Prompt und (falls vorhanden) `alt_prompt` (`outputs=[prompt, alt_prompt]`;
+  Status ginge allenfalls als `gr.Info`/`gr.Warning`-Toast raus) und haben keine
+  Statuszeile — ein Hinweis dort bräuchte eine eigene Ausgabe-Komponente.
+- **Style → Lyrics:** `T1` (Lyrics) liest bei YuE2 nur den Prompt; der Music
+  Style fließt erst im Style-Schritt (`B2O` bzw. `T1,B2O`) ein. Das entspricht
+  der Modelldefinition („Lyrics then Music Style", `yue2_handler.py:211`); eine
+  Variante `B1` (Style als Kontext für die Lyrics) bietet YuE2 nicht an und wird
+  deshalb auch nicht erfunden.
 - Das Denk-Budget der 27B ist hart auf **2000 Tokens** begrenzt
   (`shared/prompt_enhancer/qwen35_text.py:64`) — es gibt keinen Config-Key dafür.
 - Der Tab-Knopf hat keine eigenen Widgets; er nutzt dieselben Regler wie die
