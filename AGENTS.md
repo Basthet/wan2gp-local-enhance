@@ -209,6 +209,11 @@ neu starten.
   Ketten über `prompt_enhancer_chaining` (`T1`, `B2O`, `T1,B2O`), Status nennt
   die geschriebenen Felder, Local API nutzt dieselben Modell-Anweisungen;
   `dev/check_music_fields.py` + `dev/check_music_wiring.py`
+- `45a12a0` — **Music-Style-Tag-Baukasten:** fünfte Karte bei Audio-Modellen mit
+  Musik-Feld, Dropdowns (Language/Genre/Vocals/Instruments/Mood/Tempo/
+  Production), Live-Vorschau, `Apply`/`Append`/`Clear`, eigene
+  `music_style_tags.json` im Prompt-Ordner, Sichtbarkeit über
+  `refresh_form_trigger` und `on_tab_select`; `dev/check_music_tags.py`
 - **Autor-Parameter:** `Max answer tokens`, `Temperature`,
   `Reasoning effort` und `Extra body` landen im API-Payload
   (`_author_api_payload`); `Local model` wählt 9B/27B nach VRAM
