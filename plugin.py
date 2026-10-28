@@ -284,7 +284,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-28.2"
+_UI_BUILD = "build 2026-10-28.3"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -382,6 +382,10 @@ _UI_CSS = (
 )
 _TEMPLATE_KEY = "local_enhance_template"
 _TEMPLATE_TEXT_KEY = "local_enhance_template_text"
+# Optionaler Struktur-Plan fuer Lyrics (z. B. [Intro] [Verse] [Chorus] ...).
+# Er wird beim Lyrics-Enhancement als Kontext vorangestellt. Bei ABC-Quellen
+# kann er aus den `% intro`-Kommentaren der Datei gelesen werden.
+_LYRICS_STRUCTURE_KEY = "local_enhance_lyrics_structure"
 
 # --- Bibliothek der System-Prompts -------------------------------------------------
 # Ein Ordner, eine Datei pro Eintrag (<name>.txt). Der Ablageordner ist
@@ -658,6 +662,9 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Style"). WanGP legt es fuer jedes Modell an, blendet es aber ohne
         # `alt_prompt`-Definition aus; der PluginManager setzt es trotzdem.
         self.request_component(_ALT_PROMPT_INPUT_NAME)
+        # ABC-Datei der Composition Source. Nur fuer Musik-Modelle vorhanden;
+        # daraus laesst sich die Section-Struktur fuer die Lyrics lesen.
+        self.request_component("custom_guide")
         # WanGP liest die angehakten LoRAs aus dieser Komponente
         # (wgp.py:1183, inputs["activated_loras"]). Das Plugin traegt dort die
         # Bypass-LoRA nach. Heisst die Komponente anders, bleibt das Attribut
@@ -1016,6 +1023,175 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 "description",
             )
         )
+
+    # ------------------------------------------------- Lyrics-Struktur (ABC)
+
+    @classmethod
+    def _lyrics_structure(cls):
+        """Gespeicherter Section-Plan fuer Lyrics (leer = keiner)."""
+        config = _main("server_config") or {}
+        config = config if isinstance(config, dict) else {}
+        return str(config.get(_LYRICS_STRUCTURE_KEY, "") or "").strip()
+
+    @classmethod
+    def _save_lyrics_structure(cls, text):
+        """Section-Plan in der Live-Config merken (WanGP schreibt sie mit)."""
+        config = _main("server_config")
+        if isinstance(config, dict):
+            config[_LYRICS_STRUCTURE_KEY] = str(text or "").strip()
+
+    @staticmethod
+    def _structure_label(value):
+        """SheetSage2-Strukturlabel in eine YuE2-Section umwandeln.
+
+        Die ABC-Datei traegt die Labels als `% intro`, `% verse` usw. YuE2
+        erwartet eckige Klammern und Title Case; unbekannte/leere Labels
+        werden verworfen, damit kein Muell in den Lyrics landet.
+        """
+        label = " ".join(str(value or "").replace("%", " ").split()).lower()
+        if not label:
+            return []
+        mapping = {
+            "intro": ["Intro"],
+            "outro": ["Outro"],
+            "fade-out": ["Outro"],
+            "pre-outro": ["Outro"],
+            "verse": ["Verse"],
+            "chorus": ["Chorus"],
+            "bridge": ["Bridge"],
+            "pre-chorus": ["Pre-Chorus"],
+            "post-chorus": ["Post-Chorus"],
+            "interlude": ["Interlude"],
+            "instrumental": ["Instrumental"],
+            "solo": ["Solo"],
+            "theme": ["Theme"],
+            "development": ["Development"],
+            "variation": ["Variation"],
+            "rap": ["Verse"],
+            "silence": [],
+            "loop": [],
+            "preshot": [],
+            "irregular": [],
+        }
+        if label in mapping:
+            return mapping[label]
+        # "intro and verse" / "verse and pre-chorus" kommen ebenfalls vor.
+        parts = [part.strip() for part in label.split(" and ") if part.strip()]
+        if len(parts) > 1:
+            result = []
+            for part in parts:
+                result.extend(mapping.get(part, []))
+            return result
+        return []
+
+    @classmethod
+    def _parse_abc_structure(cls, abc):
+        """Section-Plan aus den `%`-Kommentaren einer SheetSage2-ABC-Datei."""
+        labels = []
+        for line in str(abc or "").replace("\r\n", "\n").split("\n"):
+            stripped = line.strip()
+            if not stripped.startswith("%"):
+                continue
+            for label in cls._structure_label(stripped):
+                if not labels or labels[-1] != label:
+                    labels.append(label)
+        return "\n".join(f"[{label}]" for label in labels)
+
+    @staticmethod
+    def _file_path(value):
+        """Gradio-Datei (str/dict/list) als Pfad - None, wenn unbrauchbar."""
+        if isinstance(value, (list, tuple)):
+            value = value[0] if value else None
+        if isinstance(value, dict):
+            value = value.get("name") or value.get("path")
+        text = str(value or "").strip()
+        return text or None
+
+    @classmethod
+    def _structure_from_abc_file(cls, value):
+        """Upload-Handler: ABC lesen und den Section-Plan zurueckgeben."""
+        path = cls._file_path(value)
+        if not path:
+            gr.Warning("Select an .abc file first.")
+            return gr.update()
+        try:
+            abc = Path(path).read_text(encoding="utf-8-sig")
+        except Exception as exc:  # noqa: BLE001 - Fehler in der UI zeigen
+            gr.Warning(f"Could not read the ABC file: {exc}")
+            return gr.update()
+        structure = cls._parse_abc_structure(abc)
+        if not structure:
+            gr.Warning(
+                "No section labels found. SheetSage2 writes them as "
+                "'% intro', '% verse', '% chorus' comments."
+            )
+            return gr.update()
+        cls._save_lyrics_structure(structure)
+        return gr.update(value=structure)
+
+    @classmethod
+    def _with_lyrics_structure(cls, prompt_text, structure):
+        """Section-Plan als verbindlichen Kontext vor die Lyrics legen.
+
+        Nur fuer Schritte, die Lyrics schreiben. Der Plan wird bewusst als
+        Nutzertext uebergeben (die Modell-Anweisungen bleiben unangetastet),
+        damit das Modell die Abschnitte in genau dieser Reihenfolge fuellt.
+        """
+        structure = str(structure or "").strip()
+        prompt_text = str(prompt_text or "").strip()
+        if not structure:
+            return prompt_text
+        return (
+            "Write the lyrics for exactly this section structure, in this "
+            "order. Keep the section labels as written:\n"
+            f"{structure}\n\n"
+            "Song idea or existing lyrics:\n"
+            f"{prompt_text}"
+        )
+
+    @classmethod
+    def _mode_writes_lyrics(cls, mode):
+        """Schreibt der Modus (mindestens einen Schritt) das Lyrics-Feld?"""
+        chaining = cls._chaining()
+        if chaining is None:
+            return "O" not in str(mode or "") and "L" not in str(mode or "")
+        try:
+            steps = chaining.parse_mode(mode)
+        except Exception:  # noqa: BLE001 - unbekannter Modus
+            return False
+        return any(
+            step.output_field == "prompt" and step.input_field != "alt_prompt"
+            for step in steps
+        )
+
+    def _structure_from_selected_abc(self, settings):
+        """Struktur aus der aktuell gewaehlten ABC-Quelle lesen.
+
+        Nur bei `Use ABC Score`/`Continue ABC Score`; bei `Use Score from
+        Audio` liegt noch keine Transkription vor (die entsteht erst in der
+        Generierung). Dann bleibt nur der manuelle Upload der gespeicherten
+        `.abc`-Datei.
+        """
+        source = str((settings or {}).get("audio_prompt_type", "") or "")
+        if source not in ("1", "12"):
+            return ""
+        component = getattr(self, "custom_guide", None)
+        value = getattr(component, "value", None) if component is not None else None
+        if not value:
+            value = (settings or {}).get("custom_guide")
+        path = self._file_path(value)
+        if not path:
+            return ""
+        try:
+            return self._parse_abc_structure(
+                Path(path).read_text(encoding="utf-8-sig")
+            )
+        except Exception:  # noqa: BLE001 - dann gilt der gespeicherte Plan
+            return ""
+
+    def _lyrics_structure_for(self, settings):
+        """Gespeicherter Plan, sonst die Struktur der gewaehlten ABC-Quelle."""
+        return self._lyrics_structure() or self._structure_from_selected_abc(settings)
 
     def _current_model_def(self, state_value=None):
         """Definition des aktuellen Modells - nur lesen, nie werfen."""
@@ -3880,13 +4056,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 self._model_def_without_prompt_instructions(model_def)
                 if vorlage else model_def
             )
+            lyrics_input = enhancer_input
+            if self._mode_writes_lyrics(mode):
+                lyrics_input = self._with_lyrics_structure(
+                    enhancer_input, self._lyrics_structure_for(settings)
+                )
             with (_PromptInstructionOverride() if vorlage else contextlib.nullcontext()):
                 prompt_result, alt_result = self._run_enhance_steps(
                     process,
                     model_type,
                     modell_def,
                     mode,
-                    enhancer_input,
+                    lyrics_input,
                     alt_input,
                     is_image,
                     audio_only,
@@ -4108,13 +4289,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     profile["reasoning_effort"] = effort
                     effort_changed = True
         started = time.time()
+        lyrics_input = enhancer_input
+        if self._mode_writes_lyrics(mode):
+            lyrics_input = self._with_lyrics_structure(
+                enhancer_input, self._lyrics_structure_for(settings)
+            )
         try:
             prompt_result, alt_result = self._run_enhance_steps(
                 process,
                 model_type,
                 model_def,
                 mode,
-                enhancer_input,
+                lyrics_input,
                 alt_input,
                 is_image,
                 audio_only,
@@ -4803,13 +4989,18 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 outputs.append(answer)
             return outputs
 
+        lyrics_input = text
+        if self._mode_writes_lyrics(mode):
+            lyrics_input = self._with_lyrics_structure(
+                text, self._lyrics_structure_for(settings)
+            )
         try:
             prompt_result, alt_result = self._run_enhance_steps(
                 api_process,
                 model_type,
                 model_def,
                 mode,
-                text,
+                lyrics_input,
                 alt_text,
                 is_image,
                 audio_only,
@@ -5742,6 +5933,48 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 gr.HTML(
                     "<div class='le-hint'>Tip: <b>instrumental (no vocals)</b> "
                     "drops the language and vocal tags automatically.</div>"
+                )
+                gr.HTML("<div class='le-section'>Lyrics structure</div>")
+                music_structure = gr.Textbox(
+                    label="Section plan (optional)",
+                    value=self._lyrics_structure(),
+                    lines=3,
+                    placeholder="[Intro]\n[Verse 1]\n[Chorus]\n...",
+                    info=(
+                        "Used when the Lyrics are enhanced (T1 or T1,B2O). "
+                        "For a source song: enable Save ABC and MIDI Score, "
+                        "then load the exported .abc here."
+                    ),
+                )
+                with gr.Row(elem_classes=["le-actions"]):
+                    music_structure_load = gr.UploadButton(
+                        "Load from ABC", file_types=[".abc"], size="sm"
+                    )
+                    music_structure_clear = gr.Button(
+                        "Clear structure", size="sm"
+                    )
+                music_structure.input(
+                    fn=self._save_lyrics_structure,
+                    inputs=[music_structure],
+                    outputs=[],
+                    show_progress="hidden",
+                )
+                music_structure_load.upload(
+                    fn=self._structure_from_abc_file,
+                    inputs=[music_structure_load],
+                    outputs=[music_structure],
+                    show_progress="hidden",
+                )
+
+                def structure_leeren():
+                    self._save_lyrics_structure("")
+                    return gr.update(value="")
+
+                music_structure_clear.click(
+                    fn=structure_leeren,
+                    inputs=None,
+                    outputs=[music_structure],
+                    show_progress="hidden",
                 )
 
                 tag_inputs = [

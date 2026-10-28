@@ -161,7 +161,44 @@ check("Append auf leeres Feld setzt den Text", appended.get("value") == "pop", f
 cleared = plugin.LocalEnhancePlugin._music_style_clear()
 check("Clear leert neun Komponenten", len(cleared) == 9, f"-> {len(cleared)}")
 
-# 8. Karte in create_ui: mit alt_prompt und Audio-Modell.
+# 8. Lyrics-Struktur aus ABC und als Kontext vor den Lyrics.
+abc = """X:1
+% intro
+% verse
+% chorus
+% verse and pre-chorus
+% chorus
+% fade-out
+"""
+structure = plugin.LocalEnhancePlugin._parse_abc_structure(abc)
+check(
+    "ABC-Struktur wird zu YuE2-Sections",
+    structure == "[Intro]\n[Verse]\n[Chorus]\n[Verse]\n[Pre-Chorus]\n"
+                 "[Chorus]\n[Outro]",
+    f"-> {structure!r}",
+)
+lyrics = plugin.LocalEnhancePlugin._with_lyrics_structure(
+    "a song about the sea", structure
+)
+check(
+    "Struktur wird vor die Lyrics gelegt",
+    lyrics.startswith("Write the lyrics for exactly this section structure")
+    and "[Intro]\n[Verse]" in lyrics
+    and lyrics.endswith("a song about the sea"),
+    f"-> {lyrics[:80]!r}",
+)
+check(
+    "ohne Struktur bleibt der Prompt unveraendert",
+    plugin.LocalEnhancePlugin._with_lyrics_structure("a song", "") == "a song",
+)
+check(
+    "_mode_writes_lyrics erkennt T1 und T1,B2O, nicht B2O",
+    plugin.LocalEnhancePlugin._mode_writes_lyrics("T1")
+    and plugin.LocalEnhancePlugin._mode_writes_lyrics("T1,B2O")
+    and not plugin.LocalEnhancePlugin._mode_writes_lyrics("B2O"),
+)
+
+# 9. Karte in create_ui: mit alt_prompt und Audio-Modell.
 def build_tab():
     p = plugin.LocalEnhancePlugin()
     p.state = gr.State({"model_type": "yue2"})
@@ -220,12 +257,13 @@ check("fuenf Karten mit Music Style", len(cards) == 5, f"-> {len(cards)}")
 for label in (
     "Language", "Genre", "Vocals", "Instruments", "Mood", "Tempo",
     "Production", "Extra style notes", "Finished Music Style",
+    "Section plan (optional)", "Load from ABC",
 ):
     check(f"Label {label!r} vorhanden", label in labels)
 for button in ("Apply to Music Style", "Append", "Clear tags"):
     check(f"Knopf {button!r} vorhanden", button in buttons)
 
-# 8. on_tab_select: Karte bei YuE2 sichtbar, bei Krea 2 verborgen.
+# 10. on_tab_select: Karte bei YuE2 sichtbar, bei Krea 2 verborgen.
 werte = p.on_tab_select({"model_type": "yue2"})
 check(
     "on_tab_select liefert drei Ausgaben (Prompt, Modell, Karte)",

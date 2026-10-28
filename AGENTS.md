@@ -542,14 +542,34 @@ neu starten.
   Die Karte ist ein Geschwister der Hauptspalte (nach ihr im Tab), weil sie
   erst nach dem UI-Aufbau entsteht; `create_ui()` setzt `self._music_style_card`
   erst danach und hängt sie an `on_tab_outputs`.
+- **Lyrics-Struktur (Section-Plan):** Unter den Tags steht
+  `Section plan (optional)` mit `Load from ABC` und `Clear structure`. Der Plan
+  wird in `local_enhance_lyrics_structure` gespeichert (Input-Event) und beim
+  Lyrics-Enhancement (`T1`, `T1,B2O`, `B3` … also jeder Schritt, der `prompt`
+  schreibt) als verbindlicher Kontext vor den Prompt gelegt
+  (`_with_lyrics_structure`). Bei `B2O`/`L…` (kein Lyrics-Output) bleibt er
+  unberührt. `_mode_writes_lyrics()` entscheidet das über
+  `prompt_enhancer_chaining.parse_mode`.
+  `_parse_abc_structure()` liest die `% intro`/`% verse`/`% chorus`-Kommentare
+  einer SheetSage2-ABC-Datei (auch `% verse and pre-chorus`, `% fade-out`) und
+  macht daraus `[Intro]`, `[Verse]`, `[Pre-Chorus]`, `[Outro]`; unbekannte
+  Labels (`silence`, `loop`, `irregular`) fallen weg, aufeinanderfolgende
+  Duplikate werden zusammengefasst. `Load from ABC` liest eine Datei direkt.
+  Bei **Use ABC Score / Continue ABC Score** (`audio_prompt_type` `1`/`12`)
+  liest `_structure_from_selected_abc()` die gewählte `custom_guide`-Datei
+  automatisch, wenn das Feld leer ist. Bei **Use Score from Audio** (`A`/`A2`)
+  gibt es zu diesem Zeitpunkt noch keine Transkription — der Enhancer läuft vor
+  der Generierung. Dann einmal mit `Save ABC and MIDI Score` generieren und die
+  exportierte `.abc` über `Load from ABC` laden.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 100, Max 350. `_migrate_word_defaults()` hebt beim ersten
   Start exakt die alten Vorgaben (0/150) auf 100/350; der Marker
   `local_enhance_word_defaults_v2` verhindert einen zweiten Lauf, eigene Werte
   bleiben. Dazu
-  `local_enhance_prompt_dir`, `local_enhance_prompt_migrated` und
-  `local_enhance_template` (Default `default`). Dazu `local_enhance_author_source`
+  `local_enhance_prompt_dir`, `local_enhance_prompt_migrated`,
+  `local_enhance_template` (Default `default`) und
+  `local_enhance_lyrics_structure` (leerer Section-Plan). Dazu `local_enhance_author_source`
   (`Local 27B` / `OpenAI-compatible API`), `local_enhance_author_base_url`,
   `local_enhance_author_model`, `local_enhance_author_api_key` (nur mit
   `Remember API key`), `local_enhance_author_remember_key`,
@@ -742,11 +762,13 @@ neu starten.
   Gradio-Konfiguration: mit Alt 7/7/7 Eingaben und 2/2/3 Ausgaben, ohne Alt
   6/6/6 und 1/1/2. Erwartung: 12 `PASS`, Exit 0.
 - Music-Style-Tags: `dev/check_music_tags.py` (WanGP-venv, aus dem WanGP-Ordner)
-  prüft **29** Fälle: Komposition/Reihenfolge, Dedupe, instrumental-Regel,
+  prüft **35** Fälle: Komposition/Reihenfolge, Dedupe, instrumental-Regel,
   Sichtbarkeit (YuE2/ACE ja, TTS/Image nein), eigene `music_style_tags.json`
-  inkl. kaputter Datei, Apply/Append/Clear, die fünfte Karte mit allen
-  Dropdowns/Buttons und `on_tab_select` (sichtbar bei YuE2, verborgen bei
-  Krea 2). Erwartung: 29 `PASS`, Exit 0.
+  inkl. kaputter Datei, Apply/Append/Clear, ABC-Struktur (inkl.
+  `verse and pre-chorus`/`fade-out`), Lyrics-Kontext, `_mode_writes_lyrics`,
+  die fünfte Karte mit allen Dropdowns/Buttons/`Section plan` und
+  `on_tab_select` (sichtbar bei YuE2, verborgen bei Krea 2). Erwartung: 35
+  `PASS`, Exit 0.
 - Vision live: Modus *Based on Text Prompt and Images* wählen, Startbild mit
   markantem Inhalt setzen, Prompt „a cat" → der verbesserte Prompt muss den
   Bildinhalt beschreiben und die Statuszeile `images: start image` nennen. Dann
