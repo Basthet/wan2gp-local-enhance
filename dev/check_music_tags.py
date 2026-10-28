@@ -43,6 +43,12 @@ main.models_def = {
         "audio_only": True,
         "prompt_class": "Lyrics",
         "alt_prompt": {"label": "Music Style"},
+        "audio_prompt_type_sources": {
+            "selection": ["0", "A", "C"],
+            "labels": {"0": "New Composition", "A": "Use Score from Audio",
+                       "C": "Cover (Score from Audio, fixed tempo)"},
+            "letters_filter": "012AC",
+        },
     },
     "ace_step": {
         "name": "Music ACE-Step",
@@ -234,6 +240,11 @@ check(
     instance._source_hidden_value("0", {"model_type": "yue2"}) == "0",
     f"-> {instance._source_hidden_value('0', {'model_type': 'yue2'})!r}",
 )
+check(
+    "versteckter Source-Text wird auf C gesetzt",
+    instance._source_hidden_value("C", {"model_type": "yue2"}) == "C",
+    f"-> {instance._source_hidden_value('C', {'model_type': 'yue2'})!r}",
+)
 
 # 10. Karte in create_ui: mit alt_prompt und Audio-Modell.
 def build_tab():
@@ -244,7 +255,11 @@ def build_tab():
     p.alt_prompt = gr.Textbox(label="Music Style")
     p.prompt_enhancer = gr.Textbox(visible=False)
     p.audio_prompt_type_sources = gr.Dropdown(
-        choices=[("New Composition", "0"), ("Use Score from Audio", "A")],
+        choices=[
+            ("New Composition", "0"),
+            ("Use Score from Audio", "A"),
+            ("Cover (Score from Audio, fixed tempo)", "C"),
+        ],
         value="0",
     )
     p.audio_prompt_type = gr.Text(value="0", visible=False)
@@ -306,6 +321,17 @@ for label in (
     check(f"Label {label!r} vorhanden", label in labels)
 for button in ("Apply to Music Style", "Append", "Clear tags"):
     check(f"Knopf {button!r} vorhanden", button in buttons)
+
+cover_updates = p._cover_mode_update(True, {"model_type": "yue2"}, str(wav_path))
+check(
+    "Cover setzt Quelle C, Dauer 2s und versteckt Tempo",
+    len(cover_updates) == 6
+    and cover_updates[1].get("value") == "C"
+    and cover_updates[2].get("value") == "C"
+    and cover_updates[3].get("value") == 2
+    and cover_updates[4].get("visible") is False,
+    f"-> {cover_updates}",
+)
 
 # 11. on_tab_select: Karte bei YuE2 sichtbar, bei Krea 2 verborgen.
 werte = p.on_tab_select({"model_type": "yue2"})

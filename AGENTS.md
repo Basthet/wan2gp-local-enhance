@@ -570,28 +570,44 @@ neu starten.
   gibt es zu diesem Zeitpunkt noch keine Transkription — der Enhancer läuft vor
   der Generierung. Dann einmal mit `Save ABC and MIDI Score` generieren und die
   exportierte `.abc` über `Load from ABC` laden.
-- **Create Cover (Plugin-Schalter):** Checkbox oben in der Music-Style-Karte.
-  Sie ist **kein** neuer Eintrag im Host-Dropdown (das gehört zur
-  YuE2-Modelldefinition und wäre ein Host-Patch). Stattdessen setzt sie beim
+- **Create Cover (Plugin-Schalter + Host-Patch):** Checkbox oben in der
+  Music-Style-Karte. Der echte Eintrag **Cover** im Composition-Source-Dropdown
+  kommt aus `patches/yue2-cover.patch` (Host-Patch, siehe unten). Das Plugin
+  erkennt ihn an den Choices (`_cover_source_value()`): gibt es `C`, wird `C`
+  gesetzt, sonst bleibt der Fallback `A` (Use Score from Audio). Beim
   Einschalten:
-  - `audio_prompt_type_sources` sichtbar auf `A` (Use Score from Audio),
-  - den **versteckten** `audio_prompt_type`-Text selbst auf `A` (bzw. auf `0`
-    beim Ausschalten), weil ein programmatisches Dropdown-Update den
+  - `audio_prompt_type_sources` sichtbar auf `C` (oder `A` ohne Patch),
+  - den **versteckten** `audio_prompt_type`-Text selbst auf `C`/`A` (bzw. auf
+    `0` beim Ausschalten), weil ein programmatisches Dropdown-Update den
     Host-`.change` nicht zuverlässig auslöst; Basis ist der bisherige Text ohne
-    die `letters_filter`-Zeichen (`012A`) plus neuer Quelle,
+    die `letters_filter`-Zeichen (`012AC`) plus neuer Quelle,
   - `duration_seconds` auf die Länge der gewählten `audio_guide`-Datei
     (`soundfile`, Fallback `librosa`), begrenzt auf `min`/`max` des
     `duration_slider`,
+  - das Tempo-Dropdown wird versteckt und geleert (`_music_tempo`), weil eine
+    Score-Quelle das Tempo vorgibt,
   - die Zeile-1-Beschriftung auf `Enhance Lyrics:`.
-  Ausschalten setzt die Quelle auf `New Composition` (`0`). **Music Style
-  bleibt unangetastet** — die Transkription liefert Noten, keine Klangfarbe;
-  ein YuE2-Cover ist eine neue Aufführung, kein Stimmen-Klon. Der Schalter
-  liefert eine Statuszeile in der Karte. `_row_label` wird außerdem bei
-  `refresh_form_trigger.change` (Modellwechsel) aktualisiert; die sichtbare
-  Zeile heißt bei `prompt_class == "Lyrics"` oder Musik-Feld `Enhance Lyrics`.
+  Ausschalten setzt die Quelle auf `New Composition` (`0`) und zeigt das
+  Tempo-Feld wieder. **Music Style bleibt unangetastet** — die Transkription
+  liefert Noten, keine Klangfarbe; ein YuE2-Cover ist eine neue Aufführung,
+  kein Stimmen-Klon. Der Schalter liefert eine Statuszeile in der Karte.
+  `_row_label` wird außerdem bei `refresh_form_trigger.change` (Modellwechsel)
+  aktualisiert; die sichtbare Zeile heißt bei `prompt_class == "Lyrics"` oder
+  Musik-Feld `Enhance Lyrics`.
   Die Komponenten `audio_prompt_type_sources`, `audio_prompt_type`,
   `audio_guide` und `duration_seconds` werden in `setup_ui()` angefragt; fehlen
   sie (Bild-/Video-Modell, Nachbau), filtert `_cover_components()` sie still.
+- **Host-Patch „Cover“:** `patches/yue2-cover.patch` ergänzt in WanGP
+  `SOURCE_LABELS["C"] = "Cover (Score from Audio, fixed tempo)"`, erweitert
+  `letters_filter` auf `012AC`, lässt `validate_source` C wie A prüfen und
+  bildet C in `yue2/pipeline.py` vor der Engine auf A ab. In `wgp.py` behandeln
+  Audio-Upload, Validierung, stiller WAV-Fallback, Enhancer-Kwargs und
+  `refresh_audio_prompt_type_sources` C wie A (`any_letters(..., "AC")` bzw.
+  `"ABC"`). Anwenden im WanGP-Klon:
+  `cd ~/git/Wan2GP && git apply ~/git/wan2gp-local-enhance/patches/yue2-cover.patch`,
+  zurück mit `git apply -R ...`. **Nicht update-sicher** — nach einem
+  WanGP-Update erneut anwenden. Der Patch ist kein Stimmen-Klon; er liefert nur
+  die feste Score-Quelle.
 - **Config-Keys:** `local_enhance_min_words`, `local_enhance_max_words`
   (`local_enhance_word_limit` ist Altbestand und dient als Fallback für Max).
   Defaults: Min 100, Max 350. `_migrate_word_defaults()` hebt beim ersten
@@ -793,14 +809,14 @@ neu starten.
   Gradio-Konfiguration: mit Alt 7/7/7 Eingaben und 2/2/3 Ausgaben, ohne Alt
   6/6/6 und 1/1/2. Erwartung: 12 `PASS`, Exit 0.
 - Music-Style-Tags: `dev/check_music_tags.py` (WanGP-venv, aus dem WanGP-Ordner)
-  prüft **41** Fälle: Komposition/Reihenfolge, Dedupe, instrumental-Regel,
+  prüft **43** Fälle: Komposition/Reihenfolge, Dedupe, instrumental-Regel,
   Sichtbarkeit (YuE2/ACE ja, TTS/Image nein), eigene `music_style_tags.json`
   inkl. kaputter Datei, Apply/Append/Clear, ABC-Struktur (inkl.
   `verse and pre-chorus`/`fade-out`), Lyrics-Kontext, `_mode_writes_lyrics`,
-  Cover (Lyrics-Label, Dauer aus WAV, versteckter Source-Text), die fünfte
-  Karte mit allen Dropdowns/Buttons/`Section plan`/`Create Cover` und
-  `on_tab_select` (sichtbar bei YuE2, verborgen bei Krea 2). Erwartung: 41
-  `PASS`, Exit 0.
+  Cover (Lyrics-Label, Dauer aus WAV, versteckter Source-Text C, Tempo
+  versteckt), die fünfte Karte mit allen Dropdowns/Buttons/`Section plan`/
+  `Create Cover` und `on_tab_select` (sichtbar bei YuE2, verborgen bei Krea 2).
+  Erwartung: 43 `PASS`, Exit 0.
 - Vision live: Modus *Based on Text Prompt and Images* wählen, Startbild mit
   markantem Inhalt setzen, Prompt „a cat" → der verbesserte Prompt muss den
   Bildinhalt beschreiben und die Statuszeile `images: start image` nennen. Dann

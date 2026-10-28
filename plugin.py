@@ -284,7 +284,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-28.4"
+_UI_BUILD = "build 2026-10-28.5"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -1258,7 +1258,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         if getattr(self, "duration_seconds", None) is not None:
             duration = None
             source = str(source or "")
-            if source in ("A", "A2"):
+            if source in ("A", "A2", "C"):
                 duration = self._source_audio_duration(audio_file)
             if duration is None:
                 updates.append(gr.update())
@@ -1276,13 +1276,39 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             value=self._row_label_html(self._current_model_def(state))
         )
 
-    def _cover_components(self, status):
+    def _source_tempo_update(self, source):
+        """Tempo ist bei einer Score-Quelle vorgegeben - Feld ausblenden."""
+        covered = str(source or "") in ("A", "A2", "C")
+        return (
+            gr.update(visible=False, value=None)
+            if covered else gr.update(visible=True)
+        )
+
+    def _cover_source_value(self):
+        """Cover-Wert des Hosts, sonst der alte A-Fallback.
+
+        Der Host-Patch legt `C` an; ohne Patch bleibt `A` (Use Score from
+        Audio), damit der Schalter auch auf einer ungepatchten Installation
+        funktioniert.
+        """
+        component = getattr(self, "audio_prompt_type_sources", None)
+        choices = getattr(component, "choices", None) or []
+        for choice in choices:
+            if isinstance(choice, (list, tuple)) and len(choice) >= 2:
+                if str(choice[1]) == "C":
+                    return "C"
+        return "A"
+
+    def _cover_components(self, status=None):
         """Komponenten, die der Cover-Schalter aktualisiert (nur vorhandene)."""
+        if status is None:
+            status = getattr(self, "_cover_status", None)
         pairs = (
             ("label", getattr(self, "_row_label", None)),
             ("source", getattr(self, "audio_prompt_type_sources", None)),
             ("hidden", getattr(self, "audio_prompt_type", None)),
             ("duration", getattr(self, "duration_seconds", None)),
+            ("tempo", getattr(self, "_music_tempo", None)),
             ("status", status),
         )
         return [(key, component) for key, component in pairs if component is not None]
@@ -1315,13 +1341,17 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         Musikfarbe wird nicht uebernommen; Music Style bleibt eine eigene Wahl.
         """
         model_def = self._current_model_def(state)
-        source = "A" if checked else "0"
+        source = self._cover_source_value() if checked else "0"
         hidden = self._source_hidden_value(source, state)
         values = {
             "label": gr.update(value=self._row_label_html(model_def)),
             "source": gr.update(value=source),
             "hidden": gr.update(value=hidden),
             "duration": gr.update(),
+            "tempo": (
+                gr.update(visible=False, value=None)
+                if checked else gr.update(visible=True)
+            ),
             "status": gr.update(),
         }
         duration = self._source_audio_duration(audio_file) if checked else None
@@ -1341,8 +1371,8 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         elif checked:
             values["status"] = gr.update(
                 value=(
-                    "**Cover mode:** `Use Score from Audio` selected. Upload the "
-                    "source song to set Max Song Duration from it."
+                    "**Cover mode:** source score selected. Upload the source "
+                    "song to set Max Song Duration from it."
                 )
             )
         else:
@@ -6054,6 +6084,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     ),
                 )
                 music_cover_status = gr.Markdown()
+                self._cover_status = music_cover_status
                 with gr.Row(elem_classes=["le-row"]):
                     music_language = gr.Dropdown(
                         choices=groups["language"],
@@ -6077,6 +6108,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                         scale=1,
                         min_width=140,
                     )
+                    self._music_tempo = music_tempo
                 with gr.Row(elem_classes=["le-row"]):
                     music_genres = gr.Dropdown(
                         choices=groups["genre"],
@@ -6185,6 +6217,13 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                     outputs=self._cover_outputs(music_cover_status),
                     show_progress="hidden",
                 )
+                if getattr(self, "audio_prompt_type_sources", None) is not None:
+                    self.audio_prompt_type_sources.change(
+                        fn=self._source_tempo_update,
+                        inputs=[self.audio_prompt_type_sources],
+                        outputs=[music_tempo],
+                        show_progress="hidden",
+                    )
 
                 tag_inputs = [
                     music_language, music_genres, music_vocals,
