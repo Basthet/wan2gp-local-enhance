@@ -232,7 +232,7 @@ _MODEL_CHECK_BOX_STYLE = "max-height:260px;overflow-y:auto;"
 _MODEL_CHECK_BUTTON_WIDTH = 160
 # Sichtbarer Build-Stempel im Tab: zeigt, ob der laufende Prozess den aktuellen
 # Code geladen hat. Bei jedem UI-Commit mitziehen.
-_UI_BUILD = "build 2026-10-23.19"
+_UI_BUILD = "build 2026-11-18.1"
 
 
 # Stylesheet der eingebauten Zeile. Steht als Konstante hier, damit dasselbe CSS
@@ -602,12 +602,6 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         self.request_component("state")
         self.request_component("refresh_form_trigger")
         self.request_component("prompt")
-        # WanGP liest die angehakten LoRAs aus dieser Komponente
-        # (wgp.py:1183, inputs["activated_loras"]). Das Plugin traegt dort die
-        # Bypass-LoRA nach. Heisst die Komponente anders, bleibt das Attribut
-        # None und das Plugin sagt es beim Aufbau - dann laeuft alles andere
-        # weiter, nur die Automatik fehlt.
-        self.request_component("activated_loras")
         # Der eingebaute "Enhance Prompt"-Knopf wird ausgeblendet: er verbessert
         # ueber dieselbe Remote-Engine wie der OpenCode-Knopf und waere damit
         # ein Doppel. An seiner Stelle steht nur noch die Beschriftung.
@@ -1874,6 +1868,19 @@ class LocalEnhancePlugin(WAN2GPPlugin):
             tiefe += 1
         return None
 
+    def _lora_selector_component(self):
+        """Die sichtbare LoRA-Auswahl, soweit bekannt.
+
+        ``post_ui_setup`` legt sie ueber ``_find_lora_selector`` in
+        ``self._lora_selector`` ab. ``activated_loras`` bleibt als Fallback
+        fuer aeltere Hosts und die Testumgebung.
+        """
+        for name in ("_lora_selector", "activated_loras"):
+            component = getattr(self, name, None)
+            if component is not None:
+                return component
+        return None
+
     def _sync_lora_selector(self):
         """Bypass-LoRA sichtbar in die Auswahl eintragen (nur passendes Modell).
 
@@ -1881,7 +1888,7 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         Der Wert steht vor dem Rendern der Oberflaeche fest, deshalb wirkt das
         Setzen hier.
         """
-        auswahl = getattr(self, "_lora_selector", None) or self._find_lora_selector()
+        auswahl = self._lora_selector_component() or self._find_lora_selector()
         if auswahl is None:
             return None
         self._lora_selector = auswahl
@@ -4748,13 +4755,16 @@ class LocalEnhancePlugin(WAN2GPPlugin):
         # Damit der Tab-Wechsel den Standard-Prompt nicht ueberschreibt, haelt
         # das Plugin sein Arbeitsfeld fest.
         self._prompt_box = text_in
-        # Dritte Ausgabe, wenn WanGP die LoRA-Auswahl herausgibt: dann traegt
-        # jeder Tab-Wechsel die Bypass-LoRA nach.
-        if getattr(self, "activated_loras", None) is not None:
-            self.on_tab_outputs.append(self.activated_loras)
+        # Dritte Ausgabe: jeder Tab-Wechsel traegt die Bypass-LoRA in die
+        # sichtbare LoRA-Auswahl nach. Die Auswahl kommt aus post_ui_setup;
+        # eine Host-Komponente namens "activated_loras" gibt es nicht.
+        lora_auswahl = self._lora_selector_component()
+        if lora_auswahl is not None:
+            self.on_tab_outputs.append(lora_auswahl)
         else:
-            print(f"[{PlugIn_Name}] Komponente 'activated_loras' nicht gefunden - "
-                  "die Bypass-LoRA wird nicht automatisch eingetragen.")
+            print(f"[{PlugIn_Name}] LoRA-Auswahl nicht gefunden - die Bypass-LoRA "
+                  "wird beim Generieren weiterhin ergaenzt, aber beim Tab-Wechsel "
+                  "nicht sichtbar nachgetragen.")
 
         enhance_btn.click(
             fn=self.enhance,
@@ -5233,9 +5243,10 @@ class LocalEnhancePlugin(WAN2GPPlugin):
                 prompt = ""
         werte = [prompt, self._current_model_line(state)]
         # Bypass-LoRA nachtragen: bestehende Auswahl bleibt, die zentrale kommt
-        # dazu. Ohne die Komponente bleibt es bei zwei Ausgaben.
-        if getattr(self, "activated_loras", None) is not None:
-            aktuell = list(getattr(self.activated_loras, "value", None) or [])
+        # dazu. Ohne die sichtbare Auswahl bleibt es bei zwei Ausgaben.
+        lora_auswahl = self._lora_selector_component()
+        if lora_auswahl is not None:
+            aktuell = list(getattr(lora_auswahl, "value", None) or [])
             try:
                 typ = self.get_state_model_type(state)
             except Exception:  # noqa: BLE001 - ohne Typ gilt der Filter nicht
